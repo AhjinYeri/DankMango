@@ -1,0 +1,11 @@
+{
+  "audioToggle": {
+    "enabled": true
+  },
+  "monitorMode": {
+    "enabled": true
+  },
+  "altSwitcher": {
+    "enabled": true
+  }
+}
