@@ -9,20 +9,6 @@ DankMango is a personal desktop configuration built on top of the work of others
 - **[matugen](https://github.com/InioX/matugen)** by InioX — the wallpaper-driven Material You color generation engine behind DankMango's dynamic theming.
 - **[sddm-astronaut-theme](https://github.com/Keyitdev/sddm-astronaut-theme)** by Keyitdev — the SDDM login theme DankMango configures (Japanese aesthetic variant, 12-hour clock). The SDDM background used is a modified (color-inverted) version of this theme's default wallpaper for that variant — see [Wallpapers](#wallpapers) below.
 
-## Wallpapers
-
-All desktop wallpapers are AI-generated images from StockCake, released public domain / CC0 (attribution not legally required, credited here anyway):
-
-- [Neon Cityscape View](https://stockcake.com/i/neon-cityscape-view_1120271_392833) — StockCake
-- [Illuminated Urban Night](https://stockcake.com/i/illuminated-urban-night_1383839_1064564) — StockCake
-- [Futuristic Cityscape Sunset](https://stockcake.com/i/futuristic-cityscape-sunset_1090536_1095837) — StockCake
-- [Neon Cyberpunk Nights](https://stockcake.com/i/neon-cyberpunk-nights_4718630_2012212) — StockCake
-- [Futuristic Cityscape Rain](https://stockcake.com/i/futuristic-cityscape-rain_655419_330997) — StockCake
-
-Images were downloaded at StockCake's free tier and upscaled locally to 2912×1632 using [Upscayl](https://www.upscayl.org), an open-source offline AI upscaler.
-
-The SDDM background is a color-inverted edit of the default wallpaper bundled with the sddm-astronaut-theme "Japanese aesthetic" variant (see [Core projects](#core-projects) above). As a modified version of a GPLv3+-licensed asset, this file is distributed under the same license.
-
 ## Tools & packages
 
 DankMango's install script sets up several third-party tools it doesn't author, including but not limited to:

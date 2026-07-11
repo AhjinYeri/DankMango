@@ -1,0 +1,12 @@
+{
+    "id": "audioToggle",
+    "name": "Audio Output Toggle",
+    "description": "Cycle the default audio output between available sinks via PipeWire/WirePlumber (wpctl); self-contained",
+    "version": "0.1.0",
+    "author": "AhjinYeri",
+    "type": "widget",
+    "capabilities": ["dankbar-widget"],
+    "component": "./AudioToggleBar.qml",
+    "icon": "headphones",
+    "permissions": ["process"]
+}

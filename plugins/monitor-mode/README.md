@@ -1,0 +1,101 @@
+# Monitor Mode — plain-English guide
+
+A button that lives in your top bar (the **⊟ splitscreen** icon). Click it and a small
+panel opens where you set **each monitor** to **Tile** or **Float**:
+
+- **Tile** — windows automatically arrange to fill the screen (a normal tiling layout).
+- **Float** — windows open as a big, draggable, "Windows-11 style" window, centered and
+  sized to ~85% of that monitor.
+
+You can set each monitor on its own, or pick a ready-made combo (**All Tile**, **All Float**,
+and — with exactly two monitors — **Tile / Float** and **Float / Tile**). Your monitors are
+detected automatically from the compositor, so this works with any number of monitors at any
+resolution; nothing about your hardware is hard-coded.
+
+---
+
+## How tile-vs-float is actually stored (the tagrules)
+
+You normally never touch this — the bar button does it for you — but it helps to know where
+the setting lives.
+
+MangoWM decides a monitor's mode from its **tag rules** in `~/.config/mango/config.conf`.
+Tags (workspaces) are per-monitor, so each monitor gets a block of **9 tagrules** — one per
+tag, `id:1` through `id:9`. The rule is simple:
+
+- A monitor **floats** if its 9 tagrules contain **`open_as_floating:1`**.
+- A monitor **tiles** if they don't.
+
+All this plugin does is add or remove that one keyword (via the setter script below), then
+reload MangoWM. So **use the bar button — don't hand-edit tagrules** unless you're
+troubleshooting.
+
+**Where the block lives:** open `~/.config/mango/config.conf` and search for
+**`Per-monitor window mode`** (or just `tagrule`). In this repo that's
+`config/mango/config.conf`.
+
+> **First-time setup (do this before the plugin will work):** in a fresh DankMango checkout
+> the tagrule block ships **commented out with a placeholder name (`MONITOR-1`)**, because
+> MangoWM needs your real output names and can't guess them. Find yours with `wlr-randr`
+> (or `mmsg get all-monitors | jq '.monitors[].name'`), then add one 9-tagrule block per
+> monitor as described in the top-level README. **The plugin can only control a monitor that
+> already has its 9 tagrules present**, so set them up first.
+
+---
+
+## How the whole thing fits together (3 pieces)
+
+You don't need to read the code — just know which file does what, so if something breaks you
+know where to look.
+
+| Piece | File | What it does |
+|------|------|--------------|
+| **The button** (this plugin) | `~/.config/DankMaterialShell/plugins/monitorMode/MonitorModeBar.qml` | Just the buttons. Holds **no logic** — every button runs the setter script below. The setter path is resolved from `$HOME` at run time, so it's not tied to any user. |
+| **The setter** | `~/.config/mango/scripts/set-monitor-mode.sh` | Adds/removes `open_as_floating` on a monitor's 9 tagrules, saves it, and reloads MangoWM. |
+| **The placer** | `~/.config/mango/scripts/dp2-floatsize.sh` | Runs in the background; centers/sizes floating windows and auto-tiles windows you drag onto a tiling monitor. Size is computed live from each monitor's resolution — nothing to capture per machine. |
+
+Both scripts have a clearly-marked **`EDIT HERE AFTER A MANGO / DMS UPDATE`** box at the top
+that holds every command an update could change — you almost never need to touch anything
+outside it.
+
+---
+
+## "It broke after a system update" — quick checks
+
+Restart the shell first so you're testing the real current state (a plain plugin off/on
+toggle reuses a cached copy): `dms restart`.
+
+### I change a mode and OLD windows update, but NEW windows keep the old mode
+The most common break: the config-reload command changed. Test it:
+```
+mmsg dispatch reload_config      # expect {"success":true}
+```
+If it errors, MangoWM renamed the verb — find the new one with `mmsg --help` and update
+`mango_reload_config()` in `set-monitor-mode.sh`.
+
+### Floating windows aren't sized/placed, or dragging between monitors doesn't tile
+The background placer is using an outdated command. In `dp2-floatsize.sh`'s EDIT-HERE box,
+test its mango commands by hand, e.g.:
+```
+mmsg get focusing-client
+mmsg get all-monitors
+```
+Fix the matching wrapper for any that error, then restart the placer (or just log out/in —
+it auto-starts on login).
+
+### The bar button vanished or won't turn on (after a DMS update)
+The plugin failed to load — usually DMS renamed a building block. Check the shell log for a
+line naming `MonitorModeBar.qml`. **Known gotcha:** `DankIcon` uses `size:`, **not**
+`font.pixelSize:`. After any edit run `dms restart`, then re-enable under DMS Settings
+(`Ctrl+,`) → Plugins → **Monitor Mode**, and confirm it's in your bar (Settings → Appearance
+→ DankBar Layout).
+
+---
+
+## Everyday tweaks
+
+- **Bigger/smaller floating windows:** edit `FLOAT_PCT` (try 80–90) in the EDIT-HERE box of
+  `dp2-floatsize.sh`. No placer restart needed for the next window.
+- **Moved your scripts?** update the `setter` property near the top of `MonitorModeBar.qml`
+  (it's built from `$HOME`) and the paths in each script's EDIT-HERE box, then `dms restart`.
+- **Debug the placer:** restart it with `DP2_DEBUG=1`, then `tail -f /tmp/dp2-floatsize.log`.

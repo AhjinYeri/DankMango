@@ -1,0 +1,12 @@
+{
+    "id": "monitorMode",
+    "name": "Monitor Mode",
+    "description": "Switch per-monitor tile/float window modes for MangoWM (front-end for set-monitor-mode.sh)",
+    "version": "0.1.0",
+    "author": "AhjinYeri",
+    "type": "widget",
+    "capabilities": ["dankbar-widget"],
+    "component": "./MonitorModeBar.qml",
+    "icon": "splitscreen",
+    "permissions": ["process"]
+}

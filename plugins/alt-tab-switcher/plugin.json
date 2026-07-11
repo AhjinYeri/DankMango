@@ -1,0 +1,12 @@
+{
+    "id": "altSwitcher",
+    "name": "Alt-Tab Switcher",
+    "description": "Visual centered window switcher (app icon + title cards) for mango Alt+Tab.",
+    "version": "0.1.0",
+    "author": "AhjinYeri",
+    "type": "widget",
+    "capabilities": ["dankbar-widget"],
+    "component": "./AltSwitcherBar.qml",
+    "icon": "switch_access_shortcut",
+    "permissions": ["process"]
+}
