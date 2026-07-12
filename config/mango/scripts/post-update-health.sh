@@ -197,10 +197,18 @@ plugin_enabled audioToggle && pass "audioToggle plugin enabled" \
     || fail "audioToggle plugin" "not enabled in plugin_settings.json" "$PLUGIN_SETTINGS" \
             "Re-enable via DMS Settings -> Plugins, confirm it's in the bar, then 'dms restart'."
 
-# The switcher plugin does the actual output switching internally (via the audio
-# backend checked below); there's no separate ~/.local/bin switcher script to verify.
-have wpctl || have pactl && pass "audio backend present (wpctl/pactl)" \
-    || fail "audio backend" "neither wpctl nor pactl found" "PATH / packages" "Install wireplumber (wpctl) or libpulse (pactl)."
+# The output-switcher plugin does all switching itself by calling `wpctl`
+# (WirePlumber's CLI) directly -- there is NO ~/.local/bin helper script to verify,
+# and pactl is NOT used. So wpctl is this plugin's hard dependency (the analog of the
+# helper scripts the other plugin sections check for).
+if have wpctl; then
+    pass "wpctl present (WirePlumber CLI the output-switcher plugin calls directly)"
+else
+    fail "wpctl (audio backend for output-switcher)" \
+         "wpctl not found — the output-switcher plugin can't enumerate or switch outputs" \
+         "PATH / packages; the plugin (AudioToggleBar.qml) runs 'wpctl status' and 'wpctl set-default <id>'" \
+         "Install/repair WirePlumber (it provides wpctl): 'pacman -S wireplumber'. The plugin is wpctl-only — pactl is NOT a substitute."
+fi
 
 # =============================================================================
 # 3. ALT-TAB SWITCHER PLUGIN (altSwitcher)   -- includes the crash canary
