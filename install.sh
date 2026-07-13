@@ -428,11 +428,21 @@ stage "13/16  easyeffects autostart (optional)"
 CONF="$HOME/.config/mango/config.conf"
 EE_LINE_RE='^[[:space:]]*#?[[:space:]]*exec-once[[:space:]]*=[[:space:]]*easyeffects'
 if [ -f "$CONF" ] && grep -qE "$EE_LINE_RE" "$CONF"; then
-    if ask_yn "Autostart easyeffects with your session?"; then
+    if ask_yn "Autostart easyeffects with your session? (installs easyeffects if not already present)"; then
+        # Install easyeffects on demand -- ONLY because the user opted in here. It's
+        # deliberately NOT in the stage-3 package list (someone who says "no" shouldn't
+        # get it). Same AUR-helper invocation as stage 3; the helper pulls it from the
+        # official repos.
+        if have easyeffects; then
+            ok "easyeffects already installed"
+        elif "$AUR" -S --needed --noconfirm easyeffects; then
+            ok "easyeffects installed"
+        else
+            warn "easyeffects failed to install — the autostart line will no-op until you install it by hand: $AUR -S easyeffects"
+        fi
         # uncomment the exec-once easyeffects line
         sed -i -E "s|^[[:space:]]*#[[:space:]]*(exec-once[[:space:]]*=[[:space:]]*easyeffects.*)|\1|" "$CONF"
         ok "easyeffects autostart ENABLED (exec-once left active in config.conf)"
-        have easyeffects || warn "easyeffects isn't installed — install it, or the autostart line will no-op."
     else
         # comment it out if not already commented
         sed -i -E "s|^([[:space:]]*)(exec-once[[:space:]]*=[[:space:]]*easyeffects.*)|\1# \2|" "$CONF"
