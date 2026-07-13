@@ -34,6 +34,15 @@ WARNINGS=0
 # out-of-the-box look.
 SEED_WALLPAPER="futuristic-cityscape-sunset-stockcake_upscayl_2x_upscayl-standard-4x.png"
 
+# Taskbar/dock apps pinned out of the box. These live in DMS's SessionData
+# (~/.local/state/DankMaterialShell/session.json), NOT settings.json, so the
+# installer seeds them explicitly (stage 15) — otherwise a fresh install boots
+# with an empty taskbar. Values are the exact app IDs DMS matches (.desktop id /
+# WM class), taken from a live working setup. Only Alacritty/nemo/zen are
+# guaranteed installed; discord/steam/Spotify only show if you also install them
+# (offer to via the app-install step — see issue #5). Edit this list to taste.
+SEED_PINNED_APPS=(Alacritty nemo zen Spotify steam discord)
+
 # ---- pretty output ----------------------------------------------------------
 c_blu=$'\033[1;34m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'; c_red=$'\033[31m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
 stage() { printf '\n%s==> %s%s\n' "$c_blu" "$1" "$c_off"; }
@@ -135,7 +144,10 @@ stage "3/16  Installing packages"
 # Official-repo packages (the AUR helper pulls these straight from the repos).
 # rsync: NOT part of a base CachyOS install, and it's a hard dependency of the
 # SDDM stage's apply.sh -- install it here so that stage never hits its fallback.
-REPO_PKGS=(nemo nemo-fileroller matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync)
+# jq: relied on all over this rice (the dp2-floatsize placer, the taskbar-pin +
+# wallpaper seeds, the popupTransparency edit). It's only incidentally present on
+# some systems (pulled in by scx-scheds etc.), so pin it explicitly here.
+REPO_PKGS=(nemo nemo-fileroller matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq)
 # AUR packages that DankMango needs.
 AUR_PKGS=(zen-browser-bin sddm-astronaut-theme)
 # NOTE: intentionally NOT installed here (CachyOS + MangoWM base already ships
@@ -482,7 +494,45 @@ done
 # =============================================================================
 # 15. Restart DMS to apply, then seed first-boot theming from a bundled wallpaper
 # =============================================================================
-stage "15/16  Restarting DankMaterialShell + seeding theme"
+stage "15/16  Seeding taskbar pins, restarting DankMaterialShell + seeding theme"
+
+# Seed the taskbar/dock pins AND (offline) the default wallpaper into DMS's
+# SessionData file BEFORE (re)starting DMS, in one jq pass. Both live in session.json
+# under ~/.local/state — a file the installer otherwise never touches, so without this
+# a fresh install boots with an empty taskbar and default (un-themed) colors. On load
+# DMS runs Theme.generateSystemThemesFromCurrentTheme() (SessionData.qml), which
+# regenerates the matugen theme from wallpaperPath — that's what makes the offline
+# wallpaper seed actually theme the desktop on first login. Non-clobbering: we only set
+# lists/keys that are currently empty/absent, preserving everything else. No-op without
+# jq. (The live `dms ipc call wallpaper set` path below still runs when DMS is already
+# up, to apply + run matugen immediately instead of at next login.)
+sess="${XDG_STATE_HOME:-$HOME/.local/state}/DankMaterialShell/session.json"
+seed_wall="$HOME/Pictures/Wallpapers/$SEED_WALLPAPER"
+if have jq; then
+    pins_json="$(printf '%s\n' "${SEED_PINNED_APPS[@]}" | jq -R . | jq -s .)"
+    wp=""; [ -f "$seed_wall" ] && wp="$seed_wall"
+    mkdir -p "$(dirname "$sess")"
+    had_sess=0; [ -f "$sess" ] && had_sess=1
+    [ "$had_sess" -eq 1 ] || printf '{}\n' > "$sess"
+    tmp="$(mktemp)"
+    if jq --argjson pins "$pins_json" --arg wp "$wp" '
+            .barPinnedApps = (if ((.barPinnedApps // []) | length) == 0 then $pins else .barPinnedApps end)
+          | .pinnedApps    = (if ((.pinnedApps    // []) | length) == 0 then $pins else .pinnedApps    end)
+          | .wallpaperPath = (if (($wp | length) > 0 and ((.wallpaperPath // "") | length) == 0) then $wp else (.wallpaperPath // "") end)
+        ' "$sess" > "$tmp" && [ -s "$tmp" ]; then
+        [ "$had_sess" -eq 1 ] && cp -a "$sess" "$sess.bak-$STAMP"
+        cat "$tmp" > "$sess"
+        ok "seeded taskbar/dock pins: ${SEED_PINNED_APPS[*]}"
+        info "discord/steam/Spotify only appear if installed — see the optional app-install step (issue #5)."
+        [ -n "$wp" ] && ok "seeded default wallpaper into session.json (DMS themes on first login: $SEED_WALLPAPER)"
+    else
+        warn "couldn't seed pins/wallpaper into session.json (jq edit failed) — set them by hand after login."
+    fi
+    rm -f "$tmp"
+else
+    warn "jq not available — can't seed taskbar pins or wallpaper. Pin apps + pick a wallpaper by hand after login."
+fi
+
 if have dms; then
     if dms restart 2>/dev/null; then
         ok "DMS restarted"
@@ -494,39 +544,22 @@ else
     warn "'dms' command not found — is DankMaterialShell installed? It will start at login if so."
 fi
 
-# Seed first-boot theming. matugen only writes the theme files (dank-theme.toml,
-# dank-colors.css, colors.conf, ...) the FIRST time a wallpaper is applied — so
-# without this a fresh install boots with every theming config in place but DEFAULT
-# colors until the user manually picks a wallpaper. We seed from a bundled wallpaper
-# the DMS-NATIVE way: `dms ipc call wallpaper set` applies it, triggers matugen, AND
-# persists DMS's own wallpaper state in one action (preferred over calling matugen
-# directly, which would leave DMS thinking no wallpaper is set). If DMS isn't up yet
-# (normal on a first install), we instead write the path into settings.json so DMS
-# themes itself on first login — its theme is already "dynamic".
-seed_wall="$HOME/Pictures/Wallpapers/$SEED_WALLPAPER"
-seed_settings="$HOME/.config/DankMaterialShell/settings.json"
+# Theme immediately if DMS is already up: `dms ipc call wallpaper set` applies the
+# wallpaper, runs matugen, and persists state in one action — nicer than waiting for
+# first login. On a fresh install DMS usually isn't up yet, and that's fine: the
+# wallpaper was already seeded into session.json above, so DMS themes itself on first
+# login (matugen only writes its theme files — dank-theme.toml, colors.conf, ... — the
+# first time a wallpaper is applied, which either path now guarantees).
 if [ ! -f "$seed_wall" ]; then
     warn "seed wallpaper not found: $seed_wall — theming not seeded."
     info "Set a wallpaper once in DMS (Super+W) to generate the theme. (SEED_WALLPAPER names the default.)"
 elif ! have matugen; then
-    warn "matugen not installed — can't seed theming. Install it, then set a wallpaper once."
+    warn "matugen not installed — can't generate the theme. Install it, then set a wallpaper once."
 elif have dms && sleep 1 && seed_out="$(dms ipc call wallpaper set "$seed_wall" 2>/dev/null)" \
      && [ "${seed_out#ERROR}" = "$seed_out" ]; then
-    ok "seeded theming from $SEED_WALLPAPER via DMS (wallpaper set + matugen, state persisted)"
-elif have jq && [ -f "$seed_settings" ]; then
-    # DMS not reachable -> safe to hand-edit settings.json (no live DMS to clobber it);
-    # DMS reads wallpaperPath + its dynamic theme on first login and runs matugen itself.
-    tmp="$(mktemp)"
-    if jq --arg p "$seed_wall" '.wallpaperPath = $p' "$seed_settings" > "$tmp" && [ -s "$tmp" ]; then
-        cp -a "$seed_settings" "$seed_settings.bak-$STAMP"
-        cat "$tmp" > "$seed_settings"
-        ok "DMS not running yet — seeded default wallpaper into settings.json (DMS themes on first login)"
-    else
-        warn "couldn't write wallpaperPath into settings.json — set a wallpaper once after login to theme."
-    fi
-    rm -f "$tmp"
+    ok "applied theming from $SEED_WALLPAPER via DMS now (wallpaper set + matugen, state persisted)"
 else
-    warn "DMS not running and jq/settings.json unavailable — set a wallpaper once after login to theme."
+    info "DMS not running yet — wallpaper was seeded into session.json above; DMS themes on first login."
 fi
 
 # =============================================================================
