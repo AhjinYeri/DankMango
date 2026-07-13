@@ -147,7 +147,10 @@ stage "3/16  Installing packages"
 # jq: relied on all over this rice (the dp2-floatsize placer, the taskbar-pin +
 # wallpaper seeds, the popupTransparency edit). It's only incidentally present on
 # some systems (pulled in by scx-scheds etc.), so pin it explicitly here.
-REPO_PKGS=(nemo nemo-fileroller matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq)
+# cava: the runtime backend for DMS's built-in Media-widget audio waveform. Without
+# it CavaService.cavaAvailable is false and the widget silently falls back to a static
+# icon (issue #3). Not in a base install, so pin it here.
+REPO_PKGS=(nemo nemo-fileroller matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava)
 # AUR packages that DankMango needs.
 AUR_PKGS=(zen-browser-bin sddm-astronaut-theme)
 # NOTE: intentionally NOT installed here (CachyOS + MangoWM base already ships
