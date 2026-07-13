@@ -4,8 +4,11 @@ A button that lives in your top bar (the **⊟ splitscreen** icon). Click it and
 panel opens where you set **each monitor** to **Tile** or **Float**:
 
 - **Tile** — windows automatically arrange to fill the screen (a normal tiling layout).
-- **Float** — windows open as a big, draggable, "Windows-11 style" window, centered and
-  sized to ~85% of that monitor.
+- **Float** — windows open as a big, draggable, "Windows-11 style" window. Each one is sized
+  and placed to match exactly what a **single tiled window** would get on that monitor, so a
+  Float monitor looks just like a Tile monitor holding one window (same margins, same strip
+  reserved for the bar). There's no fixed percentage — it's derived from your live layout, so
+  it fits any resolution automatically.
 
 You can set each monitor on its own, or pick a ready-made combo (**All Tile**, **All Float**,
 and — with exactly two monitors — **Tile / Float** and **Float / Tile**). Your monitors are
@@ -43,6 +46,26 @@ troubleshooting.
 
 ---
 
+## Dragging a window between monitors
+
+Tagrules only decide a window's mode **when it first opens** — MangoWM applies
+`open_as_floating` at open time and never re-checks it afterward. So on its own, MangoWM would
+let a **dragged** window keep its old mode: a tiled window dragged onto a Float monitor would
+stay a cramped tile, and a floating window dragged onto a Tile monitor would sit on top of the
+tiling layout instead of joining it.
+
+DankMango fixes this for you. The background **placer** (`dp2-floatsize.sh`) notices a window
+arriving on a monitor and corrects its mode to match the **destination**:
+
+- Drag a window onto a **Float** monitor → it's floated and given the big, tiled-window-sized box.
+- Drag a window onto a **Tile** monitor → it's un-floated so it drops into the tiling layout.
+
+This is a deliberate feature of this setup, **not** a MangoWM default — without the placer
+running, dragged windows would keep whatever mode they opened in. (It's the same placer that
+sizes floating windows, so if drag-correction ever stops, see the update-checks below.)
+
+---
+
 ## How the whole thing fits together (3 pieces)
 
 You don't need to read the code — just know which file does what, so if something breaks you
@@ -52,7 +75,7 @@ know where to look.
 |------|------|--------------|
 | **The button** (this plugin) | `~/.config/DankMaterialShell/plugins/monitorMode/MonitorModeBar.qml` | Just the buttons. Holds **no logic** — every button runs the setter script below. The setter path is resolved from `$HOME` at run time, so it's not tied to any user. |
 | **The setter** | `~/.config/mango/scripts/set-monitor-mode.sh` | Adds/removes `open_as_floating` on a monitor's 9 tagrules, saves it, and reloads MangoWM. |
-| **The placer** | `~/.config/mango/scripts/dp2-floatsize.sh` | Runs in the background; centers/sizes floating windows and auto-tiles windows you drag onto a tiling monitor. Size is computed live from each monitor's resolution — nothing to capture per machine. |
+| **The placer** | `~/.config/mango/scripts/dp2-floatsize.sh` | Runs in the background. Sizes/places floating windows to match a single tiled window on the same monitor, and auto-corrects a window's mode when you drag it between monitors (see below). Sizes are derived live from your layout — nothing to capture per machine. |
 
 Both scripts have a clearly-marked **`EDIT HERE AFTER A MANGO / DMS UPDATE`** box at the top
 that holds every command an update could change — you almost never need to touch anything
@@ -94,8 +117,10 @@ line naming `MonitorModeBar.qml`. **Known gotcha:** `DankIcon` uses `size:`, **n
 
 ## Everyday tweaks
 
-- **Bigger/smaller floating windows:** edit `FLOAT_PCT` (try 80–90) in the EDIT-HERE box of
-  `dp2-floatsize.sh`. No placer restart needed for the next window.
+- **Bigger/smaller floating windows:** floating windows are sized to match a tiled window, so
+  there's no separate size knob — change your **tiling gaps** instead (`gappoh`/`gappov`, via
+  DMS or `~/.config/mango/dms/layout.conf`) and floating follows automatically, staying
+  identical to tiling.
 - **Moved your scripts?** update the `setter` property near the top of `MonitorModeBar.qml`
   (it's built from `$HOME`) and the paths in each script's EDIT-HERE box, then `dms restart`.
 - **Debug the placer:** restart it with `DP2_DEBUG=1`, then `tail -f /tmp/dp2-floatsize.log`.

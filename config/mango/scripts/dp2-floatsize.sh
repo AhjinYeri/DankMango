@@ -51,11 +51,17 @@ set -uo pipefail
 # --- 1. FILE PATHS ----------------------------------------------------------
 # Where things live on disk. Change these only if you move your config around.
 CONFIG="$HOME/.config/mango/config.conf"          # MangoWM main config (read to learn each monitor's mode)
+LAYOUT="$HOME/.config/mango/dms/layout.conf"      # DMS-generated gaps/border (read for the effective outer gap)
 OUTPUTS="$HOME/.config/mango/dms/outputs.conf"    # DMS-generated monitor sizes (FALLBACK only; mango is queried live first)
 DMS_SETTINGS="$HOME/.config/DankMaterialShell/settings.json"  # DMS config (read to learn which screen edge the DankBar is docked to)
 # Lock file (stops two copies of the watcher running) and debug log file.
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/mango-dp2-floatsize.lock"
 LOG="/tmp/dp2-floatsize.log"
+# Remembers the last real tiled-window insets we measured ("L R T B"), so a float
+# window can still match tiling even when NO monitor is tiling at that moment (e.g.
+# you set every monitor to float). Insets are absolute px (outer gap + bar strip),
+# identical on every monitor and resolution-independent, so this is safe to reuse.
+INSETS_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/mango-dp2-floatsize-insets"
 
 # --- 2. COMMANDS THAT TALK TO MANGOWM ---------------------------------------
 # These five wrappers are the ONLY places this script calls MangoWM's "mmsg"
@@ -82,11 +88,16 @@ mango_dispatch()            { mmsg dispatch "$1" >/dev/null 2>&1; }
 #                     is_fullscreen, appid
 #   all-monitors    : monitors[].name, monitors[].active
 #   monitor <name>  : x, y, width, height (the monitor's live resolution/position,
-#                     used to compute the centered proportional float box),
-#                     tags[].is_active, tags[].client_count
+#                     used to compute the float box), tags[].is_active,
+#                     tags[].client_count
+#   all-clients     : clients[].monitor, clients[].x/y/width/height,
+#                     clients[].is_floating, clients[].is_fullscreen,
+#                     clients[].is_namedscratchpad -- used to MEASURE the geometry
+#                     a single tiled window gets (so a float window can match it)
 mango_focused_client_json() { mmsg get focusing-client 2>/dev/null; }
 mango_all_monitors_json()   { mmsg get all-monitors 2>/dev/null; }
 mango_one_monitor_json()    { mmsg get monitor "$1" 2>/dev/null; }
+mango_all_clients_json()    { mmsg get all-clients 2>/dev/null; }
 mango_watch_monitors_json() { mmsg watch all-monitors 2>/dev/null; }
 
 # --- 3. THE "FLOAT MODE" KEYWORD IN THE CONFIG ------------------------------
@@ -96,13 +107,28 @@ mango_watch_monitors_json() { mmsg watch all-monitors 2>/dev/null; }
 MANGO_FLOAT_TOKEN="open_as_floating"
 
 # --- 4. TUNING (safe to tweak any time; NOT tied to a MangoWM version) -------
-# The float box is computed PROPORTIONALLY from each monitor's live resolution:
-#   width  = FLOAT_PCT% of the monitor width
-#   height = FLOAT_PCT% of the monitor height MINUS the bar strip
-#   position = centered in the area NOT covered by the bar
-# So it scales to any resolution (1080p / 1440p / 4K / ultrawide) automatically.
-FLOAT_PCT=95          # window size as a percentage of the monitor (try 80-90)
-BAR_SIZE=44           # pixels reserved for the DankBar strip (its thickness)
+# The float box is sized to match what a SINGLE TILED window gets on the same
+# resolution, so floating and tiling look identical for one window. It is derived
+# in two ways, best first:
+#   1. MEASURED (preferred): read the geometry a real tiled window currently has
+#      on any monitor that is in tiling mode, and reuse those exact edge insets
+#      (outer gap on three sides, outer gap + bar strip on the bar's side). This
+#      uses tiling's OWN output as the input -- nothing hardcoded, and it tracks
+#      any gap/border/bar change automatically. Needs >=1 tiled window to exist
+#      somewhere at the time (the usual case with per-monitor modes).
+#   2. COMPUTED FALLBACK: if no tiled window exists to measure, rebuild the same
+#      box from mango's config: window = monitor, inset by the OUTER GAP
+#      (gappoh/gappov, read live from the effective config -- see effective_gap)
+#      on every edge, minus the bar strip on the bar's edge. The bar strip has no
+#      single config key, so bar_strip() derives it live from the adopter's own
+#      DankBar settings (see that function); BAR_STRIP_FALLBACK below is only the
+#      very last resort if even settings.json / jq can't be read.
+# Both scale to any resolution (1080p / 1440p / 4K / ultrawide) automatically.
+# ABSOLUTE last-resort bar strip (px), used ONLY if settings.json or jq are missing so
+# bar_strip() can't derive the real value. This is the DMS DEFAULT bar (innerPadding 4,
+# spacing 4, bottomGap 0 -> ~40px), NOT a personal number -- on any working system the
+# derived value wins, and the first tiled window refreshes the real strip exactly.
+BAR_STRIP_FALLBACK=40
 # Which screen edge the DankBar is docked to. Leave EMPTY to auto-detect from
 # DMS settings (barConfigs[].position: 0=top, 1=bottom). Set to "top" or
 # "bottom" to FORCE a value if auto-detect is wrong or DMS_SETTINGS is missing.
@@ -189,32 +215,142 @@ mon_screen_geom() {
     }' "$OUTPUTS" 2>/dev/null
 }
 
-# Compute the float target for a SPECIFIC monitor into globals X/Y/W/H:
-# a box FLOAT_PCT% of the monitor's live resolution, CENTERED in the area the
-# DankBar does NOT cover (its strip is reserved on whichever edge the bar is
-# docked to -- top or bottom). Fully resolution-independent -- no captured
-# coordinates, nothing per-machine. Falls back to a small centered box only if
-# the resolution is somehow unknown.
+# The OUTER gap (px) mango leaves between a tiled window and the screen edge,
+# printed as "<horizontal> <vertical>". Read LIVE from the effective config so the
+# COMPUTED-fallback float box uses the SAME numbers tiling does. Precedence: the
+# DMS-generated dms/layout.conf wins (it is the LAST `source=` in config.conf, and
+# that is the value mango actually applies), then any inline value in config.conf,
+# then a sane default. gappoh/gappov are mango config keys -- if a future mango
+# renames them, change the two grep patterns here.
+effective_gap() {
+  local gh gv f
+  for f in "$LAYOUT" "$CONFIG"; do              # layout.conf first -> it wins
+    [ -f "$f" ] || continue
+    [ -n "${gh:-}" ] || gh="$(grep -oE '^[[:space:]]*gappoh[[:space:]]*=[[:space:]]*[0-9]+' "$f" 2>/dev/null | grep -oE '[0-9]+$' | tail -1)"
+    [ -n "${gv:-}" ] || gv="$(grep -oE '^[[:space:]]*gappov[[:space:]]*=[[:space:]]*[0-9]+' "$f" 2>/dev/null | grep -oE '[0-9]+$' | tail -1)"
+  done
+  printf '%s %s\n' "${gh:-28}" "${gv:-28}"
+}
+
+# The vertical strip the DankBar reserves (its layer-shell exclusive zone), in px.
+# DMS does NOT store this as a single setting -- DankBarWindow.qml COMPUTES it at
+# runtime from the bar's own innerPadding / spacing / bottomGap. We mirror that
+# (non-frame) formula from those adopter-configured values, read from settings.json
+# with jq the same way bar_edge() does, so the cold-start fallback scales to whatever
+# bar the adopter set up instead of a number baked in for one machine. DMS formula
+# (DankBarWindow.qml): widgetThickness = max(20, 26 + innerPadding*0.6);
+# effectiveBarThickness ~= widgetThickness + innerPadding + 4;
+# reservedStrip = effectiveBarThickness + spacing + bottomGap. If a future DMS reworks
+# the bar height, update this jq to match (it only affects the cold-start path).
+bar_strip() {
+  local v
+  v="$(jq -r '
+    (.barConfigs // []) | map(select(.enabled != false)) | (.[0] // {}) as $b
+    | ($b.innerPadding // 4) as $ip
+    | ($b.spacing // 4)      as $sp
+    | ($b.bottomGap // 0)    as $bg
+    | ([20, (26 + $ip * 0.6)] | max) as $wt
+    | (($wt + $ip + 4) + $sp + $bg) | round
+  ' "$DMS_SETTINGS" 2>/dev/null)"
+  case "${v:-}" in ''|-*|*[!0-9]*) printf '%s' "$BAR_STRIP_FALLBACK"; return ;; esac
+  printf '%s' "$v"
+}
+
+# Measure the edge insets (px) a SINGLE tiled window gets, printed as "L R T B", by
+# reading real tiled windows off any monitor currently in TILING mode. This is
+# tiling's OWN output reused directly as floating's target, so the two match to the
+# pixel -- outer gaps, border, and the bar's reserved strip are all baked in, with
+# nothing hardcoded. Prints nothing / returns 1 if there is no tiled window to
+# measure right now (then load_target uses the computed fallback).
+tiling_insets() {
+  local mons m mx my mw mh bbox minx miny maxx maxy L R T B
+  mons="$(mango_all_monitors_json | jq -r '.monitors[].name' 2>/dev/null)"
+  [ -n "$mons" ] || return 1
+  for m in $mons; do
+    mon_is_floating "$m" && continue                 # need a TILING monitor
+    read -r mx my mw mh <<<"$(mon_screen_geom "$m")"
+    [ -n "${mw:-}" ] && [ "${mw:-0}" -gt 0 ] && [ "${mh:-0}" -gt 0 ] || continue
+    # Bounding box of this monitor's REAL tiled windows. Skip floats, fullscreen and
+    # scratchpads -- they don't sit in the tile layout and would distort the box.
+    bbox="$(mango_all_clients_json | jq -r --arg m "$m" '
+      [ (.clients // [])[] | select(.monitor==$m
+          and ((.is_floating // false)|not)
+          and ((.is_fullscreen // false)|not)
+          and ((.is_namedscratchpad // false)|not)) ] as $c
+      | if ($c|length) > 0 then
+          "\([$c[].x]|min) \([$c[].y]|min) \([$c[]|(.x+.width)]|max) \([$c[]|(.y+.height)]|max)"
+        else empty end' 2>/dev/null)"
+    [ -n "$bbox" ] || continue
+    read -r minx miny maxx maxy <<<"$bbox"
+    L=$(( minx - mx )); T=$(( miny - my ))
+    R=$(( mx + mw - maxx )); B=$(( my + mh - maxy ))
+    # Sanity-gate the measurement: insets must be non-negative and a small fraction
+    # of the screen. A rogue/off-screen window would give absurd values -> reject and
+    # let the caller fall back rather than size a window wrong.
+    if [ "$L" -ge 0 ] && [ "$R" -ge 0 ] && [ "$T" -ge 0 ] && [ "$B" -ge 0 ] \
+       && [ "$L" -lt $(( mw / 4 )) ] && [ "$R" -lt $(( mw / 4 )) ] \
+       && [ "$T" -lt $(( mh / 4 )) ] && [ "$B" -lt $(( mh / 4 )) ]; then
+      printf '%s %s %s %s\n' "$L" "$R" "$T" "$B"; return 0
+    fi
+  done
+  return 1
+}
+
+# Persist / recall the last good insets "L R T B" (see INSETS_CACHE up top). The
+# reader validates the file is exactly four non-negative integers before trusting it,
+# so a truncated/garbage cache is ignored rather than sizing a window wrong.
+cache_write_insets() { mkdir -p "$(dirname "$INSETS_CACHE")" 2>/dev/null && printf '%s\n' "$1" >"$INSETS_CACHE" 2>/dev/null || true; }
+cache_read_insets() {
+  [ -f "$INSETS_CACHE" ] || return 1
+  local a b c d _rest
+  read -r a b c d _rest <"$INSETS_CACHE" || return 1
+  [ -n "${d:-}" ] || return 1
+  case "$a$b$c$d" in ""|*[!0-9]*) return 1 ;; esac
+  printf '%s %s %s %s\n' "$a" "$b" "$c" "$d"
+}
+
+# Compute the float target for a SPECIFIC monitor into globals X/Y/W/H: a box sized
+# and placed to match what a SINGLE TILED window gets on that monitor, so floating
+# and tiling look identical for one window. The insets (edge margins) are found best
+# first: (1) MEASURED live from a real tiled window (tiling_insets) and cached; (2)
+# the last CACHED measurement, for when nothing is tiled right now (e.g. every
+# monitor set to float); (3) COMPUTED from config gaps + a bar-strip estimate, only
+# if we have never measured. All three are resolution-independent -- no captured
+# coordinates, nothing per-machine. Falls back to a small box only if res is unknown.
 load_target() {
-  local mon=$1 mx my mw mh avail edge top_off
+  local mon=$1 mx my mw mh insets L R T B edge go_h go_v top_off usable_h bar
   read -r mx my mw mh <<<"$(mon_screen_geom "$mon")"
-  if [ -n "${mw:-}" ] && [ "${mw:-0}" -gt 0 ] && [ "${mh:-0}" -gt 0 ]; then
-    edge="$(bar_edge)"
-    case "$edge" in
-      top|bottom) avail=$(( mh - BAR_SIZE )) ;;  # bar eats a strip on one edge
-      *)          avail=$mh ;;                    # no top/bottom bar -> full height
-    esac
-    # Offset of the usable area from the monitor top: BAR_SIZE for a top bar, 0
-    # otherwise (a bottom bar reserves its strip BELOW the window, so the box
-    # starts at the monitor top).
-    [ "$edge" = top ] && top_off=$BAR_SIZE || top_off=0
-    W=$(( mw * FLOAT_PCT / 100 ))
-    H=$(( avail * FLOAT_PCT / 100 ))
-    X=$(( mx + (mw - W) / 2 ))                     # centered horizontally
-    Y=$(( my + top_off + (avail - H) / 2 ))        # centered in the un-barred area
-  else
-    X=100 ; Y=100 ; W=1280 ; H=720
+  if [ -z "${mw:-}" ] || [ "${mw:-0}" -le 0 ] || [ "${mh:-0}" -le 0 ]; then
+    X=100 ; Y=100 ; W=1280 ; H=720; return          # resolution unknown -> safe box
   fi
+  # PREFERRED: reuse the exact insets a real tiled window has right now (and remember
+  # them). If nothing is tiled to measure, reuse the last measurement we cached.
+  if insets="$(tiling_insets)"; then
+    cache_write_insets "$insets"
+  else
+    insets="$(cache_read_insets)" || insets=""
+  fi
+  if [ -n "$insets" ]; then
+    read -r L R T B <<<"$insets"
+    X=$(( mx + L )); Y=$(( my + T ))
+    W=$(( mw - L - R )); H=$(( mh - T - B ))
+    return
+  fi
+  # COMPUTED FALLBACK (never measured yet): rebuild from config gaps + bar-strip est.
+  read -r go_h go_v <<<"$(effective_gap)"
+  edge="$(bar_edge)"
+  bar="$(bar_strip)"                                  # DankBar reserved strip (derived)
+  case "$edge" in
+    top|bottom) usable_h=$(( mh - bar )) ;;           # bar eats a strip on one edge
+    *)          usable_h=$mh ;;                        # no top/bottom bar -> full height
+  esac
+  # A top bar reserves its strip ABOVE the window; a bottom bar reserves it BELOW,
+  # so the box still starts one outer-gap down from the monitor top.
+  [ "$edge" = top ] && top_off=$bar || top_off=0
+  W=$(( mw - 2 * go_h ))
+  H=$(( usable_h - 2 * go_v ))
+  X=$(( mx + go_h ))
+  Y=$(( my + top_off + go_v ))
 }
 
 # A new/arrived window grabs focus on its monitor; only act if that monitor is the
