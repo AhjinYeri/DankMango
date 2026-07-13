@@ -28,6 +28,12 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 WARNINGS=0
 
+# Default wallpaper used to SEED first-boot theming (matugen recolors the whole
+# desktop from it — see stage 15). Must be one of the filenames under wallpapers/
+# (they get installed to ~/Pictures/Wallpapers/). Change this to pick a different
+# out-of-the-box look.
+SEED_WALLPAPER="futuristic-cityscape-sunset-stockcake_upscayl_2x_upscayl-standard-4x.png"
+
 # ---- pretty output ----------------------------------------------------------
 c_blu=$'\033[1;34m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'; c_red=$'\033[31m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
 stage() { printf '\n%s==> %s%s\n' "$c_blu" "$1" "$c_off"; }
@@ -464,9 +470,9 @@ for pdir in "$REPO_DIR"/plugins/*/; do
 done
 
 # =============================================================================
-# 15. Restart DMS to apply
+# 15. Restart DMS to apply, then seed first-boot theming from a bundled wallpaper
 # =============================================================================
-stage "15/16  Restarting DankMaterialShell"
+stage "15/16  Restarting DankMaterialShell + seeding theme"
 if have dms; then
     if dms restart 2>/dev/null; then
         ok "DMS restarted"
@@ -476,6 +482,41 @@ if have dms; then
     fi
 else
     warn "'dms' command not found — is DankMaterialShell installed? It will start at login if so."
+fi
+
+# Seed first-boot theming. matugen only writes the theme files (dank-theme.toml,
+# dank-colors.css, colors.conf, ...) the FIRST time a wallpaper is applied — so
+# without this a fresh install boots with every theming config in place but DEFAULT
+# colors until the user manually picks a wallpaper. We seed from a bundled wallpaper
+# the DMS-NATIVE way: `dms ipc call wallpaper set` applies it, triggers matugen, AND
+# persists DMS's own wallpaper state in one action (preferred over calling matugen
+# directly, which would leave DMS thinking no wallpaper is set). If DMS isn't up yet
+# (normal on a first install), we instead write the path into settings.json so DMS
+# themes itself on first login — its theme is already "dynamic".
+seed_wall="$HOME/Pictures/Wallpapers/$SEED_WALLPAPER"
+seed_settings="$HOME/.config/DankMaterialShell/settings.json"
+if [ ! -f "$seed_wall" ]; then
+    warn "seed wallpaper not found: $seed_wall — theming not seeded."
+    info "Set a wallpaper once in DMS (Super+W) to generate the theme. (SEED_WALLPAPER names the default.)"
+elif ! have matugen; then
+    warn "matugen not installed — can't seed theming. Install it, then set a wallpaper once."
+elif have dms && sleep 1 && seed_out="$(dms ipc call wallpaper set "$seed_wall" 2>/dev/null)" \
+     && [ "${seed_out#ERROR}" = "$seed_out" ]; then
+    ok "seeded theming from $SEED_WALLPAPER via DMS (wallpaper set + matugen, state persisted)"
+elif have jq && [ -f "$seed_settings" ]; then
+    # DMS not reachable -> safe to hand-edit settings.json (no live DMS to clobber it);
+    # DMS reads wallpaperPath + its dynamic theme on first login and runs matugen itself.
+    tmp="$(mktemp)"
+    if jq --arg p "$seed_wall" '.wallpaperPath = $p' "$seed_settings" > "$tmp" && [ -s "$tmp" ]; then
+        cp -a "$seed_settings" "$seed_settings.bak-$STAMP"
+        cat "$tmp" > "$seed_settings"
+        ok "DMS not running yet — seeded default wallpaper into settings.json (DMS themes on first login)"
+    else
+        warn "couldn't write wallpaperPath into settings.json — set a wallpaper once after login to theme."
+    fi
+    rm -f "$tmp"
+else
+    warn "DMS not running and jq/settings.json unavailable — set a wallpaper once after login to theme."
 fi
 
 # =============================================================================
