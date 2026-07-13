@@ -181,32 +181,59 @@ else
     info "no keyd config shipped in the repo yet -> not enabling the keyd service."
 fi
 
-# 5b. SDDM astronaut theme customisations (12h clock + custom background), copied
-#     into place so an AUR package update to sddm-astronaut-theme can't clobber them.
-#     Convention: theme files live under system/sddm/theme/ ; drop-in *.conf under
-#     system/sddm/ go to /etc/sddm.conf.d/. Both are guarded — nothing is invented.
-if [ -d "$REPO_DIR/system/sddm/theme" ] && [ -n "$(ls -A "$REPO_DIR/system/sddm/theme" 2>/dev/null)" ]; then
-    dest="/usr/share/sddm/themes/sddm-astronaut-theme"
-    if [ -d "$dest" ]; then
-        sudo cp -a "$dest" "$dest.bak-$STAMP" && info "backed up $dest -> $dest.bak-$STAMP"
+# 5b. SDDM: Japanese astronaut theme (12h clock + custom background), installed
+#     via the UPDATE-PROOF apply.sh pattern -- NOT a theme/conf split.
+#     How it really works (verified against the live system):
+#       * The source of truth is a small config dir (apply.sh + the customized
+#         japanese_aesthetic.conf + the background png). We install it to
+#         ~/.config/sddm-astronaut-japanese/.
+#       * apply.sh (run as root) rsyncs the package-owned upstream theme into a
+#         SEPARATE copy dir that pacman never touches, overlays our conf + bg,
+#         fixes metadata.desktop, and writes /etc/sddm.conf.d/theme.conf. That's
+#         what survives sddm-astronaut-theme package updates.
+#     So here we (1) drop the config dir into ~/.config, then (2) run apply.sh.
+SDDM_SRC="$REPO_DIR/system/sddm/sddm-astronaut-japanese"
+SDDM_CFG_DST="$HOME/.config/sddm-astronaut-japanese"
+if [ -f "$SDDM_SRC/apply.sh" ]; then
+    if [ -d "$SDDM_CFG_DST" ]; then
+        cp -a "$SDDM_CFG_DST" "$SDDM_CFG_DST.bak-$STAMP" && info "backed up existing $SDDM_CFG_DST -> $SDDM_CFG_DST.bak-$STAMP"
     fi
-    sudo mkdir -p "$dest"
-    sudo cp -a "$REPO_DIR/system/sddm/theme/." "$dest/" && ok "SDDM theme customisations copied into $dest"
+    mkdir -p "$SDDM_CFG_DST"
+    cp -a "$SDDM_SRC/." "$SDDM_CFG_DST/"
+    chmod +x "$SDDM_CFG_DST/apply.sh"
+    ok "SDDM theme config -> $SDDM_CFG_DST"
+    info "(tip: your display isn't 1080p? edit ScreenWidth/ScreenHeight in japanese_aesthetic.conf first.)"
+
+    # apply.sh needs rsync and the upstream package to be present.
+    if ! have rsync; then
+        warn "rsync not found — apply.sh needs it. Install rsync, then run: sudo $SDDM_CFG_DST/apply.sh"
+    elif [ ! -d /usr/share/sddm/themes/sddm-astronaut-theme ]; then
+        warn "upstream sddm-astronaut-theme not installed yet — run 'sudo $SDDM_CFG_DST/apply.sh' after it is."
+    else
+        info "Running apply.sh (builds the update-proof theme copy + sets it active) — needs sudo."
+        if sudo "$SDDM_CFG_DST/apply.sh"; then
+            ok "SDDM Japanese theme applied (12h clock, custom background, update-proof copy)"
+        else
+            warn "apply.sh failed — re-run it manually: sudo $SDDM_CFG_DST/apply.sh"
+        fi
+    fi
 else
-    warn "no SDDM theme files in system/sddm/theme/ -> skipping theme customisation."
+    warn "no SDDM theme config in system/sddm/sddm-astronaut-japanese/ -> skipping SDDM theming."
     info "(the sddm-astronaut-theme AUR package still installed its own default theme.)"
 fi
 
-# 5c. SDDM drop-in config(s): system/sddm/*.conf -> /etc/sddm.conf.d/
+# 5c. SDDM drop-in config(s) that apply.sh does NOT manage (e.g. numlock.conf):
+#     system/sddm/sddm.conf.d/*.conf -> /etc/sddm.conf.d/
+#     NOTE: theme.conf is intentionally NOT shipped here — apply.sh writes it.
 shopt -s nullglob
-sddm_confs=("$REPO_DIR"/system/sddm/*.conf)
+sddm_confs=("$REPO_DIR"/system/sddm/sddm.conf.d/*.conf)
 shopt -u nullglob
 if [ "${#sddm_confs[@]}" -gt 0 ]; then
     for f in "${sddm_confs[@]}"; do
         sys_copy "$f" "/etc/sddm.conf.d/$(basename "$f")"
     done
 else
-    warn "no SDDM *.conf drop-ins in system/sddm/ -> skipping /etc/sddm.conf.d/ setup."
+    warn "no SDDM drop-ins in system/sddm/sddm.conf.d/ -> skipping /etc/sddm.conf.d/ setup."
 fi
 
 # 5d. wlr xdg-desktop-portal config, IF the repo ships a system-level one.
