@@ -612,6 +612,5 @@
   "clipboardEnterToPaste": false,
   "launcherPluginVisibility": {},
   "launcherPluginOrder": [],
-  "configVersion": 5,
-  "m3ElevationEnabled": false
+  "configVersion": 5
 }
