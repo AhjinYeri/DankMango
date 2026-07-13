@@ -51,6 +51,12 @@ It should work on any monitor count or resolution — nothing here is hardcoded 
 
 4. **Log out and back in** once the script finishes — some pieces (like the `keyd` launcher) only take effect on a fresh login, not a DMS reload.
 
+5. **Verify everything applied** by running the health check:
+   ```bash
+   ~/.config/mango/scripts/post-update-health.sh
+   ```
+   It checks that the theming/border colour chain, tagrules, and other moving parts are wired up correctly, and points you at anything that didn't take. Run it any time after an install or a system update.
+
 ## Wallpapers
 
 A handful of cyberpunk/neon wallpapers are bundled, all sourced free-to-use and credited in [`wallpapers/CREDITS.md`](wallpapers/CREDITS.md). Swap in your own any time — the theming system will follow whatever wallpaper is active.
