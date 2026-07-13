@@ -1,0 +1,15 @@
+/*
+ * gtk-3.0/gtk.css  (mirrors the gtk-4.0 import pattern)
+ *
+ * Layer 1: DMS/matugen-managed colors. matugen regenerates dank-colors.css on
+ *          every wallpaper change; importing it here keeps GTK3 apps following
+ *          the wallpaper exactly as before.
+ * Layer 2: user overrides (Nemo window transparency for compositor blur).
+ *
+ * NOTE: clicking "Apply GTK Colors" in DMS Settings -> Theme runs gtk.sh, which
+ *       resets this file back to a symlink (gtk.css -> dank-colors.css) and saves
+ *       this file as gtk.css.backup.<timestamp>. If that happens, restore by
+ *       recreating this file (and it re-imports nemo-transparency.css).
+ */
+@import url("dank-colors.css");
+@import url("nemo-transparency.css");

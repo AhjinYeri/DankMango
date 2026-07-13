@@ -1,0 +1,41 @@
+/*
+ * celluloid-transparency.css  (imported by gtk-4.0/gtk.css)
+ *
+ * Frosted-glass Celluloid, scoped to Celluloid's OWN widget nodes so no other
+ * GTK4/libadwaita app is affected. Lets mango/scenefx blur (blur = 1) show
+ * through the chrome, matching the Nemo / terminal look. See [[gtk-frosted-glass]].
+ *
+ * Celluloid 0.30 = GTK4 + libadwaita, and its main window is a plain
+ * AdwApplicationWindow (no custom CSS name). libadwaita paints the window-node
+ * and header-bar backgrounds at a priority that USER css (even with !important)
+ * cannot override, and there is no Celluloid-specific selector for them -- so the
+ * title bar stays a solid themed bar. What we CAN style are Celluloid's custom
+ * nodes: `celluloid-video-area`, `control-box`, `celluloid-seek-bar`.
+ *
+ * IMPORTANT re: the video. Making the video-area background translucent only
+ * affects the idle / "Welcome" state and any gaps. During playback mpv paints the
+ * whole area opaque (video frames + black letterbox), so the actual video is
+ * NEVER see-through -- exactly the "chrome transparent, video opaque" requirement.
+ *
+ * Colors reference the matugen named colors from dank-colors.css, so the tint
+ * follows the wallpaper.
+ */
+
+/* Content area: frosted on the idle/welcome screen + behind the controls.
+   Opaque during playback (mpv fills it). */
+celluloid-video-area {
+    background-color: alpha(@view_bg_color, 0.35);
+}
+
+/* Playback controls (OSD). Semi-transparent wallpaper-tinted fill instead of the
+   default near-black .osd panel. Covers docked + undocked; node OR class form. */
+control-box.osd,
+.control-box.osd {
+    background-color: alpha(@headerbar_bg_color, 0.60);
+}
+
+/* Seek bar trough blends with the frosted controls. */
+celluloid-seek-bar,
+celluloid-seek-bar trough {
+    background-color: transparent;
+}

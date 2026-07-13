@@ -1,0 +1,39 @@
+/*
+ * nemo-transparency.css  (imported by gtk-3.0/gtk.css)
+ *
+ * Frosted-glass Nemo: make the window background translucent so the compositor's
+ * blur (mango scenefx, blur = 1) shows through. Everything is scoped to
+ * `.nemo-window`, so other GTK3 apps stay fully opaque.
+ *
+ * Colors reference matugen variables from dank-colors.css, so the tint still
+ * follows your wallpaper. Opacity: window 0.70, headerbar 0.78. Tune to taste.
+ */
+
+/* Knock out the opaque fills on the inner containers so the translucent
+   toplevel fill below is what actually shows through to the blur. */
+.nemo-window,
+.nemo-window .nemo-window-pane,
+.nemo-window notebook,
+.nemo-window notebook > stack,
+.nemo-window .view,
+.nemo-window .view text,
+.nemo-window treeview.view,
+.nemo-window iconview,
+.nemo-window scrolledwindow,
+.nemo-window viewport,
+.nemo-window .sidebar,
+.nemo-window .nemo-places-sidebar {
+    background-color: transparent;
+}
+
+/* The single translucent fill for the whole window. */
+.nemo-window {
+    background-color: alpha(@window_bg_color, 0.70);
+}
+
+/* Headerbar / pathbar / toolbar a bit more solid for legibility. */
+.nemo-window headerbar,
+.nemo-window .nemo-pathbar,
+.nemo-window toolbar {
+    background-color: alpha(@headerbar_bg_color, 0.78);
+}

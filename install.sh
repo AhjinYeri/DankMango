@@ -127,7 +127,9 @@ ok "using AUR helper: $AUR"
 # =============================================================================
 stage "3/16  Installing packages"
 # Official-repo packages (the AUR helper pulls these straight from the repos).
-REPO_PKGS=(nemo nemo-fileroller matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd)
+# rsync: NOT part of a base CachyOS install, and it's a hard dependency of the
+# SDDM stage's apply.sh -- install it here so that stage never hits its fallback.
+REPO_PKGS=(nemo nemo-fileroller matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync)
 # AUR packages that DankMango needs.
 AUR_PKGS=(zen-browser-bin sddm-astronaut-theme)
 # NOTE: intentionally NOT installed here (CachyOS + MangoWM base already ships
@@ -336,20 +338,24 @@ fi
 # 9. GTK theming (dank-colors + transparency import into gtk-3.0 / gtk-4.0)
 # =============================================================================
 stage "9/16  Layering GTK theming (gtk-3.0 / gtk-4.0)"
-# Look for GTK theming source files in the repo. None are shipped today, so this
-# is guarded rather than invented.
+# Ship the hand-authored LAYER files only: each gtk.css @imports the matugen-
+# generated dank-colors.css (created at runtime -- NOT shipped) plus a scoped
+# per-app transparency file that must ship alongside it or the @import dangles.
+# settings.ini is deliberately NOT touched here (icon theme is set via DMS
+# settings.json). user_copy backs up any existing destination (.bak-<timestamp>)
+# and warns (rather than fails) if a source file is unexpectedly missing.
 gtk_found=0
 for pair in \
-    "$REPO_DIR/config/gtk/gtk-3.0/gtk.css:$HOME/.config/gtk-3.0/gtk.css" \
-    "$REPO_DIR/config/gtk/gtk-4.0/gtk.css:$HOME/.config/gtk-4.0/gtk.css" \
-    "$REPO_DIR/config/dms/gtk-3.0/gtk.css:$HOME/.config/gtk-3.0/gtk.css" \
-    "$REPO_DIR/config/dms/gtk-4.0/gtk.css:$HOME/.config/gtk-4.0/gtk.css"; do
+    "$REPO_DIR/config/gtk-3.0/gtk.css:$HOME/.config/gtk-3.0/gtk.css" \
+    "$REPO_DIR/config/gtk-3.0/nemo-transparency.css:$HOME/.config/gtk-3.0/nemo-transparency.css" \
+    "$REPO_DIR/config/gtk-4.0/gtk.css:$HOME/.config/gtk-4.0/gtk.css" \
+    "$REPO_DIR/config/gtk-4.0/celluloid-transparency.css:$HOME/.config/gtk-4.0/celluloid-transparency.css"; do
     s="${pair%%:*}"; d="${pair##*:}"
-    if [ -f "$s" ]; then user_copy "$s" "$d" && gtk_found=1; fi
+    user_copy "$s" "$d" && gtk_found=1
 done
 if [ "$gtk_found" -eq 0 ]; then
-    warn "no GTK theming files found in the repo (expected config/gtk/gtk-{3,4}.0/gtk.css)."
-    warn "GTK frosted-glass theming is NOT applied — add those files to the repo, then re-run."
+    warn "no GTK theming files found in the repo (expected config/gtk-{3,4}.0/*.css)."
+    warn "GTK frosted-glass theming is NOT applied — check the repo, then re-run."
 fi
 
 # =============================================================================

@@ -1,0 +1,14 @@
+/*
+ * gtk-4.0/gtk.css  (mirrors the gtk-3.0 import pattern)
+ *
+ * Layer 1: DMS/matugen-managed colors. matugen regenerates dank-colors.css on
+ *          every wallpaper change; importing it here keeps GTK4/libadwaita apps
+ *          following the wallpaper.
+ * Layer 2: user overrides (Celluloid chrome transparency for compositor blur).
+ *
+ * NOTE: clicking "Apply GTK Colors" in DMS Settings -> Theme may reset this file
+ *       back to a plain symlink (gtk.css -> dank-colors.css). If that happens,
+ *       restore this file so it re-imports celluloid-transparency.css.
+ */
+@import url("dank-colors.css");
+@import url("celluloid-transparency.css");
