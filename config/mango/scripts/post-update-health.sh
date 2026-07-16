@@ -13,7 +13,8 @@
 #
 #    It covers four areas:
 #      1. Per-monitor tiling + the Window Mode bar plugin (monitorMode)
-#      2. The audio output-switcher plugin (audioToggle)
+#      2. The audio output-switcher plugin (audioToggle) + the combined-audio-OSD
+#         patch on DMS's VolumeOSD.qml
 #      3. The visual Alt+Tab switcher plugin (altSwitcher)
 #      4. Dynamic window-border / theme colouring (the "colour chain")
 #    ...plus it records the mango / dms-shell / quickshell versions and tells you
@@ -55,6 +56,15 @@ DP2_HELPER="$SCRIPTS/dp2-floatsize.sh"
 DP2_LOCK="${XDG_RUNTIME_DIR:-/tmp}/mango-dp2-floatsize.lock"
 
 ALTTAB_SCRIPT="$SCRIPTS/alt-switcher.sh"
+AUDIO_TOGGLE="$HOME/.local/bin/audio-switch/audio-toggle"
+
+# Combined-audio-OSD patch: a local patch to DMS's package-owned VolumeOSD.qml that
+# adds a device-name line (so an output switch shows ONE popup: icon+name+slider).
+# Every dms-shell update OVERWRITES that file, wiping the patch -- so we check for the
+# marker and, if gone, point at the idempotent re-apply script.
+VOLUME_OSD="/usr/share/quickshell/dms/Modules/OSD/VolumeOSD.qml"
+OSD_PATCH_MARKER='DankMango patch: combined OSD device name'
+OSD_APPLY="$SCRIPTS/apply-combined-osd-patch.sh"
 
 # Commands mango/DMS updates have renamed before. Test-forms used by the checks:
 RELOAD_CMD=(mmsg dispatch reload_config)   # 0.13 was `mmsg -d reload_config` (now dead)
@@ -197,17 +207,32 @@ plugin_enabled audioToggle && pass "audioToggle plugin enabled" \
     || fail "audioToggle plugin" "not enabled in plugin_settings.json" "$PLUGIN_SETTINGS" \
             "Re-enable via DMS Settings -> Plugins, confirm it's in the bar, then 'dms restart'."
 
-# The output-switcher plugin does all switching itself by calling `wpctl`
-# (WirePlumber's CLI) directly -- there is NO ~/.local/bin helper script to verify,
-# and pactl is NOT used. So wpctl is this plugin's hard dependency (the analog of the
-# helper scripts the other plugin sections check for).
-if have wpctl; then
-    pass "wpctl present (WirePlumber CLI the output-switcher plugin calls directly)"
+if execu "$AUDIO_TOGGLE"; then
+    pass "audio-toggle script present & executable"
+    if "$AUDIO_TOGGLE" status >/dev/null 2>&1; then
+        pass "audio-toggle status runs cleanly"
+    else
+        fail "audio-toggle script" "runs but 'audio-toggle status' errored" "$AUDIO_TOGGLE (+ speakers/headphones beside it)" \
+             "Usually the wpctl/pactl calls inside changed, or sink names differ. Run '$AUDIO_TOGGLE status' by hand to see the error."
+    fi
 else
-    fail "wpctl (audio backend for output-switcher)" \
-         "wpctl not found — the output-switcher plugin can't enumerate or switch outputs" \
-         "PATH / packages; the plugin (AudioToggleBar.qml) runs 'wpctl status' and 'wpctl set-default <id>'" \
-         "Install/repair WirePlumber (it provides wpctl): 'pacman -S wireplumber'. The plugin is wpctl-only — pactl is NOT a substitute."
+    fail "audio-toggle script" "missing or not executable" "$AUDIO_TOGGLE" "Restore it, then: chmod +x '$AUDIO_TOGGLE'"
+fi
+have wpctl || have pactl && pass "audio backend present (wpctl/pactl)" \
+    || fail "audio backend" "neither wpctl nor pactl found" "PATH / packages" "Install wireplumber (wpctl) or libpulse (pactl)."
+
+# 2b. combined-audio-OSD patch on DMS's package-owned VolumeOSD.qml (dms updates wipe it)
+if [ ! -f "$VOLUME_OSD" ]; then
+    fail "combined audio OSD patch" "VolumeOSD.qml not found where expected -- DMS may have moved/renamed it" \
+         "expected $VOLUME_OSD; find it: pacman -Ql dms-shell | grep VolumeOSD.qml" \
+         "Update VOLUME_OSD in this script's EDIT HERE block to the new path, then re-run $OSD_APPLY (edit its TARGET to match too)."
+elif grep -qF "$OSD_PATCH_MARKER" "$VOLUME_OSD"; then
+    pass "combined audio OSD patch present (output switch shows one popup: icon + device name + slider)"
+else
+    fail "combined audio OSD patch" \
+         "VolumeOSD.qml lost the DankMango patch -- an output switch shows the volume OSD with NO device name (and may stack a 2nd popup)" \
+         "$VOLUME_OSD (marker '$OSD_PATCH_MARKER'); re-applied by $OSD_APPLY" \
+         "A dms-shell update overwrote this package-owned file. Re-apply the patch (idempotent, backs up first, needs sudo):  $OSD_APPLY   then 'dms restart'."
 fi
 
 # =============================================================================

@@ -29,6 +29,7 @@
 import QtQuick
 import Quickshell
 import qs.Common
+import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 
@@ -46,16 +47,23 @@ PluginComponent {
     // Monitors are detected LIVE from the compositor (Quickshell.screens) — no
     // hardcoded connectors, so this works on any setup. `conn` is the connector
     // passed to the script; `label` is the EDID model name DMS Displays shows
-    // (falls back to the connector if the model is unknown). Sorted left-to-right
-    // by x so cards and combos match the physical layout.
+    // (falls back to the connector if the model is missing OR the literal
+    // sentinel "Unknown" that Quickshell returns when no EDID is exposed --
+    // e.g. displays behind a KVM/adapter, or with a 0-byte EDID). Sorted
+    // left-to-right by x so cards and combos match the physical layout.
     readonly property var monitors: {
+        // Reference WlrOutputService.serial so this binding RE-EVALUATES when the
+        // dms backend pushes output data asynchronously (make/model arrive after
+        // component creation). Without this the labels could stick permanently on
+        // the connector-name fallback if evaluated before that backend event.
+        var _serial = WlrOutputService.serial
         var list = []
         var screens = Quickshell.screens
         for (var i = 0; i < screens.length; i++) {
             var s = screens[i]
             list.push({
                 "conn": s.name,
-                "label": (s.model && s.model.length > 0) ? s.model : s.name,
+                "label": root.labelFor(s),
                 "x": s.x
             })
         }
@@ -63,6 +71,29 @@ PluginComponent {
             return a.x - b.x
         })
         return list
+    }
+
+    // Best available human label for a screen, in priority order:
+    //   1. Real make + model from WlrOutputService -- fed by the dms backend via
+    //      the wlr-output protocol, the SAME source DMS Settings > Displays uses.
+    //      Works even when sysfs EDID is 0 bytes and Quickshell's s.model is the
+    //      literal "Unknown" sentinel (this hardware).
+    //   2. WlrOutputService model alone (guarded against "Unknown").
+    //   3. Quickshell's s.model (guarded against "Unknown") -- legacy path.
+    //   4. The connector name (s.name, e.g. "DP-1") -- always-correct last resort,
+    //      and the graceful fallback when the backend lacks the "wlroutput"
+    //      capability (WlrOutputService.outputs empty -> getOutput() returns null).
+    function labelFor(s) {
+        var o = WlrOutputService.getOutput(s.name)
+        if (o) {
+            if (o.make && o.model)
+                return o.make + " " + o.model
+            if (o.model && o.model !== "Unknown")
+                return o.model
+        }
+        if (s.model && s.model.length > 0 && s.model !== "Unknown")
+            return s.model
+        return s.name
     }
 
     // Live "WxH" for a connector from Quickshell.screens (matches DMS Displays styling).
