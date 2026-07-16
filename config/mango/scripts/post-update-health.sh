@@ -161,9 +161,9 @@ fi
 if grep -qE '^[[:space:]]*tagrule[[:space:]]*=' "$MANGO_CFG"; then
     pass "per-monitor tagrules present in config.conf"
 else
-    fail "Per-monitor tagrules" "no 'tagrule =' lines in config.conf — per-monitor tile/float is gone" \
+    fail "Per-monitor tagrules" "no 'tagrule =' lines in config.conf — per-monitor tile/float is not active" \
          "$MANGO_CFG (the 'Per-monitor window mode' block)" \
-         "A config reset likely wiped them. Restore from dotfiles/git, or re-add per the block in config.conf; a monitor FLOATS if its tagrules contain open_as_floating:1."
+         "FRESH INSTALL? This is expected until you do the one-time setup — see the README's 'Set up per-monitor tiling/floating' step (find your output names with wlr-randr, uncomment the MONITOR-1 block, Super+r). ALREADY HAD THEM? A DMS update or config reset likely wiped them — restore from dotfiles/git or re-add per the block in config.conf. (A monitor FLOATS if its tagrules contain open_as_floating:1.)"
 fi
 
 # 1c. helper scripts present + executable
