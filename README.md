@@ -47,6 +47,7 @@ It should work on any monitor count or resolution — nothing here is hardcoded 
    - Copy system-level configs (keyd, SDDM theme) into place
    - Install the DMS plugins and register them
    - Ask before pinning your power profile to performance (desktop only — skip this on a laptop)
+   - Ask before applying the **combined audio OSD patch** — an opt-in tweak that merges the device-name and volume popups into a single OSD when you switch audio output. Unlike the rest of the install this edits a DMS *package-owned* core file, so it's your call; it's self-healing (the health check re-applies it after DMS updates) and backs the original file up first. Applying it later by hand: `~/.config/mango/scripts/apply-combined-osd-patch.sh`
    - Restart DMS to apply everything
 
 4. **Log out and back in** once the script finishes — some pieces (like the `keyd` launcher) only take effect on a fresh login, not a DMS reload.
