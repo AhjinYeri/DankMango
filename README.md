@@ -52,16 +52,13 @@ It should work on any monitor count or resolution — nothing here is hardcoded 
 
 4. **Log out and back in** once the script finishes — some pieces (like the `keyd` launcher) only take effect on a fresh login, not a DMS reload.
 
-5. **Set up per-monitor tiling/floating** (one manual step — required for the Monitor Mode plugin to work). `mango` needs your monitors' *literal* output names and can't auto-detect them, so the shipped `~/.config/mango/config.conf` includes a **commented-out template** you activate once:
-   1. Find your output names:
-      ```bash
-      wlr-randr        # or:  mmsg get all-monitors | jq '.monitors[].name'
-      ```
-      e.g. `eDP-1`, `HDMI-A-1`, `DP-1`.
-   2. Open `~/.config/mango/config.conf`, find the **"Per-monitor window mode"** block near the top, and for **each** monitor uncomment a block of 9 `tagrule` lines, replacing `MONITOR-1` with the real output name. A monitor **tiles** by default; append `, open_as_floating:1` to its 9 lines to make it **float** instead.
-   3. Reload with **Super+r**.
+5. **Per-monitor tiling/floating — set up automatically.** `mango` needs your monitors' *literal* output names for per-monitor tile/float, and can't auto-detect them from the config. The installer handles this for you: it runs `scripts/generate-tagrules.sh`, which queries your connected outputs (`mmsg get all-monitors`) and writes one tile-mode block per monitor into `~/.config/mango/dms/tagrules.conf` (sourced by `config.conf`). Every monitor starts in **tile** mode; flip one to **float** anytime with the **Monitor Mode** bar button — no config editing.
 
-   Until you do this there are **zero `tagrule =` lines**, so per-monitor tile/float (and the Monitor Mode bar plugin, which only toggles monitors that already have their tagrules) won't work — and the health check in the next step will flag it. This is expected on a fresh install, not a bug.
+   If you later dock a laptop or add/remove a monitor, just re-run it and reload (**Super+r**):
+   ```bash
+   ~/.config/mango/scripts/generate-tagrules.sh
+   ```
+   For unusual setups or hand-tuning a specific monitor, `config.conf` keeps a commented **"Per-monitor window mode"** fallback template you can use instead.
 
 6. **Verify everything applied** by running the health check:
    ```bash

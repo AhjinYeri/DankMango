@@ -46,6 +46,11 @@ PLUGIN_SETTINGS="$DMS_DIR/plugin_settings.json"
 BAR_SETTINGS="$DMS_DIR/settings.json"
 SCRIPTS="$HOME/.config/mango/scripts"
 
+# Per-monitor tagrules now live in an auto-generated, sourced file (not inline in
+# config.conf). generate-tagrules.sh writes it; set-monitor-mode.sh edits it.
+TAGRULES_FILE="$HOME/.config/mango/dms/tagrules.conf"
+TAGRULES_GEN="$SCRIPTS/generate-tagrules.sh"
+
 COLORS_FILE="$HOME/.config/mango/dms/colors.conf"
 BORDER_CHECK="$SCRIPTS/border-color-healthcheck.sh"       # delegated colour-chain check
 BORDER_WATCHER="$SCRIPTS/wallpaper-border-reload.sh"
@@ -156,13 +161,16 @@ else
          "mango renamed the reload verb before (0.13 'mmsg -d reload_config' -> 0.14 'mmsg dispatch reload_config'). Run 'mmsg --help', find the new reload verb, update it in those files. It returns exit 0 even when wrong, so it fails SILENTLY."
 fi
 
-# 1b. tagrules (per-monitor mode storage) still present
-if grep -qE '^[[:space:]]*tagrule[[:space:]]*=' "$MANGO_CFG"; then
-    pass "per-monitor tagrules present in config.conf"
+# 1b. tagrules (per-monitor mode storage) present. They now live in the auto-
+#     generated dms/tagrules.conf (sourced by config.conf); we accept either that
+#     file OR inline config.conf rules (the manual-fallback path) as valid.
+if { [ -f "$TAGRULES_FILE" ] && grep -qE '^[[:space:]]*tagrule[[:space:]]*=' "$TAGRULES_FILE"; } \
+   || grep -qE '^[[:space:]]*tagrule[[:space:]]*=' "$MANGO_CFG"; then
+    pass "per-monitor tagrules present (dms/tagrules.conf or config.conf)"
 else
-    fail "Per-monitor tagrules" "no 'tagrule =' lines in config.conf — per-monitor tile/float is not active" \
-         "$MANGO_CFG (the 'Per-monitor window mode' block)" \
-         "FRESH INSTALL? This is expected until you do the one-time setup — see the README's 'Set up per-monitor tiling/floating' step (find your output names with wlr-randr, uncomment the MONITOR-1 block, Super+r). ALREADY HAD THEM? A DMS update or config reset likely wiped them — restore from dotfiles/git or re-add per the block in config.conf. (A monitor FLOATS if its tagrules contain open_as_floating:1.)"
+    fail "Per-monitor tagrules" "no tagrules in dms/tagrules.conf — per-monitor tile/float is not active" \
+         "$TAGRULES_FILE (auto-generated; sourced by config.conf)" \
+         "Re-generate them: $TAGRULES_GEN  (detects your monitors via 'mmsg get all-monitors' and writes the file, then Super+r). Fresh installs run this automatically; if it's empty, mango probably wasn't running when it ran — re-run it now. (A monitor FLOATS once its rules gain open_as_floating:1, set via the Monitor Mode plugin.)"
 fi
 
 # 1c. helper scripts present + executable

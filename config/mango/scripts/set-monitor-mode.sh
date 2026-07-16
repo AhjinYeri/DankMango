@@ -22,10 +22,11 @@
 # -----------------------------------------------------------------------------
 #  WHAT THIS SCRIPT DOES (plain English)
 # -----------------------------------------------------------------------------
-#  A monitor's mode (tile or float) is stored in your MangoWM config file as the
-#  presence or absence of the word "open_as_floating" on that monitor's tag rules.
-#  This is the ONE script that edits those rules and reloads the config. The
-#  Monitor Mode bar plugin and any keybind just call this script with arguments.
+#  A monitor's mode (tile or float) is stored as the presence or absence of the
+#  word "open_as_floating" on that monitor's tag rules. Those rules live in the
+#  AUTO-GENERATED  dms/tagrules.conf  (written by scripts/generate-tagrules.sh and
+#  sourced by config.conf). This is the ONE script that edits those rules and
+#  reloads the config. The Monitor Mode bar plugin / keybinds just call it.
 #
 #  USAGE:
 #    set-monitor-mode.sh <MON> <tile|float>             # one monitor
@@ -43,7 +44,10 @@ set -euo pipefail
 # syntax, and the commands MangoWM understands. Fix things HERE after an update.
 
 # --- 1. FILE PATHS ----------------------------------------------------------
-CONFIG="$HOME/.config/mango/config.conf"                       # MangoWM main config (this script edits it)
+# CONFIG is the file whose tagrule lines this script edits. Per-monitor tagrules now
+# live in the auto-generated dms/tagrules.conf (sourced by config.conf), so we edit
+# THAT -- not config.conf. (mango validates a tagrule-only file fine via `mango -c -p`.)
+CONFIG="$HOME/.config/mango/dms/tagrules.conf"                # per-monitor tagrules (this script edits it)
 SWEEP="$HOME/.config/mango/scripts/dp2-floatsize.sh"          # helper that re-applies the mode to already-open windows
 
 # --- 2. THE "FLOAT MODE" KEYWORD IN THE CONFIG ------------------------------
