@@ -50,7 +50,8 @@ set -uo pipefail
 
 # --- 1. FILE PATHS ----------------------------------------------------------
 # Where things live on disk. Change these only if you move your config around.
-CONFIG="$HOME/.config/mango/config.conf"          # MangoWM main config (read to learn each monitor's mode)
+TAGRULES="$HOME/.config/mango/dms/tagrules.conf"  # generated per-monitor tag rules (read to learn each monitor's mode)
+CONFIG="$HOME/.config/mango/config.conf"          # MangoWM main config (read for gaps; also the FALLBACK place tag rules can live)
 LAYOUT="$HOME/.config/mango/dms/layout.conf"      # DMS-generated gaps/border (read for the effective outer gap)
 OUTPUTS="$HOME/.config/mango/dms/outputs.conf"    # DMS-generated monitor sizes (FALLBACK only; mango is queried live first)
 DMS_SETTINGS="$HOME/.config/DankMaterialShell/settings.json"  # DMS config (read to learn which screen edge the DankBar is docked to)
@@ -101,8 +102,9 @@ mango_all_clients_json()    { mmsg get all-clients 2>/dev/null; }
 mango_watch_monitors_json() { mmsg watch all-monitors 2>/dev/null; }
 
 # --- 3. THE "FLOAT MODE" KEYWORD IN THE CONFIG ------------------------------
-# A monitor counts as FLOATING when its tag rules in config.conf contain this
-# word (written there as "open_as_floating:1"). This is MangoWM config syntax;
+# A monitor counts as FLOATING when its tag rules contain this word (written as
+# "open_as_floating:1"). Those rules normally live in the generated tagrules.conf
+# (see mon_is_floating for the file precedence). This is MangoWM config syntax;
 # if a future MangoWM renames it, change this one word to match.
 MANGO_FLOAT_TOKEN="open_as_floating"
 
@@ -185,12 +187,23 @@ bar_edge() {
   esac
 }
 
-# A monitor is FLOATING-mode iff its tagrules in config.conf carry the float
-# keyword. Read live each time so a config swap + reload takes effect without
-# restarting this script.
+# A monitor is FLOATING-mode iff its tagrules carry the float keyword. Rules are
+# normally in the generated tagrules.conf (written by generate-tagrules.sh, flipped
+# by the Monitor Mode button, and sourced by config.conf); config.conf is checked
+# only as a fallback, for setups using its commented "Per-monitor window mode"
+# template instead. The FIRST file that defines this monitor decides, so a leftover
+# rule in the other file can't override the live one. Read fresh each call, so a
+# mode flip + reload takes effect without restarting this script.
 mon_is_floating() {
-  grep -E "^[[:space:]]*tagrule[^#]*monitor_name:[[:space:]]*$1([,[:space:]]|$)" "$CONFIG" 2>/dev/null \
-    | grep -qE "$MANGO_FLOAT_TOKEN:[[:space:]]*1"
+  local f rules
+  for f in "$TAGRULES" "$CONFIG"; do
+    [ -f "$f" ] || continue
+    rules="$(grep -E "^[[:space:]]*tagrule[^#]*monitor_name:[[:space:]]*$1([,[:space:]]|$)" "$f" 2>/dev/null)"
+    [ -n "$rules" ] || continue                 # this file doesn't mention $1 -> try the next
+    printf '%s\n' "$rules" | grep -qE "$MANGO_FLOAT_TOKEN:[[:space:]]*1"
+    return
+  done
+  return 1
 }
 
 # Monitor's own screen rectangle (x y w h). Queried LIVE from MangoWM first
