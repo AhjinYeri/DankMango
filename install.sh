@@ -38,14 +38,18 @@ SEED_WALLPAPER="futuristic-cityscape-sunset-stockcake_upscayl_2x_upscayl-standar
 # (~/.local/state/DankMaterialShell/session.json), NOT settings.json, so the
 # installer seeds them explicitly (stage 16) — otherwise a fresh install boots
 # with an empty taskbar. Values are the exact app IDs DMS matches (.desktop id /
-# WM class), taken from a live working setup. Only Alacritty/nemo/zen are
-# guaranteed installed; discord/steam/Spotify only show if you also install them
-# (offer to via the app-install step — see issue #5). Edit this list to taste.
+# WM class), taken from a live working setup. Alacritty/nemo/zen come from the core
+# package set; discord/steam/Spotify are installed by the stage-3 STANDARD_APPS opt-in
+# (issue #5) so these pins aren't dead by default. Edit this list to taste.
 SEED_PINNED_APPS=(Alacritty nemo zen Spotify steam discord)
 
 # ---- pretty output ----------------------------------------------------------
 c_blu=$'\033[1;34m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'; c_red=$'\033[31m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
-stage() { printf '\n%s==> %s%s\n' "$c_blu" "$1" "$c_off"; }
+# CUR_STAGE tracks the current stage NUMBER (parsed from the "N/17" label) so the
+# manifest helpers can tag each record with the stage that produced it, without
+# every call site having to pass it explicitly.
+CUR_STAGE="0"
+stage() { CUR_STAGE="${1%%/*}"; printf '\n%s==> %s%s\n' "$c_blu" "$1" "$c_off"; }
 ok()    { printf '    %s[ ok ]%s %s\n' "$c_grn" "$c_off" "$1"; }
 info()  { printf '    %s%s%s\n' "$c_dim" "$1" "$c_off"; }
 warn()  { printf '    %s[warn]%s %s\n' "$c_yel" "$c_off" "$1"; WARNINGS=$((WARNINGS+1)); }
@@ -60,7 +64,18 @@ ask_yn() {
     case "$ans" in [yY]*) return 0 ;; *) return 1 ;; esac
 }
 
+# ask_yn_default_yes "question"  -> returns 0 for yes, 1 for no. Defaults to YES on
+# empty. Used only for the standard-apps prompt: those apps are pinned to the taskbar
+# regardless, so the sensible default is to install them (a "no" leaves dead pins).
+ask_yn_default_yes() {
+    local ans
+    read -r -p "    $1 [Y/n] " ans
+    case "$ans" in [nN]*) return 1 ;; *) return 0 ;; esac
+}
+
 # Copy a SYSTEM file (needs sudo). Backs up an existing, differing target.
+# Records the backup (if any) and a system-file-installed change in the manifest,
+# noting whether the target pre-existed (so uninstall knows: restore vs. delete).
 #   sys_copy SRC DST
 sys_copy() {
     local src="$1" dst="$2"
@@ -69,16 +84,27 @@ sys_copy() {
         return 1
     fi
     sudo mkdir -p "$(dirname "$dst")"
-    if [ -f "$dst" ] && ! sudo cmp -s "$src" "$dst"; then
-        sudo cp -a "$dst" "$dst.bak-$STAMP"
-        info "backed up existing $dst -> $dst.bak-$STAMP"
+    local existed=0
+    if [ -f "$dst" ]; then
+        existed=1
+        if ! sudo cmp -s "$src" "$dst"; then
+            sudo cp -a "$dst" "$dst.bak-$STAMP"
+            info "backed up existing $dst -> $dst.bak-$STAMP"
+            manifest_add_backup "$dst" "$dst.bak-$STAMP" system "$CUR_STAGE"
+        fi
     fi
     sudo cp "$src" "$dst"
     ok "installed $dst"
+    if have jq; then
+        manifest_add_change system-file-installed "$CUR_STAGE" "$dst" \
+            "$(jq -nc --arg p "$dst" --argjson pre "$existed" '{path:$p, preexisting:($pre==1), scope:"system"}')" \
+            "$( [ "$existed" = 1 ] && printf 'preexisting; restore its .bak-* if one was made' || printf 'sudo rm %s' "$dst" )"
+    fi
     return 0
 }
 
-# Copy a USER file (no sudo). Backs up an existing, differing target.
+# Copy a USER file (no sudo). Backs up an existing, differing target. Same manifest
+# bookkeeping as sys_copy, scoped "user".
 #   user_copy SRC DST
 user_copy() {
     local src="$1" dst="$2"
@@ -87,19 +113,151 @@ user_copy() {
         return 1
     fi
     mkdir -p "$(dirname "$dst")"
-    if [ -f "$dst" ] && ! cmp -s "$src" "$dst"; then
-        cp -a "$dst" "$dst.bak-$STAMP"
-        info "backed up existing $dst -> $dst.bak-$STAMP"
+    local existed=0
+    if [ -f "$dst" ]; then
+        existed=1
+        if ! cmp -s "$src" "$dst"; then
+            cp -a "$dst" "$dst.bak-$STAMP"
+            info "backed up existing $dst -> $dst.bak-$STAMP"
+            manifest_add_backup "$dst" "$dst.bak-$STAMP" user "$CUR_STAGE"
+        fi
     fi
     cp "$src" "$dst"
     ok "installed $dst"
+    if have jq; then
+        manifest_add_change user-file-installed "$CUR_STAGE" "$dst" \
+            "$(jq -nc --arg p "$dst" --argjson pre "$existed" '{path:$p, preexisting:($pre==1), scope:"user"}')" \
+            "$( [ "$existed" = 1 ] && printf 'preexisting; restore its .bak-* if one was made' || printf 'rm %s' "$dst" )"
+    fi
     return 0
 }
+
+# ---- install manifest -------------------------------------------------------
+# A queryable record of what THIS DankMango run did — packages we installed (NOT
+# ones already present), files we backed up, and system-level changes — so the
+# future uninstaller/updater don't have to re-derive it from scattered .bak files.
+# Lives in XDG_STATE_HOME (persistent STATE, not config/cache), beside DMS's own
+# session.json, so it outlives the repo clone. Best-effort: a failed manifest write
+# WARNS and never aborts the install. Every helper is idempotent on a natural key,
+# so re-running install.sh never duplicates entries.
+MANIFEST_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dankmango"
+MANIFEST="$MANIFEST_DIR/manifest.json"
+
+# Atomically apply a jq filter to the manifest (temp file + mv). No-op+warn if jq
+# is unavailable or the edit fails — bookkeeping must never break the install.
+manifest_jq() {
+    local filter="$1"; shift
+    have jq || { warn "jq unavailable — a manifest update was skipped (record is incomplete)"; return 1; }
+    [ -f "$MANIFEST" ] || return 1
+    local tmp; tmp="$(mktemp)"
+    if jq "$@" "$filter" "$MANIFEST" > "$tmp" && [ -s "$tmp" ]; then
+        mv "$tmp" "$MANIFEST"
+    else
+        rm -f "$tmp"; warn "a manifest update failed (jq) — record may be incomplete"; return 1
+    fi
+}
+
+# Create the manifest on first run (full skeleton via printf/heredoc — NO jq needed,
+# so a jq-less fresh system or a crash before stage 3 installs jq still leaves valid,
+# version-stamped JSON). On a re-run (jq guaranteed by then) refresh run metadata.
+# Captures DankMango's git commit + version so the updater knows what it upgrades from.
+manifest_init() {
+    mkdir -p "$MANIFEST_DIR"
+    local commit version now
+    commit="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+    version="$(git -C "$REPO_DIR" describe --tags --always --dirty 2>/dev/null || echo unknown)"
+    now="$(date --iso-8601=seconds 2>/dev/null || date)"
+    if [ ! -f "$MANIFEST" ]; then
+        # Values here are trusted local strings (a git sha, git-describe output, and a
+        # $HOME-rooted path from pwd) — no untrusted input, so heredoc JSON is safe.
+        cat > "$MANIFEST" <<JSON
+{
+  "manifestVersion": 1,
+  "dankmango": {
+    "version": "$version",
+    "commit": "$commit",
+    "repoDir": "$REPO_DIR",
+    "firstInstall": { "at": "$now", "commit": "$commit" },
+    "lastRunAt": "$now",
+    "runs": ["$STAMP"],
+    "status": "in-progress"
+  },
+  "packages": [],
+  "packagesSkipped": [],
+  "backups": [],
+  "systemChanges": []
+}
+JSON
+        ok "created install manifest -> $MANIFEST"
+    else
+        # firstInstall is preserved (not touched); refresh current version/run info.
+        manifest_jq '
+            .dankmango.version   = $version
+          | .dankmango.commit    = $commit
+          | .dankmango.repoDir   = $repo
+          | .dankmango.lastRunAt = $now
+          | .dankmango.runs      = ((.dankmango.runs // []) + [$stamp] | unique)
+          | .dankmango.status    = "in-progress"
+        ' --arg version "$version" --arg commit "$commit" --arg repo "$REPO_DIR" \
+          --arg now "$now" --arg stamp "$STAMP" \
+          && info "updated existing install manifest -> $MANIFEST" \
+          || info "existing manifest at $MANIFEST"
+    fi
+}
+
+# manifest_add_package NAME SOURCE CATEGORY  — packages WE installed (ours to remove
+# later). Dedupe by name. SOURCE = repo|aur ; CATEGORY = required|standard-app|optional-feature.
+manifest_add_package() {
+    manifest_jq '
+        .packages = ([ .packages[] | select(.name != $n) ]
+                     + [{name:$n, source:$s, category:$c, stamp:$stamp}])
+    ' --arg n "$1" --arg s "$2" --arg c "$3" --arg stamp "$STAMP"
+}
+
+# manifest_add_skipped NAME REASON  — packages present BEFORE us (never ours; the
+# uninstaller must not touch them). Dedupe by name.
+manifest_add_skipped() {
+    manifest_jq '
+        .packagesSkipped = ([ .packagesSkipped[] | select(.name != $n) ]
+                            + [{name:$n, reason:$r, stamp:$stamp}])
+    ' --arg n "$1" --arg r "$2" --arg stamp "$STAMP"
+}
+
+# manifest_add_backup ORIGINAL BACKUP SCOPE STAGE  — dedupe by ORIGINAL and KEEP THE
+# FIRST: the earliest backup holds the true pre-DankMango file; a re-run would only
+# back up our own already-installed copy, which is useless for restore.
+manifest_add_backup() {
+    manifest_jq '
+        if (.backups | map(.original) | index($o)) then .
+        else .backups += [{original:$o, backup:$b, scope:$scope, stage:$stage, stamp:$stamp}] end
+    ' --arg o "$1" --arg b "$2" --arg scope "$3" --arg stage "$4" --arg stamp "$STAMP"
+}
+
+# manifest_add_change TYPE STAGE KEY DETAIL_JSON [REVERSAL]  — a system-level change.
+# Dedupe by (type + KEY). DETAIL_JSON must be a valid JSON object string (build it with
+# `jq -nc ...` at the call site so values are escaped). REVERSAL is a short hint string.
+manifest_add_change() {
+    local type="$1" stage="$2" key="$3" detail="$4" reversal="${5:-}"
+    manifest_jq '
+        ($type + "|" + $key) as $sig
+      | .systemChanges = ([ .systemChanges[] | select((.type + "|" + (.key // "")) != $sig) ]
+          + [{type:$type, stage:$stage, key:$key, stamp:$stamp, detail:($detail|fromjson), reversal:$reversal}])
+    ' --arg type "$type" --arg stage "$stage" --arg key "$key" \
+      --arg detail "$detail" --arg reversal "$reversal" --arg stamp "$STAMP"
+}
+
+# Mark the run complete (stage 17). Partial runs keep status "in-progress".
+manifest_finalize() { manifest_jq '.dankmango.status = "complete"'; }
 
 echo "==================================================================="
 echo " DankMango installer   ($STAMP)"
 echo " repo: $REPO_DIR"
 echo "==================================================================="
+
+# Stage 0 (setup, not user-facing): open the install manifest FIRST, so even a run
+# that crashes early leaves an accurate partial record. Every stage below appends to
+# it as it acts (one write per action), rather than a bulk dump at the end.
+manifest_init
 
 # =============================================================================
 # 1. Sanity check: does this look like CachyOS? (soft — warn only)
@@ -153,20 +311,81 @@ stage "3/17  Installing packages"
 REPO_PKGS=(nemo nemo-fileroller matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava)
 # AUR packages that DankMango needs.
 AUR_PKGS=(zen-browser-bin sddm-astronaut-theme)
+# Standard taskbar apps (issue #5): the SEED_PINNED_APPS set minus what's already
+# core-installed (Alacritty/nemo/zen). These are pinned to the taskbar regardless, so
+# without them a fresh install shows dead pins. OPTIONAL + opt-in (default yes). All
+# three are official-repo on CachyOS -- no AUR build needed. steam pulls multilib libs
+# (multilib is enabled by default on CachyOS). Spotify ships as spotify-launcher (the
+# official launcher; it fetches the real client on first run).
+STANDARD_APPS=(discord steam spotify-launcher)
 # NOTE: intentionally NOT installed here (CachyOS + MangoWM base already ships
 # them): sddm, alacritty, the pipewire stack, wireplumber, networkmanager,
 # power-profiles-daemon, bluez, fonts (noto / meslo-nerd), jq, libnotify, gawk,
 # psmisc, xdg-desktop-portal-core. And capitaine-cursors is NOT used at all.
 info "official-repo: ${REPO_PKGS[*]}"
 info "AUR (required): ${AUR_PKGS[*]}"
-# Run everything through the AUR helper: it installs repo packages from the
-# official repos and AUR packages from the AUR in one resolve, which avoids
-# guessing which repo (CachyOS vs Arch) matugen currently lives in.
+
+# IDEMPOTENCY + OWNERSHIP: snapshot which of our packages are ALREADY installed BEFORE
+# we touch anything, so the manifest attributes each correctly. A package that pre-
+# existed is recorded as "skipped" (never ours -> a future uninstall must not remove
+# it); one we actually install is recorded as ours. This is what makes a re-run clean:
+# on the second run everything is preexisting, nothing reinstalls, and the dedup in the
+# manifest helpers means no second entry is added.
+declare -A PKG_PRE=()
+for p in "${REPO_PKGS[@]}" "${AUR_PKGS[@]}" "${STANDARD_APPS[@]}"; do
+    if pacman -Qi "$p" >/dev/null 2>&1; then PKG_PRE[$p]=1; else PKG_PRE[$p]=0; fi
+done
+
+# jq is in REPO_PKGS but is ALSO what the manifest writer needs for the rest of this
+# stage, so install it up front. Its true pre-state was already captured above, so it's
+# still attributed correctly (ours if it wasn't there, skipped if it was).
+if ! have jq; then
+    info "installing jq up front (needed to record the install manifest)"
+    sudo pacman -S --needed --noconfirm jq >/dev/null 2>&1 \
+        || "$AUR" -S --needed --noconfirm jq >/dev/null 2>&1 || true
+fi
+
+# manifest_record_pkgs SRC CAT pkg...  — from the pre-snapshot: preexisting -> skipped
+# (not ours); newly present -> ours; still absent -> install failed, leave unrecorded.
+manifest_record_pkgs() {
+    local src="$1" cat="$2"; shift 2
+    local p
+    for p in "$@"; do
+        if [ "${PKG_PRE[$p]:-0}" = "1" ]; then
+            manifest_add_skipped "$p" already-installed
+        elif pacman -Qi "$p" >/dev/null 2>&1; then
+            manifest_add_package "$p" "$src" "$cat"
+        fi
+    done
+}
+
+# Install the core set in one resolve (--needed skips already-present ones efficiently).
 if "$AUR" -S --needed --noconfirm "${REPO_PKGS[@]}" "${AUR_PKGS[@]}"; then
-    ok "packages installed (already-present ones were skipped)"
+    ok "core packages installed (already-present ones were skipped)"
 else
-    warn "one or more packages failed to install — scroll up for which. Re-run after fixing,"
+    warn "one or more core packages failed to install — scroll up for which. Re-run after fixing,"
     warn "or install the missing ones by hand: $AUR -S ${REPO_PKGS[*]} ${AUR_PKGS[*]}"
+fi
+manifest_record_pkgs repo required "${REPO_PKGS[@]}"
+manifest_record_pkgs aur  required "${AUR_PKGS[@]}"
+
+# ---- Standard taskbar apps (issue #5) — one opt-in, default YES -------------------
+info "standard taskbar apps (optional): ${STANDARD_APPS[*]}  (Spotify = spotify-launcher)"
+if ask_yn_default_yes "Install the standard taskbar apps (Spotify, Steam, Discord)? They're pinned either way — saying no leaves those pins with nothing behind them."; then
+    if "$AUR" -S --needed --noconfirm "${STANDARD_APPS[@]}"; then
+        ok "standard apps installed (already-present ones were skipped)"
+    else
+        warn "one or more standard apps failed to install — add them later: $AUR -S ${STANDARD_APPS[*]}"
+    fi
+    manifest_record_pkgs repo standard-app "${STANDARD_APPS[@]}"
+    info "(Spotify uses spotify-launcher — it fetches the actual client on first launch, so the"
+    info " taskbar pin binds once you've opened Spotify once.)"
+else
+    info "Skipped standard apps — the Spotify/Steam/Discord pins stay inert until you install them."
+    # Still record any that were already present, so the uninstaller can prove it won't touch them.
+    for p in "${STANDARD_APPS[@]}"; do
+        [ "${PKG_PRE[$p]:-0}" = "1" ] && manifest_add_skipped "$p" already-installed
+    done
 fi
 
 # wpctl (from wireplumber) is the output-switcher plugin's only backend. It's
@@ -182,8 +401,14 @@ fi
 # =============================================================================
 stage "4/17  Setting Nemo as the default file manager"
 if have xdg-mime; then
-    xdg-mime default nemo.desktop inode/directory && ok "Nemo set for inode/directory" \
-        || warn "xdg-mime call failed — set Nemo as default file manager manually."
+    if xdg-mime default nemo.desktop inode/directory; then
+        ok "Nemo set for inode/directory"
+        have jq && manifest_add_change default-app "$CUR_STAGE" "inode/directory" \
+            "$(jq -nc '{mime:"inode/directory", app:"nemo.desktop"}')" \
+            "reset with: xdg-mime default <your-previous-fm>.desktop inode/directory"
+    else
+        warn "xdg-mime call failed — set Nemo as default file manager manually."
+    fi
 else
     warn "xdg-mime not found — skipping default-file-manager step."
 fi
@@ -197,6 +422,8 @@ stage "5/17  Installing system files (keyd, SDDM) — will prompt for sudo"
 if sys_copy "$REPO_DIR/system/keyd/default.conf" "/etc/keyd/default.conf"; then
     if sudo systemctl enable --now keyd 2>/dev/null; then
         ok "keyd service enabled and started"
+        have jq && manifest_add_change service-enabled "$CUR_STAGE" "keyd" \
+            "$(jq -nc '{service:"keyd", scope:"system"}')" "sudo systemctl disable --now keyd"
     else
         warn "couldn't enable/start keyd — run: sudo systemctl enable --now keyd"
     fi
@@ -220,11 +447,14 @@ SDDM_CFG_DST="$HOME/.config/sddm-astronaut-japanese"
 if [ -f "$SDDM_SRC/apply.sh" ]; then
     if [ -d "$SDDM_CFG_DST" ]; then
         cp -a "$SDDM_CFG_DST" "$SDDM_CFG_DST.bak-$STAMP" && info "backed up existing $SDDM_CFG_DST -> $SDDM_CFG_DST.bak-$STAMP"
+        manifest_add_backup "$SDDM_CFG_DST" "$SDDM_CFG_DST.bak-$STAMP" user "$CUR_STAGE"
     fi
     mkdir -p "$SDDM_CFG_DST"
     cp -a "$SDDM_SRC/." "$SDDM_CFG_DST/"
     chmod +x "$SDDM_CFG_DST/apply.sh"
     ok "SDDM theme config -> $SDDM_CFG_DST"
+    have jq && manifest_add_change owned-tree "$CUR_STAGE" "$SDDM_CFG_DST" \
+        "$(jq -nc --arg d "$SDDM_CFG_DST" '{dir:$d, scope:"user"}')" "rm -rf $SDDM_CFG_DST"
     info "(tip: your display isn't 1080p? edit ScreenWidth/ScreenHeight in japanese_aesthetic.conf first.)"
 
     # apply.sh needs rsync and the upstream package to be present.
@@ -236,6 +466,9 @@ if [ -f "$SDDM_SRC/apply.sh" ]; then
         info "Running apply.sh (builds the update-proof theme copy + sets it active) — needs sudo."
         if sudo "$SDDM_CFG_DST/apply.sh"; then
             ok "SDDM Japanese theme applied (12h clock, custom background, update-proof copy)"
+            have jq && manifest_add_change sddm-theme-applied "$CUR_STAGE" "theme.conf" \
+                "$(jq -nc --arg cd "$SDDM_CFG_DST" '{configDir:$cd, writes:["/etc/sddm.conf.d/theme.conf"], note:"apply.sh also builds an update-proof theme copy under /usr/share/sddm/themes"}')" \
+                "remove /etc/sddm.conf.d/theme.conf (reverts to default SDDM theme)"
         else
             warn "apply.sh failed — re-run it manually: sudo $SDDM_CFG_DST/apply.sh"
         fi
@@ -299,8 +532,11 @@ mkdir -p "$HOME/.config/mango"
 if [ -f "$HOME/.config/mango/config.conf" ] && ! cmp -s "$REPO_DIR/config/mango/config.conf" "$HOME/.config/mango/config.conf"; then
     cp -a "$HOME/.config/mango/config.conf" "$HOME/.config/mango/config.conf.bak-$STAMP"
     info "backed up existing config.conf -> config.conf.bak-$STAMP"
+    manifest_add_backup "$HOME/.config/mango/config.conf" "$HOME/.config/mango/config.conf.bak-$STAMP" user "$CUR_STAGE"
 fi
 cp -a "$REPO_DIR/config/mango/." "$HOME/.config/mango/" && ok "mango config + scripts -> ~/.config/mango/"
+have jq && manifest_add_change owned-tree "$CUR_STAGE" "$HOME/.config/mango" \
+    "$(jq -nc --arg d "$HOME/.config/mango" '{dir:$d, scope:"user"}')" "rm -rf ~/.config/mango"
 
 # 7b. dms/*.conf -> ~/.config/mango/dms/
 mkdir -p "$HOME/.config/mango/dms"
@@ -325,10 +561,14 @@ for j in settings.json plugin_settings.json; do
     if [ -f "$tgt" ] && [ -f "$src" ] && ! cmp -s "$src" "$tgt"; then
         cp -a "$tgt" "$tgt.bak-$STAMP"
         info "backed up existing $j -> $j.bak-$STAMP"
+        manifest_add_backup "$tgt" "$tgt.bak-$STAMP" user "$CUR_STAGE"
     fi
 done
 cp -a "$REPO_DIR/config/dms/DankMaterialShell/." "$HOME/.config/DankMaterialShell/" \
     && ok "DMS config -> ~/.config/DankMaterialShell/"
+have jq && manifest_add_change owned-tree "$CUR_STAGE" "$HOME/.config/DankMaterialShell" \
+    "$(jq -nc --arg d "$HOME/.config/DankMaterialShell" '{dir:$d, scope:"user", note:"runtime state (session.json etc.) lives here too; uninstall should preserve or back it up"}')" \
+    "back up ~/.config/DankMaterialShell, then remove the DankMango-shipped files"
 
 # =============================================================================
 # 8. Wallpapers -> ~/Pictures/Wallpapers/  (a sensible default matugen source)
@@ -339,17 +579,25 @@ stage "8/17  Installing default wallpapers"
 WALL_DST="$HOME/Pictures/Wallpapers"
 if compgen -G "$REPO_DIR/wallpapers/*.png" >/dev/null; then
     mkdir -p "$WALL_DST"
-    wall_copied=0; wall_skipped=0
+    wall_copied=0; wall_skipped=0; wall_copied_list=()
     for w in "$REPO_DIR"/wallpapers/*.png; do
         base="$(basename "$w")"
         if [ -e "$WALL_DST/$base" ]; then
             warn "wallpaper already exists, not overwriting: $WALL_DST/$base"
             wall_skipped=$((wall_skipped+1))
         else
-            cp "$w" "$WALL_DST/$base" && wall_copied=$((wall_copied+1))
+            cp "$w" "$WALL_DST/$base" && { wall_copied=$((wall_copied+1)); wall_copied_list+=("$base"); }
         fi
     done
     ok "wallpapers: $wall_copied copied, $wall_skipped left untouched -> $WALL_DST"
+    # Record ONLY the files we actually copied (not skipped pre-existing ones), so an
+    # uninstall removes only ours.
+    if [ "$wall_copied" -gt 0 ] && have jq; then
+        files_json="$(printf '%s\n' "${wall_copied_list[@]}" | jq -R . | jq -sc .)"
+        manifest_add_change files-copied "$CUR_STAGE" "$WALL_DST" \
+            "$(jq -nc --arg d "$WALL_DST" --argjson f "$files_json" '{dst:$d, files:$f, scope:"user"}')" \
+            "rm the listed files from $WALL_DST (leaves any you added yourself)"
+    fi
     info "point matugen / your wallpaper picker at $WALL_DST"
 else
     warn "no *.png files under wallpapers/ in the repo -> skipping wallpaper install."
@@ -391,6 +639,10 @@ elif [ -f "$SETTINGS" ] && have jq; then
     if jq '.popupTransparency = 0.75' "$SETTINGS" > "$tmp" && [ -s "$tmp" ]; then
         cp -a "$SETTINGS" "$SETTINGS.bak-$STAMP"; mv "$tmp" "$SETTINGS"
         ok "set popupTransparency = 0.75"
+        manifest_add_backup "$SETTINGS" "$SETTINGS.bak-$STAMP" user "$CUR_STAGE"
+        manifest_add_change config-edit "$CUR_STAGE" "settings.json:popupTransparency" \
+            "$(jq -nc --arg f "$SETTINGS" '{file:$f, key:"popupTransparency", value:0.75}')" \
+            "restore $SETTINGS from its .bak-*"
     else
         rm -f "$tmp"; warn "couldn't edit popupTransparency with jq — set it by hand in settings.json."
     fi
@@ -424,6 +676,9 @@ if ask_yn "Pin power profile to 'performance' now?"; then
         sudo systemctl enable --now power-profiles-daemon.service 2>/dev/null
         if powerprofilesctl set performance 2>/dev/null; then
             ok "power profile set to performance for this session"
+            have jq && manifest_add_change service-enabled "$CUR_STAGE" "power-profiles-daemon" \
+                "$(jq -nc '{service:"power-profiles-daemon", scope:"system", profile:"performance"}')" \
+                "powerprofilesctl set balanced; sudo systemctl disable power-profiles-daemon (if you don't want it)"
             info "(power-profiles-daemon doesn't persist this across reboot on its own; see the"
             info " 'mango power profile' notes if you want a systemd --user service to re-pin it.)"
         else
@@ -450,14 +705,19 @@ if [ -f "$CONF" ] && grep -qE "$EE_LINE_RE" "$CONF"; then
         # official repos.
         if have easyeffects; then
             ok "easyeffects already installed"
+            manifest_add_skipped easyeffects already-installed
         elif "$AUR" -S --needed --noconfirm easyeffects; then
             ok "easyeffects installed"
+            manifest_add_package easyeffects repo optional-feature
         else
             warn "easyeffects failed to install — the autostart line will no-op until you install it by hand: $AUR -S easyeffects"
         fi
         # uncomment the exec-once easyeffects line
         sed -i -E "s|^[[:space:]]*#[[:space:]]*(exec-once[[:space:]]*=[[:space:]]*easyeffects.*)|\1|" "$CONF"
         ok "easyeffects autostart ENABLED (exec-once left active in config.conf)"
+        have jq && manifest_add_change config-edit "$CUR_STAGE" "config.conf:easyeffects-autostart" \
+            "$(jq -nc --arg f "$CONF" '{file:$f, change:"uncommented exec-once = easyeffects"}')" \
+            "re-comment the 'exec-once = easyeffects' line in $CONF"
     else
         # comment it out if not already commented
         sed -i -E "s|^([[:space:]]*)(exec-once[[:space:]]*=[[:space:]]*easyeffects.*)|\1# \2|" "$CONF"
@@ -487,6 +747,8 @@ for pdir in "$REPO_DIR"/plugins/*/; do
     fi
     mkdir -p "$tgt"
     cp -a "$pdir." "$tgt/" && ok "plugin '$pid' -> $tgt"
+    have jq && manifest_add_change owned-tree "$CUR_STAGE" "$tgt" \
+        "$(jq -nc --arg d "$tgt" --arg id "$pid" '{dir:$d, pluginId:$id, scope:"user"}')" "rm -rf $tgt"
     # sanity-check it's registered (it ships registered; warn if somehow not)
     grep -q "\"$pid\"" "$HOME/.config/DankMaterialShell/plugin_settings.json" 2>/dev/null \
         || warn "plugin '$pid' not found in plugin_settings.json — enable it in DMS Settings -> Plugins."
@@ -528,6 +790,9 @@ elif ask_yn "Apply the combined audio OSD patch now? (modifies a DMS package fil
     # re-applying over a known-bad state, never a fresh install).
     if "$OSD_PATCH"; then
         ok "combined audio OSD patch applied (the restart in the next stage picks it up)"
+        have jq && manifest_add_change patch-applied "$CUR_STAGE" "$OSD_TARGET" \
+            "$(jq -nc --arg t "$OSD_TARGET" '{target:$t, marker:"DankMango patch: combined OSD device name", backupsDir:"~/.config/mango/backups", packageOwned:true}')" \
+            "restore the newest ~/.config/mango/backups/VolumeOSD.qml.* to $OSD_TARGET, or reinstall dms-shell"
     else
         warn "combined OSD patch failed — re-run it manually: $OSD_PATCH"
     fi
@@ -564,11 +829,17 @@ if have jq; then
           | .pinnedApps    = (if ((.pinnedApps    // []) | length) == 0 then $pins else .pinnedApps    end)
           | .wallpaperPath = (if (($wp | length) > 0 and ((.wallpaperPath // "") | length) == 0) then $wp else (.wallpaperPath // "") end)
         ' "$sess" > "$tmp" && [ -s "$tmp" ]; then
-        [ "$had_sess" -eq 1 ] && cp -a "$sess" "$sess.bak-$STAMP"
+        if [ "$had_sess" -eq 1 ]; then
+            cp -a "$sess" "$sess.bak-$STAMP"
+            manifest_add_backup "$sess" "$sess.bak-$STAMP" user "$CUR_STAGE"
+        fi
         cat "$tmp" > "$sess"
         ok "seeded taskbar/dock pins: ${SEED_PINNED_APPS[*]}"
-        info "discord/steam/Spotify only appear if installed — see the optional app-install step (issue #5)."
+        info "discord/steam/Spotify are installed by the standard-apps step (stage 3) unless you declined it."
         [ -n "$wp" ] && ok "seeded default wallpaper into session.json (DMS themes on first login: $SEED_WALLPAPER)"
+        manifest_add_change session-seed "$CUR_STAGE" "session.json:seed" \
+            "$(jq -nc --arg f "$sess" '{file:$f, keysSeeded:["barPinnedApps","pinnedApps","wallpaperPath"], note:"only set when empty/absent"}')" \
+            "restore $sess from its .bak-*, or clear the seeded keys"
     else
         warn "couldn't seed pins/wallpaper into session.json (jq edit failed) — set them by hand after login."
     fi
@@ -610,6 +881,8 @@ fi
 # 17. Done — next steps
 # =============================================================================
 stage "17/17  Done"
+# Mark the manifest complete (a partial/crashed run leaves status "in-progress").
+manifest_finalize
 echo
 echo "==================================================================="
 printf ' %sDankMango install finished.%s' "$c_grn" "$c_off"
@@ -630,4 +903,9 @@ cat <<EOF
 
   Backups of anything this script overwrote are alongside the originals with
   a  .bak-$STAMP  suffix.
+
+  A record of everything this run did (packages installed, files backed up,
+  system changes) is written to:
+      $MANIFEST
+  Future uninstall/update tooling reads this — leave it in place.
 EOF
