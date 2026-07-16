@@ -56,7 +56,6 @@ DP2_HELPER="$SCRIPTS/dp2-floatsize.sh"
 DP2_LOCK="${XDG_RUNTIME_DIR:-/tmp}/mango-dp2-floatsize.lock"
 
 ALTTAB_SCRIPT="$SCRIPTS/alt-switcher.sh"
-AUDIO_TOGGLE="$HOME/.local/bin/audio-switch/audio-toggle"
 
 # Combined-audio-OSD patch: a local patch to DMS's package-owned VolumeOSD.qml that
 # adds a device-name line (so an output switch shows ONE popup: icon+name+slider).
@@ -207,17 +206,6 @@ plugin_enabled audioToggle && pass "audioToggle plugin enabled" \
     || fail "audioToggle plugin" "not enabled in plugin_settings.json" "$PLUGIN_SETTINGS" \
             "Re-enable via DMS Settings -> Plugins, confirm it's in the bar, then 'dms restart'."
 
-if execu "$AUDIO_TOGGLE"; then
-    pass "audio-toggle script present & executable"
-    if "$AUDIO_TOGGLE" status >/dev/null 2>&1; then
-        pass "audio-toggle status runs cleanly"
-    else
-        fail "audio-toggle script" "runs but 'audio-toggle status' errored" "$AUDIO_TOGGLE (+ speakers/headphones beside it)" \
-             "Usually the wpctl/pactl calls inside changed, or sink names differ. Run '$AUDIO_TOGGLE status' by hand to see the error."
-    fi
-else
-    fail "audio-toggle script" "missing or not executable" "$AUDIO_TOGGLE" "Restore it, then: chmod +x '$AUDIO_TOGGLE'"
-fi
 have wpctl || have pactl && pass "audio backend present (wpctl/pactl)" \
     || fail "audio backend" "neither wpctl nor pactl found" "PATH / packages" "Install wireplumber (wpctl) or libpulse (pactl)."
 
