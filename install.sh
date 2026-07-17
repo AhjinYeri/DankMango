@@ -43,6 +43,26 @@ SEED_WALLPAPER="futuristic-cityscape-sunset-stockcake_upscayl_2x_upscayl-standar
 # (issue #5) so these pins aren't dead by default. Edit this list to taste.
 SEED_PINNED_APPS=(Alacritty nemo zen Spotify steam discord)
 
+# Which PACKAGE backs each pin above. Stage 16 checks these with `pacman -Qi` and pins
+# ONLY what is actually installed, so a declined or failed install can never leave a
+# dead icon behind. The names deliberately do NOT match the pin IDs 1:1 -- pins are DMS
+# app IDs, these are pacman targets:
+#   Alacritty -> alacritty        (base CachyOS+mango install; `pacman -Qi Alacritty` FAILS -- case matters)
+#   nemo      -> nemo             (REPO_PKGS, stage 3)
+#   zen       -> zen-browser-bin  (AUR_PKGS, stage 3)
+#   Spotify   -> spotify-launcher (STANDARD_APPS, stage 3)
+#   steam/discord                 (STANDARD_APPS, stage 3 -- these two happen to match)
+# If you edit SEED_PINNED_APPS, add the pin's package here too; an unmapped pin falls
+# back to using its own name as the package name.
+declare -A PIN_PKG=(
+    [Alacritty]=alacritty
+    [nemo]=nemo
+    [zen]=zen-browser-bin
+    [Spotify]=spotify-launcher
+    [steam]=steam
+    [discord]=discord
+)
+
 # ---- pretty output ----------------------------------------------------------
 c_blu=$'\033[1;34m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'; c_red=$'\033[31m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
 # CUR_STAGE tracks the current stage NUMBER (parsed from the "N/17" label) so the
@@ -184,6 +204,7 @@ manifest_init() {
   },
   "packages": [],
   "packagesSkipped": [],
+  "packagesFailed": [],
   "backups": [],
   "systemChanges": []
 }
@@ -207,19 +228,37 @@ JSON
 
 # manifest_add_package NAME SOURCE CATEGORY  — packages WE installed (ours to remove
 # later). Dedupe by name. SOURCE = repo|aur ; CATEGORY = required|standard-app|optional-feature.
+# Also clears any earlier packagesFailed entry: a package that installs on a later run is
+# no longer failed, and a stale "failed" record is worse than none.
 manifest_add_package() {
     manifest_jq '
         .packages = ([ .packages[] | select(.name != $n) ]
                      + [{name:$n, source:$s, category:$c, stamp:$stamp}])
+      | .packagesFailed = [ (.packagesFailed // [])[] | select(.name != $n) ]
+    ' --arg n "$1" --arg s "$2" --arg c "$3" --arg stamp "$STAMP"
+}
+
+# manifest_add_failed NAME SOURCE CATEGORY  — we TRIED to install it and it is still not
+# there (see manifest_record_pkgs). Recorded so a failure survives the terminal scrollback
+# that hid it on the laptop install: `jq .packagesFailed ~/.local/state/dankmango/manifest.json`
+# answers "did anything fail?" long after the install output is gone. NOT ours to remove --
+# an uninstaller must ignore this list; it exists purely to report. Cleared automatically
+# once the package shows up (see manifest_add_package / manifest_add_skipped).
+manifest_add_failed() {
+    manifest_jq '
+        .packagesFailed = ([ (.packagesFailed // [])[] | select(.name != $n) ]
+                           + [{name:$n, source:$s, category:$c, stamp:$stamp}])
     ' --arg n "$1" --arg s "$2" --arg c "$3" --arg stamp "$STAMP"
 }
 
 # manifest_add_skipped NAME REASON  — packages present BEFORE us (never ours; the
-# uninstaller must not touch them). Dedupe by name.
+# uninstaller must not touch them). Dedupe by name. Also clears any earlier
+# packagesFailed entry (it failed once, the user installed it by hand, it's here now).
 manifest_add_skipped() {
     manifest_jq '
         .packagesSkipped = ([ .packagesSkipped[] | select(.name != $n) ]
                             + [{name:$n, reason:$r, stamp:$stamp}])
+      | .packagesFailed = [ (.packagesFailed // [])[] | select(.name != $n) ]
     ' --arg n "$1" --arg r "$2" --arg stamp "$STAMP"
 }
 
@@ -312,8 +351,9 @@ REPO_PKGS=(nemo nemo-fileroller matugen cosmic-icon-theme xdg-desktop-portal-wlr
 # AUR packages that DankMango needs.
 AUR_PKGS=(zen-browser-bin sddm-astronaut-theme)
 # Standard taskbar apps (issue #5): the SEED_PINNED_APPS set minus what's already
-# core-installed (Alacritty/nemo/zen). These are pinned to the taskbar regardless, so
-# without them a fresh install shows dead pins. OPTIONAL + opt-in (default yes). All
+# core-installed (Alacritty/nemo/zen). OPTIONAL + opt-in (default yes). Declining is
+# safe: stage 16 pins only what is actually installed, so a skipped app is simply not
+# pinned rather than left as a dead icon. All
 # three are official-repo on CachyOS -- no AUR build needed. steam pulls multilib libs
 # (multilib is enabled by default on CachyOS). Spotify ships as spotify-launcher (the
 # official launcher; it fetches the real client on first run).
@@ -346,7 +386,10 @@ if ! have jq; then
 fi
 
 # manifest_record_pkgs SRC CAT pkg...  — from the pre-snapshot: preexisting -> skipped
-# (not ours); newly present -> ours; still absent -> install failed, leave unrecorded.
+# (not ours); newly present -> ours; still absent -> the install we just attempted FAILED,
+# so record it as failed. Only ever called right AFTER an install attempt (never on the
+# declined path, which records its own skips), so "absent" here unambiguously means the
+# attempt failed rather than "was never tried".
 manifest_record_pkgs() {
     local src="$1" cat="$2"; shift 2
     local p
@@ -355,6 +398,8 @@ manifest_record_pkgs() {
             manifest_add_skipped "$p" already-installed
         elif pacman -Qi "$p" >/dev/null 2>&1; then
             manifest_add_package "$p" "$src" "$cat"
+        else
+            manifest_add_failed "$p" "$src" "$cat"
         fi
     done
 }
@@ -363,25 +408,28 @@ manifest_record_pkgs() {
 if "$AUR" -S --needed --noconfirm "${REPO_PKGS[@]}" "${AUR_PKGS[@]}"; then
     ok "core packages installed (already-present ones were skipped)"
 else
-    warn "one or more core packages failed to install — scroll up for which. Re-run after fixing,"
-    warn "or install the missing ones by hand: $AUR -S ${REPO_PKGS[*]} ${AUR_PKGS[*]}"
+    warn "one or more core packages failed to install — scroll up for which, or check the"
+    warn "manifest's packagesFailed (stage 17 prints it). Re-run after fixing, or install"
+    warn "the missing ones by hand: $AUR -S ${REPO_PKGS[*]} ${AUR_PKGS[*]}"
 fi
 manifest_record_pkgs repo required "${REPO_PKGS[@]}"
 manifest_record_pkgs aur  required "${AUR_PKGS[@]}"
 
 # ---- Standard taskbar apps (issue #5) — one opt-in, default YES -------------------
 info "standard taskbar apps (optional): ${STANDARD_APPS[*]}  (Spotify = spotify-launcher)"
-if ask_yn_default_yes "Install the standard taskbar apps (Spotify, Steam, Discord)? They're pinned either way — saying no leaves those pins with nothing behind them."; then
+if ask_yn_default_yes "Install the standard taskbar apps (Spotify, Steam, Discord)? Saying no just leaves them out — only installed apps get pinned."; then
     if "$AUR" -S --needed --noconfirm "${STANDARD_APPS[@]}"; then
         ok "standard apps installed (already-present ones were skipped)"
     else
         warn "one or more standard apps failed to install — add them later: $AUR -S ${STANDARD_APPS[*]}"
+        warn "  (anything that failed is recorded in the manifest — see the stage 17 summary.)"
     fi
     manifest_record_pkgs repo standard-app "${STANDARD_APPS[@]}"
     info "(Spotify uses spotify-launcher — it fetches the actual client on first launch, so the"
     info " taskbar pin binds once you've opened Spotify once.)"
 else
-    info "Skipped standard apps — the Spotify/Steam/Discord pins stay inert until you install them."
+    info "Skipped standard apps — Spotify/Steam/Discord won't be pinned. Install them later"
+    info "and pin them by hand, or clear session.json's pin lists and re-run to re-seed."
     # Still record any that were already present, so the uninstaller can prove it won't touch them.
     for p in "${STANDARD_APPS[@]}"; do
         [ "${PKG_PRE[$p]:-0}" = "1" ] && manifest_add_skipped "$p" already-installed
@@ -850,7 +898,26 @@ stage "16/17  Seeding taskbar pins, restarting DankMaterialShell + seeding theme
 sess="${XDG_STATE_HOME:-$HOME/.local/state}/DankMaterialShell/session.json"
 seed_wall="$HOME/Pictures/Wallpapers/$SEED_WALLPAPER"
 if have jq; then
-    pins_json="$(printf '%s\n' "${SEED_PINNED_APPS[@]}" | jq -R . | jq -s .)"
+    # Pin ONLY apps whose package is actually installed RIGHT NOW (PIN_PKG maps pin ID ->
+    # pacman target). Deliberately a live check rather than remembering stage 3's exit
+    # status: correct under every path -- prompt declined, whole transaction failed, a
+    # PARTIAL failure where some of the set installed, or a package removed later -- with
+    # no success/fail flag threaded across the ~500 lines between the two stages. Seeding
+    # blind is what put dead icons on a fresh laptop install: the standard-apps prompt was
+    # accepted, the install transaction failed on a mirror hiccup, stage 3 warned (and the
+    # warning scrolled past), and these pins were written anyway.
+    pins_present=(); pins_absent=()
+    for a in "${SEED_PINNED_APPS[@]}"; do
+        if pacman -Qi "${PIN_PKG[$a]:-$a}" >/dev/null 2>&1; then pins_present+=("$a")
+        else pins_absent+=("$a"); fi
+    done
+    # Guard the empty case: `printf '%s\n'` with no args still emits one blank line, which
+    # would seed a bogus [""] pin rather than an empty list.
+    if [ "${#pins_present[@]}" -gt 0 ]; then
+        pins_json="$(printf '%s\n' "${pins_present[@]}" | jq -R . | jq -s .)"
+    else
+        pins_json='[]'
+    fi
     wp=""; [ -f "$seed_wall" ] && wp="$seed_wall"
     mkdir -p "$(dirname "$sess")"
     had_sess=0; [ -f "$sess" ] && had_sess=1
@@ -866,11 +933,21 @@ if have jq; then
             manifest_add_backup "$sess" "$sess.bak-$STAMP" user "$CUR_STAGE"
         fi
         cat "$tmp" > "$sess"
-        ok "seeded taskbar/dock pins: ${SEED_PINNED_APPS[*]}"
-        info "discord/steam/Spotify are installed by the standard-apps step (stage 3) unless you declined it."
+        if [ "${#pins_present[@]}" -gt 0 ]; then
+            ok "seeded taskbar/dock pins (installed apps only): ${pins_present[*]}"
+        else
+            warn "no pins seeded — none of the pinned apps are installed on this system."
+        fi
+        if [ "${#pins_absent[@]}" -gt 0 ]; then
+            warn "NOT pinned, package not installed: ${pins_absent[*]}"
+            warn "  install them and pin by hand — this seed only fills an EMPTY pin list,"
+            warn "  so re-running install.sh will not add them once the list has anything in it."
+        fi
         [ -n "$wp" ] && ok "seeded default wallpaper into session.json (DMS themes on first login: $SEED_WALLPAPER)"
         manifest_add_change session-seed "$CUR_STAGE" "session.json:seed" \
-            "$(jq -nc --arg f "$sess" '{file:$f, keysSeeded:["barPinnedApps","pinnedApps","wallpaperPath"], note:"only set when empty/absent"}')" \
+            "$(jq -nc --arg f "$sess" --argjson pins "$pins_json" \
+                '{file:$f, keysSeeded:["barPinnedApps","pinnedApps","wallpaperPath"], pinsSeeded:$pins,
+                  note:"only set when empty/absent; pins filtered to packages actually installed"}')" \
             "restore $sess from its .bak-*, or clear the seeded keys"
     else
         warn "couldn't seed pins/wallpaper into session.json (jq edit failed) — set them by hand after login."
@@ -915,6 +992,18 @@ fi
 stage "17/17  Done"
 # Mark the manifest complete (a partial/crashed run leaves status "in-progress").
 manifest_finalize
+# Surface failed installs HERE, at the end, where they can't scroll past unseen — a
+# mid-install warning is exactly what got missed on the laptop that shipped dead pins.
+if have jq && [ -f "$MANIFEST" ]; then
+    failed="$(jq -r '[ (.packagesFailed // [])[] | .name ] | join(" ")' "$MANIFEST" 2>/dev/null)"
+    if [ -n "${failed:-}" ]; then
+        echo
+        warn "THESE PACKAGES FAILED TO INSTALL: $failed"
+        warn "  Nothing was pinned for them, and features needing them won't work."
+        warn "  Retry with:  $AUR -S $failed"
+        warn "  Then re-run this installer, or pin them by hand in the taskbar."
+    fi
+fi
 echo
 echo "==================================================================="
 printf ' %sDankMango install finished.%s' "$c_grn" "$c_off"
