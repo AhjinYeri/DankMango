@@ -6,6 +6,24 @@ My MangoWM + DankMaterialShell setup for CachyOS, packaged up so other people ca
 
 > Needs **CachyOS + MangoWM**. Won't work on Hyprland, Sway, GNOME, or anything non-Arch — the installer's built specifically around this stack.
 
+## See it in action
+
+**Wallpaper-driven theming** — change your wallpaper, everything else follows:
+
+![Theming demo](docs/media/theme-demo.gif)
+
+**Per-monitor tile/float** — switch a monitor's mode without touching a config file:
+
+![Tile/float demo](docs/media/tile-float-demo.gif)
+
+**Alt-tab switcher** — custom icon+title cards:
+
+![Alt-tab demo](docs/media/alt-tab-demo.gif)
+
+**Combined audio OSD** — device name and volume together:
+
+![Audio OSD demo](docs/media/audio-osd-demo.gif)
+
 ## Install
 
 > **Heads up if you've already got a MangoWM/DMS setup you like.** This replaces your config wholesale — it's not a gentle merge on top of what you've already got. Your setup will visibly change the second you run it.
