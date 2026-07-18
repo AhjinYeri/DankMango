@@ -136,6 +136,47 @@ fi
 # =============================================================================
 stage "4/17  Setting default applications (Nemo, Loupe)"
 
+# 4a. Nemo icon override.
+#
+# Nemo's shipped .desktop declares `Icon=system-file-manager` -- correct per the
+# icon-naming spec, but it means Nemo renders as whatever generic the icon theme
+# provides for that name. DankMango ships cosmic-icon-theme (stage 3), and Cosmic
+# draws system-file-manager as a grey filing cabinet (it's COSMIC Files' own
+# branding), so the pinned Nemo entry in the DankBar shows a cabinet, not a folder.
+#
+# Verified chain, not assumed: AppsDock -> Paths.getAppIcon() prefers
+# desktopEntry.icon over every other lookup, so the .desktop's Icon= is what wins.
+# Fixing it there fixes it everywhere at once (bar pin, dock, launcher, GTK).
+#
+# We point it at `folder` -- NOT at `nemo`. Both fix the cabinet, but `nemo` gives
+# you Nemo's own green branded icon, which then clashes with the plain grey folders
+# Nemo draws in its actual file view. `folder` is the same generic name those folders
+# use, so the pin matches the file manager's own visual language and, being generic,
+# tracks whatever icon theme is active instead of pinning one app's branding. Under
+# DankMango's default that resolves to Cosmic's scalable places/folder.svg -- no
+# vendored asset needed. ~/.local/share/applications outranks
+# /usr/share/applications, so the override survives nemo package updates.
+#
+# NOTE: .desktop files do NOT merge key-by-key -- a user-level file REPLACES the
+# system one wholesale. That's why config/applications/nemo.desktop is a verbatim
+# copy (all Name[xx] translations, MimeType, and the three Desktop Actions included)
+# with ONLY the Icon= line changed. Don't trim it down to a few keys: that would
+# silently drop Nemo's translations and its Home/Computer/Trash right-click actions.
+if pacman -Qi nemo >/dev/null 2>&1; then
+    if user_copy "$REPO_DIR/config/applications/nemo.desktop" \
+                 "$HOME/.local/share/applications/nemo.desktop"; then
+        # Refresh the user-dir desktop database so the MimeType associations in the
+        # override (and the xdg-mime defaults set just below) resolve against it.
+        if have update-desktop-database; then
+            update-desktop-database "$HOME/.local/share/applications" 2>/dev/null \
+                && ok "user desktop database refreshed" \
+                || warn "update-desktop-database failed — harmless, but re-run it if Nemo's file associations look off"
+        fi
+    fi
+else
+    info "nemo isn't installed — skipping the Nemo icon override."
+fi
+
 # Image types Loupe takes over. Loupe already declares these in its own .desktop
 # MimeType list; setting them here only decides which app WINS, so a double-click in
 # Nemo lands in Loupe instead of whatever happens to sort first. Add a type here and
