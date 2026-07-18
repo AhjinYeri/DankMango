@@ -10,4 +10,4 @@ All desktop wallpapers are AI-generated images from StockCake, released public d
 
 Images were downloaded at StockCake's free tier and upscaled locally to 2912×1632 using [Upscayl](https://www.upscayl.org), an open-source offline AI upscaler.
 
-The SDDM background is a color-inverted edit of the default wallpaper bundled with the sddm-astronaut-theme "Japanese aesthetic" variant (see [Core projects](#core-projects) above). As a modified version of a GPLv3+-licensed asset, this file is distributed under the same license.
+The SDDM background is a color-inverted edit of the default wallpaper bundled with the sddm-astronaut-theme "Japanese aesthetic" variant (see [Core projects](../CREDITS.md#core-projects) in the root `CREDITS.md`). As a modified version of a GPLv3+-licensed asset, this file is distributed under the same license.

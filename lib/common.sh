@@ -410,6 +410,8 @@ route_dest() {
             printf '%s\tuser\tuser_copy\n' "$HOME/.config/mango/${p#config/mango/}" ;;
         config/gtk-3.0/*|config/gtk-4.0/*|config/alacritty/*)
             printf '%s\tuser\tuser_copy\n' "$HOME/.config/${p#config/}" ;;
+        config/applications/*)
+            printf '%s\tuser\tuser_copy\n' "$HOME/.local/share/applications/${p#config/applications/}" ;;
         wallpapers/*.png|wallpapers/*.jpg|wallpapers/*.jpeg)
             printf '%s\tuser\twallpaper\n' "$HOME/Pictures/Wallpapers/${p#wallpapers/}" ;;
         plugins/*)

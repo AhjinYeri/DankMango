@@ -22,9 +22,10 @@ resolution; nothing about your hardware is hard-coded.
 You normally never touch this — the bar button does it for you — but it helps to know where
 the setting lives.
 
-MangoWM decides a monitor's mode from its **tag rules** in `~/.config/mango/config.conf`.
-Tags (workspaces) are per-monitor, so each monitor gets a block of **9 tagrules** — one per
-tag, `id:1` through `id:9`. The rule is simple:
+MangoWM decides a monitor's mode from its **tag rules**. In DankMango those live in their own
+auto-generated file, `~/.config/mango/dms/tagrules.conf`, which `config.conf` sources — *not*
+in `config.conf` itself. Tags (workspaces) are per-monitor, so each monitor gets a block of
+**9 tagrules** — one per tag, `id:1` through `id:9`. The rule is simple:
 
 - A monitor **floats** if its 9 tagrules contain **`open_as_floating:1`**.
 - A monitor **tiles** if they don't.
@@ -33,16 +34,25 @@ All this plugin does is add or remove that one keyword (via the setter script be
 reload MangoWM. So **use the bar button — don't hand-edit tagrules** unless you're
 troubleshooting.
 
-**Where the block lives:** open `~/.config/mango/config.conf` and search for
-**`Per-monitor window mode`** (or just `tagrule`). In this repo that's
-`config/mango/config.conf`.
+**Where the block lives:** `~/.config/mango/dms/tagrules.conf` — one 9-tagrule block per
+monitor, generated for your actual hardware. `config.conf` sources it near the bottom
+(search that file for `tagrules.conf`).
 
-> **First-time setup (do this before the plugin will work):** in a fresh DankMango checkout
-> the tagrule block ships **commented out with a placeholder name (`MONITOR-1`)**, because
-> MangoWM needs your real output names and can't guess them. Find yours with `wlr-randr`
-> (or `mmsg get all-monitors | jq '.monitors[].name'`), then add one 9-tagrule block per
-> monitor as described in the top-level README. **The plugin can only control a monitor that
-> already has its 9 tagrules present**, so set them up first.
+> **First-time setup is automatic.** MangoWM needs your monitors' *literal* output names and
+> can't guess them, so the installer runs `generate-tagrules.sh`, which queries the live
+> compositor (`mmsg get all-monitors`) and writes one block per connected monitor. Every
+> monitor starts in **tile** mode; the bar button flips them from there. **The plugin can
+> only control a monitor that already has its 9 tagrules present** — so if you add or remove
+> a monitor later, regenerate them and reload (**Super+r**):
+>
+> ```
+> ~/.config/mango/scripts/generate-tagrules.sh
+> ```
+>
+> For hand-tuning an unusual setup, `config.conf` also keeps a commented
+> **"Per-monitor window mode"** template (using a placeholder `MONITOR-1` name) you can adapt
+> instead — but the generated file is the normal path, and `set-monitor-mode.sh` edits
+> `tagrules.conf`, not `config.conf`.
 
 ---
 
@@ -74,7 +84,7 @@ know where to look.
 | Piece | File | What it does |
 |------|------|--------------|
 | **The button** (this plugin) | `~/.config/DankMaterialShell/plugins/monitorMode/MonitorModeBar.qml` | Just the buttons. Holds **no logic** — every button runs the setter script below. The setter path is resolved from `$HOME` at run time, so it's not tied to any user. |
-| **The setter** | `~/.config/mango/scripts/set-monitor-mode.sh` | Adds/removes `open_as_floating` on a monitor's 9 tagrules, saves it, and reloads MangoWM. |
+| **The setter** | `~/.config/mango/scripts/set-monitor-mode.sh` | Adds/removes `open_as_floating` on a monitor's 9 tagrules in `dms/tagrules.conf`, saves it, and reloads MangoWM. |
 | **The placer** | `~/.config/mango/scripts/dp2-floatsize.sh` | Runs in the background. Sizes/places floating windows to match a single tiled window on the same monitor, and auto-corrects a window's mode when you drag it between monitors (see below). Sizes are derived live from your layout — nothing to capture per machine. |
 
 Both scripts have a clearly-marked **`EDIT HERE AFTER A MANGO / DMS UPDATE`** box at the top

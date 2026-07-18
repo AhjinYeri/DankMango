@@ -43,17 +43,21 @@ It should work on any monitor count or resolution — nothing here is hardcoded 
    ```
    The script will:
    - Check for an AUR helper (install one if missing)
-   - Install required packages (`nemo`, `matugen`, `zen-browser`, `keyd`, `loupe`, and a few others — full list in `install.sh`)
+   - Install required packages (`nemo`, `matugen`, `keyd`, `loupe`, `cosmic-icon-theme`, `cava`, `zen-browser-bin`, and a few others — the full lists are `REPO_PKGS` / `AUR_PKGS` in `lib/common.sh`)
+   - Ask before installing the **standard taskbar apps** (Spotify, Steam, Discord). Declining is safe — only apps that are actually installed get pinned, so you never end up with dead icons
    - Set Nemo as your default file manager, and Loupe as your default image viewer
+   - Drop in a small Nemo `.desktop` override so its icon is a folder rather than the filing cabinet the Cosmic icon theme draws for the generic `system-file-manager` name
    - Copy system-level configs (keyd, SDDM theme) into place
    - Install the DMS plugins and register them
+   - Generate your per-monitor tagrules (see step 5) and seed your taskbar pins + default wallpaper
    - Ask before pinning your power profile to performance (desktop only — skip this on a laptop)
+   - Ask before autostarting easyeffects with your session
    - Ask before applying the **combined audio OSD patch** — an opt-in tweak that merges the device-name and volume popups into a single OSD when you switch audio output. Unlike the rest of the install this edits a DMS *package-owned* core file, so it's your call; it's self-healing (the health check re-applies it after DMS updates) and backs the original file up first. Applying it later by hand: `~/.config/mango/scripts/apply-combined-osd-patch.sh`
    - Restart DMS to apply everything
 
 4. **Log out and back in** once the script finishes — some pieces (like the `keyd` launcher) only take effect on a fresh login, not a DMS reload.
 
-5. **Per-monitor tiling/floating — set up automatically.** `mango` needs your monitors' *literal* output names for per-monitor tile/float, and can't auto-detect them from the config. The installer handles this for you: it runs `scripts/generate-tagrules.sh`, which queries your connected outputs (`mmsg get all-monitors`) and writes one tile-mode block per monitor into `~/.config/mango/dms/tagrules.conf` (sourced by `config.conf`). Every monitor starts in **tile** mode; flip one to **float** anytime with the **Monitor Mode** bar button — no config editing.
+5. **Per-monitor tiling/floating — set up automatically.** `mango` needs your monitors' *literal* output names for per-monitor tile/float, and can't auto-detect them from the config. The installer handles this for you: it runs `config/mango/scripts/generate-tagrules.sh` (installed to `~/.config/mango/scripts/`), which queries your connected outputs (`mmsg get all-monitors`) and writes one tile-mode block per monitor into `~/.config/mango/dms/tagrules.conf` (sourced by `config.conf`). Every monitor starts in **tile** mode; flip one to **float** anytime with the **Monitor Mode** bar button — no config editing.
 
    If you later dock a laptop or add/remove a monitor, just re-run it and reload (**Super+r**):
    ```bash
@@ -66,6 +70,20 @@ It should work on any monitor count or resolution — nothing here is hardcoded 
    ~/.config/mango/scripts/post-update-health.sh
    ```
    It checks that the theming/border colour chain, tagrules, and other moving parts are wired up correctly, and points you at anything that didn't take. Run it any time after an install or a system update.
+
+## Updating
+
+Once DankMango is installed, you don't re-run `install.sh` to pick up repo changes — `update.sh` applies **only what changed** since your last run:
+
+```bash
+git pull
+./update.sh --dry-run   # show the full plan, change nothing — run this first
+./update.sh
+```
+
+It works out the delta from the commit recorded in your install manifest to the repo's current `HEAD`, then installs newly-added packages, re-copies changed config/script files (backing up first), retires files the repo has dropped, and runs any pending migrations for live state that a plain file copy can't express (`settings.json` / `session.json`). The new commit is stamped into the manifest only after everything succeeds.
+
+It won't clobber a file you hand-edited since installing without asking first. If it can't safely compute the delta — an interrupted previous run, rebased history, a dirty tree — it says so and points you back at `install.sh` rather than guessing.
 
 ## Uninstalling
 
@@ -101,7 +119,7 @@ A handful of cyberpunk/neon wallpapers are bundled, all sourced free-to-use and 
 
 This project stands on the work of several others — full list in [`CREDITS.md`](CREDITS.md), including the MangoWM and DankMaterialShell projects, the SDDM astronaut theme author, matugen, and the wallpaper artists/sources.
 
-**On AI assistance:** parts of this repo's code (plugin implementations, install script logic) were built with AI assistance. The architecture, design decisions, testing, and troubleshooting are my own — I'm disclosing the AI involvement because I think that's the honest thing to do, not because the ideas or the debugging weren't mine.
+**On AI assistance:** parts of this repo's code were built with AI assistance — see the [full disclosure in `CREDITS.md`](CREDITS.md#ai-assistance-disclosure).
 
 ## Known issues / in progress
 

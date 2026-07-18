@@ -18,8 +18,10 @@ DankMango's install script sets up several third-party tools it doesn't author, 
 - **[Loupe](https://apps.gnome.org/Loupe/)** — GNOME's image viewer, shipped as DankMango's default for common image types
 - **keyd** (for the Windows-style Super-tap launcher)
 - **xdg-desktop-portal-wlr**
+- **[Cosmic icon theme](https://github.com/pop-os/cosmic-icon-theme)** by System76 — shipped as DankMango's default icon theme
+- **[cava](https://github.com/karlstav/cava)** by karlstav — the audio-visualiser backend behind DMS's Media-widget waveform
 
-Full package list is in `install.sh`.
+Full package lists are the `REPO_PKGS` / `AUR_PKGS` / `STANDARD_APPS` arrays in `lib/common.sh`.
 
 ## AI assistance disclosure
 

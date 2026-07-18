@@ -146,10 +146,14 @@ two** targets; clicking just cycles through them in order and wraps around.
 
 ## Test / enable
 
-1. Copy `plugins/output-switcher` into `~/.config/DankMaterialShell/plugins/`.
+1. `install.sh` installs this for you (stage 14) — into `~/.config/DankMaterialShell/plugins/audioToggle/`,
+   named for the plugin **id** from `plugin.json`, not the repo folder name. To install it by
+   hand, copy `plugins/output-switcher/` to that `audioToggle` path; DMS keys off the id, so
+   copying it under the repo's own directory name won't load.
 2. `dms restart`.
 3. DMS Settings (`Ctrl+,`) → Plugins → enable **Audio Output Toggle**, and add it to your bar
-   (Settings → Appearance → DankBar Layout).
+   (Settings → Appearance → DankBar Layout). It ships pre-registered, so this is usually
+   already done.
 4. With **two or more real outputs** available, click the pill → the default output changes,
    a toast shows the new device's name, and the icon updates. Click again to cycle to the
    next (it wraps around).
