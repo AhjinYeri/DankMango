@@ -300,7 +300,7 @@ manifest_add_change() {
       --arg detail "$detail" --arg reversal "$reversal" --arg stamp "$STAMP"
 }
 
-# Mark the run complete (stage 17). Partial runs keep status "in-progress".
+# Mark the run complete (final stage). Partial runs keep status "in-progress".
 # ALSO stamps lastAppliedCommit = the commit recorded at init — done HERE, after all
 # work, so it reflects a commit that was actually APPLIED end-to-end. This is the fix
 # for the commit-timing gap: .dankmango.commit is written at init (run start), so a
@@ -435,4 +435,181 @@ route_dest() {
             printf '/etc/xdg/xdg-desktop-portal/%s\tsystem\tsys_copy\n' "${p#system/xdg-desktop-portal/}" ;;
         *) return 1 ;;
     esac
+}
+
+# =============================================================================
+# Zen browser theming
+# =============================================================================
+# DMS's matugen `zenbrowser` template regenerates ~/.config/DankMaterialShell/zen.css
+# on every theme change, but NOTHING consumes that file — Zen only reads CSS from
+# <profile>/chrome/userChrome.css. Without the bridge below, `matugenTemplateZenBrowser`
+# produces a themed stylesheet that no browser ever loads. (This is why Zen looked
+# themed on the dev machine and nowhere else: that profile had a hand-written
+# userChrome.css that was never in the repo.)
+#
+# Two files are needed inside the profile, and both may already contain the user's
+# own work, so both are edited with a marker-guarded block rather than overwritten:
+#   chrome/userChrome.css  — @import of the DMS-generated palette
+#   user.js                — toolkit.legacyUserProfileCustomizations.stylesheets=true
+#
+# NOT prefs.js. prefs.js is owned by the browser: it is rewritten wholesale from
+# memory on shutdown, so a line appended while Zen is running is silently discarded
+# the next time it closes. user.js is the supported input side of the same store —
+# read at every startup and merged into prefs.js — and is safe to edit at any time.
+#
+# Zen reads userChrome.css only at startup, so a full quit+relaunch (not a reload)
+# is required before any of this is visible. That is inherent to the Firefox family,
+# not something this step can fix.
+ZEN_CSS="$HOME/.config/DankMaterialShell/zen.css"
+ZEN_MARK_BEGIN="/* >>> DankMango-managed — regenerated on install/update; edit outside this block <<< */"
+ZEN_MARK_END="/* <<< end DankMango-managed >>> */"
+ZEN_JS_MARK_BEGIN="// >>> DankMango-managed — regenerated on install/update; edit outside this block <<<"
+ZEN_JS_MARK_END="// <<< end DankMango-managed >>>"
+
+# zen_profile_dir — echo the absolute path of the active Zen profile, or return 1.
+#
+# Resolution order matters and is NOT the obvious one. A long-lived profile set can
+# carry a stale `Default=1` on a [ProfileN] that was never actually used, while the
+# profile the browser really opens is named by the [InstallXXXXXXXX] section. That is
+# the exact shape on the dev machine: [Profile1] Default=1 points at an empty dir
+# holding only times.json, while [Install15B76BAA26BA15E7] Default= names the real
+# one. So: Install section first, [ProfileN] Default=1 only as a fallback.
+#
+# Both roots are checked because the location depends on the build's XDG handling:
+# ~/.zen is the classic path, ~/.config/zen is what the AUR zen-browser-bin uses.
+zen_profile_dir() {
+    local root ini rel
+    for root in "$HOME/.zen" "$HOME/.config/zen"; do
+        ini="$root/profiles.ini"
+        [ -f "$ini" ] || continue
+
+        # 1. The install-scoped default — what the browser actually launches.
+        rel="$(awk '
+            /^\[Install/ { ins=1; next }
+            /^\[/        { ins=0 }
+            ins && /^Default=/ { v=$0; sub(/^Default=/, "", v); gsub(/\r/, "", v); print v; exit }
+        ' "$ini")"
+
+        # 2. Fallback: a [ProfileN] flagged Default=1 (only if no Install section).
+        if [ -z "$rel" ]; then
+            rel="$(awk '
+                /^\[Profile/ { inp=1; p=""; d=0; next }
+                /^\[/        { if (inp && d && p != "") { print p; exit } inp=0 }
+                inp && /^Path=/     { p=$0; sub(/^Path=/, "", p); gsub(/\r/, "", p) }
+                inp && /^Default=1/ { d=1 }
+                END { if (inp && d && p != "") print p }
+            ' "$ini")"
+        fi
+
+        [ -n "$rel" ] || continue
+        # IsRelative=0 profiles store an absolute Path=; relative ones hang off the root.
+        case "$rel" in /*) printf '%s\n' "$rel" ;; *) printf '%s/%s\n' "$root" "$rel" ;; esac
+        return 0
+    done
+    return 1
+}
+
+# _zen_strip_block FILE BEGIN END — echo FILE's contents with any existing managed
+# block removed. Everything outside the markers is passed through byte-for-byte.
+_zen_strip_block() {
+    [ -f "$1" ] || return 0
+    awk -v b="$2" -v e="$3" '
+        $0 == b { skip=1; next }
+        $0 == e { skip=0; next }
+        !skip   { print }
+    ' "$1"
+}
+
+# _zen_write FILE NEW_CONTENT LABEL — write only if the content actually changes,
+# backing up the previous version first. Keeps re-runs from churning backups.
+_zen_write() {
+    local f="$1" new="$2" label="$3"
+    if [ -f "$f" ] && [ "$(cat "$f")" = "$new" ]; then
+        info "  $label already up to date — unchanged"
+        return 0
+    fi
+    if [ "${DRY_RUN:-0}" = 1 ]; then
+        info "  [dry-run] would write $label ($f)"
+        return 0
+    fi
+    if [ -f "$f" ]; then
+        cp -a "$f" "$f.bak-$STAMP"
+        [ -n "${MANIFEST:-}" ] && [ -f "${MANIFEST:-}" ] && \
+            manifest_add_backup "$f" "$f.bak-$STAMP" user "${CUR_STAGE:-zen}"
+        printf '%s\n' "$new" > "$f"
+        ok "  updated $label (backup: $(basename "$f").bak-$STAMP)"
+    else
+        printf '%s\n' "$new" > "$f"
+        ok "  created $label"
+    fi
+}
+
+# zen_apply_theming — the whole step. Idempotent; honours DRY_RUN.
+# Returns 0 when applied or already correct, 1 when it could not run (no profile).
+zen_apply_theming() {
+    if ! have zen-browser && ! pacman -Qi zen-browser-bin >/dev/null 2>&1; then
+        info "Zen isn't installed — skipping Zen theming"
+        return 0
+    fi
+
+    local prof
+    if ! prof="$(zen_profile_dir)"; then
+        warn "Zen is installed but no profile exists yet (never launched)."
+        warn "  Zen creates its profile on first run, so there is nothing to theme yet."
+        warn "  Fix: launch Zen once, quit it, then re-run this step:"
+        warn "      cd $REPO_DIR && bash install.sh     (or: bash update.sh)"
+        return 1
+    fi
+    if [ ! -d "$prof" ]; then
+        warn "profiles.ini names a profile that doesn't exist on disk: $prof"
+        warn "  Launch Zen once so it creates the profile, then re-run."
+        return 1
+    fi
+    ok "resolved Zen profile: $prof"
+
+    [ -f "$ZEN_CSS" ] || warn "  $ZEN_CSS doesn't exist yet — DMS writes it on the next theme/wallpaper change; the @import will start working then."
+
+    # ---- 1. chrome/userChrome.css -------------------------------------------
+    # The managed block is PREPENDED, not appended: CSS requires @import to precede
+    # every other rule in the stylesheet, so a block added at the end of a file that
+    # already has rules would be parsed and then ignored outright.
+    local chrome="$prof/chrome" uc="$prof/chrome/userChrome.css"
+    if [ ! -d "$chrome" ]; then
+        if [ "${DRY_RUN:-0}" = 1 ]; then info "  [dry-run] would create $chrome"
+        else mkdir -p "$chrome"; ok "  created $chrome"; fi
+    fi
+    local rest block new
+    rest="$(_zen_strip_block "$uc" "$ZEN_MARK_BEGIN" "$ZEN_MARK_END")"
+    block="$(printf '%s\n%s\n%s\n%s' \
+        "$ZEN_MARK_BEGIN" \
+        "/* Wallpaper-following palette, regenerated by DMS/matugen on every theme change." \
+        " * Takes effect on Zen's next full restart — userChrome.css is read at startup. */" \
+        "@import url(\"file://$ZEN_CSS\");
+$ZEN_MARK_END")"
+    # Strip leading blank lines from the remainder so repeated runs don't accrete them.
+    rest="$(printf '%s' "$rest" | awk 'NF {found=1} found {print}')"
+    if [ -n "$rest" ]; then new="$block"$'\n\n'"$rest"; else new="$block"; fi
+    _zen_write "$uc" "$new" "userChrome.css"
+
+    # ---- 2. user.js ----------------------------------------------------------
+    # Without this pref Zen ignores userChrome.css completely.
+    local ujs="$prof/user.js" jrest jblock jnew
+    jrest="$(_zen_strip_block "$ujs" "$ZEN_JS_MARK_BEGIN" "$ZEN_JS_MARK_END")"
+    jblock="$(printf '%s\n%s\n%s\n%s' \
+        "$ZEN_JS_MARK_BEGIN" \
+        "// Required for chrome/userChrome.css to be loaded at all." \
+        "user_pref(\"toolkit.legacyUserProfileCustomizations.stylesheets\", true);" \
+        "$ZEN_JS_MARK_END")"
+    jrest="$(printf '%s' "$jrest" | awk 'NF {found=1} found {print}')"
+    if [ -n "$jrest" ]; then jnew="$jblock"$'\n\n'"$jrest"; else jnew="$jblock"; fi
+    _zen_write "$ujs" "$jnew" "user.js"
+
+    if [ "${DRY_RUN:-0}" != 1 ]; then
+        [ -n "${MANIFEST:-}" ] && [ -f "${MANIFEST:-}" ] && \
+            manifest_add_change zen-theming "${CUR_STAGE:-zen}" "$prof" \
+                "$(jq -nc --arg p "$prof" --arg c "$ZEN_CSS" '{profile:$p, imports:$c}')" \
+                "remove the DankMango-managed blocks from chrome/userChrome.css and user.js"
+        info "  Zen must be fully quit and reopened before this is visible."
+    fi
+    return 0
 }

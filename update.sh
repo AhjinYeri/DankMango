@@ -71,7 +71,18 @@ echo "==================================================================="
 # manifest's migrationsApplied[]. Order matters: list oldest first.
 MIGRATIONS=(
     "reseed-pins-installed-only:remove dead taskbar/dock pins whose package isn't installed (the pin-seed fix, for installs made before it)"
+    "zen-userchrome-bridge:write the Zen userChrome.css/user.js bridge so matugen's zen.css is actually loaded (Zen theming never worked before this)"
 )
+
+# Every install made before this migration existed has a themed zen.css sitting unused
+# on disk, because nothing ever wrote the userChrome.css that imports it. This applies
+# the bridge to the existing profile. Marker-guarded and idempotent: an existing
+# userChrome.css keeps everything outside the managed block. If Zen has never been
+# launched there is no profile to write to yet — the migration reports that and returns
+# non-zero so it is NOT recorded as applied, and a later update.sh retries it.
+migrate_zen-userchrome-bridge() {
+    zen_apply_theming
+}
 
 # The existing-install analog of the pin-seeding fix. Fresh installs now pin only
 # installed apps; an OLDER install may already carry dead pins (e.g. spotify-launcher

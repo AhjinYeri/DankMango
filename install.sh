@@ -79,7 +79,7 @@ manifest_init
 # =============================================================================
 # 1. Sanity check: does this look like CachyOS? (soft — warn only)
 # =============================================================================
-stage "1/17  Checking this looks like a CachyOS system"
+stage "1/18  Checking this looks like a CachyOS system"
 if grep -qi 'cachy' /etc/os-release 2>/dev/null || [ -f /etc/cachyos-release ] || pacman -Sl cachyos >/dev/null 2>&1; then
     ok "CachyOS detected"
 else
@@ -93,14 +93,14 @@ fi
 # =============================================================================
 # 2. AUR helper: use paru/yay; bootstrap paru if neither is present
 # =============================================================================
-stage "2/17  Ensuring an AUR helper is available"
+stage "2/18  Ensuring an AUR helper is available"
 ensure_aur_helper
 ok "using AUR helper: $AUR"
 
 # =============================================================================
 # 3. Install packages
 # =============================================================================
-stage "3/17  Installing packages"
+stage "3/18  Installing packages"
 info "official-repo: ${REPO_PKGS[*]}"
 info "AUR (required): ${AUR_PKGS[*]}"
 
@@ -168,7 +168,7 @@ fi
 # =============================================================================
 # 4. Default applications (file manager, image viewer)
 # =============================================================================
-stage "4/17  Setting default applications (Nemo, Loupe)"
+stage "4/18  Setting default applications (Nemo, Loupe)"
 
 # 4a. Nemo icon override.
 #
@@ -260,7 +260,7 @@ fi
 # =============================================================================
 # 5. System-level files (need sudo)
 # =============================================================================
-stage "5/17  Installing system files (keyd, SDDM) — will prompt for sudo"
+stage "5/18  Installing system files (keyd, SDDM) — will prompt for sudo"
 
 # 5a. keyd (Super-tap launcher etc.)
 if sys_copy "$REPO_DIR/system/keyd/default.conf" "/etc/keyd/default.conf"; then
@@ -354,7 +354,7 @@ fi
 # =============================================================================
 # 6. Make the mango helper scripts executable
 # =============================================================================
-stage "6/17  Making mango scripts executable"
+stage "6/18  Making mango scripts executable"
 if compgen -G "$REPO_DIR/config/mango/scripts/*.sh" >/dev/null; then
     chmod +x "$REPO_DIR"/config/mango/scripts/*.sh && ok "chmod +x on config/mango/scripts/*.sh"
 else
@@ -369,7 +369,7 @@ fi
 #    => all dms/*.conf live at ~/.config/mango/dms/ ; the mango tree at
 #       ~/.config/mango/ ; the DMS tree at ~/.config/DankMaterialShell/.
 # =============================================================================
-stage "7/17  Installing mango + DankMaterialShell configs"
+stage "7/18  Installing mango + DankMaterialShell configs"
 
 # 7a. mango tree (config.conf + scripts/) -> ~/.config/mango/
 mkdir -p "$HOME/.config/mango"
@@ -451,7 +451,7 @@ fi
 #    Never clobbers existing wallpapers: same-named files already there are
 #    skipped with a warning, same pattern as the other copy steps.
 # =============================================================================
-stage "8/17  Installing default wallpapers"
+stage "8/18  Installing default wallpapers"
 WALL_DST="$HOME/Pictures/Wallpapers"
 if compgen -G "$REPO_DIR/wallpapers/*.png" >/dev/null; then
     mkdir -p "$WALL_DST"
@@ -482,7 +482,7 @@ fi
 # =============================================================================
 # 9. GTK theming (dank-colors + transparency import into gtk-3.0 / gtk-4.0)
 # =============================================================================
-stage "9/17  Layering GTK theming (gtk-3.0 / gtk-4.0)"
+stage "9/18  Layering GTK theming (gtk-3.0 / gtk-4.0)"
 # Ship the hand-authored LAYER files only: each gtk.css @imports the matugen-
 # generated dank-colors.css (created at runtime -- NOT shipped) plus a scoped
 # per-app transparency file that must ship alongside it or the @import dangles.
@@ -506,7 +506,7 @@ fi
 # =============================================================================
 # 10. DMS popupTransparency = 0.75
 # =============================================================================
-stage "10/17  Checking DMS popupTransparency"
+stage "10/18  Checking DMS popupTransparency"
 SETTINGS="$HOME/.config/DankMaterialShell/settings.json"
 if [ -f "$SETTINGS" ] && grep -q '"popupTransparency"[[:space:]]*:[[:space:]]*0.75' "$SETTINGS"; then
     ok "popupTransparency already 0.75 in settings.json (shipped) — no change needed"
@@ -529,7 +529,7 @@ fi
 # =============================================================================
 # 11. Alacritty config (CachyOS's default has a known duplicate-key error)
 # =============================================================================
-stage "11/17  Installing Alacritty config"
+stage "11/18  Installing Alacritty config"
 alac_src=""
 for cand in "$REPO_DIR/config/alacritty/alacritty.toml" "$REPO_DIR/config/alacritty.toml"; do
     [ -f "$cand" ] && { alac_src="$cand"; break; }
@@ -544,7 +544,7 @@ fi
 # =============================================================================
 # 12. Power profile (opt-in; skip on laptops)
 # =============================================================================
-stage "12/17  Power profile (optional)"
+stage "12/18  Power profile (optional)"
 info "Pinning to 'performance' is great for a DESKTOP, but you should SKIP this on a laptop"
 info "(it hurts battery life)."
 if ask_yn "Pin power profile to 'performance' now?"; then
@@ -570,7 +570,7 @@ fi
 # =============================================================================
 # 13. easyeffects autostart (opt-in; deliberate decision)
 # =============================================================================
-stage "13/17  easyeffects autostart (optional)"
+stage "13/18  easyeffects autostart (optional)"
 CONF="$HOME/.config/mango/config.conf"
 EE_LINE_RE='^[[:space:]]*#?[[:space:]]*exec-once[[:space:]]*=[[:space:]]*easyeffects'
 if [ -f "$CONF" ] && grep -qE "$EE_LINE_RE" "$CONF"; then
@@ -610,7 +610,7 @@ fi
 #     Registration in plugin_settings.json + settings.json already ships in the
 #     copied JSONs (step 7), so we only copy files and verify — no duplicates.
 # =============================================================================
-stage "14/17  Installing DMS plugins"
+stage "14/18  Installing DMS plugins"
 PLUGINS_DST="$HOME/.config/DankMaterialShell/plugins"
 mkdir -p "$PLUGINS_DST"
 for pdir in "$REPO_DIR"/plugins/*/; do
@@ -647,7 +647,7 @@ done
 #     over a known-bad state. Runs BEFORE the stage-16 restart so a running DMS
 #     picks the patch up immediately.
 # =============================================================================
-stage "15/17  Combined audio OSD patch (optional)"
+stage "15/18  Combined audio OSD patch (optional)"
 OSD_PATCH="$HOME/.config/mango/scripts/apply-combined-osd-patch.sh"
 OSD_TARGET="/usr/share/quickshell/dms/Modules/OSD/VolumeOSD.qml"
 info "This merges the device-name + volume popups into a SINGLE OSD on audio-output"
@@ -679,7 +679,7 @@ fi
 # =============================================================================
 # 16. Restart DMS to apply, then seed first-boot theming from a bundled wallpaper
 # =============================================================================
-stage "16/17  Seeding taskbar pins, restarting DankMaterialShell + seeding theme"
+stage "16/18  Seeding taskbar pins, restarting DankMaterialShell + seeding theme"
 
 # Seed the taskbar/dock pins AND (offline) the default wallpaper into DMS's
 # SessionData file BEFORE (re)starting DMS, in one jq pass. Both live in session.json
@@ -783,9 +783,28 @@ else
 fi
 
 # =============================================================================
-# 17. Done — next steps
+# 17. Zen browser theming (userChrome.css bridge)
 # =============================================================================
-stage "17/17  Done"
+# Runs LAST-but-one, deliberately: it wants stage 3's zen-browser-bin install and
+# stage 16's matugen run (which generates the zen.css it imports) to have happened.
+#
+# KNOWN ORDERING LIMITATION — read this before assuming a fresh install is covered:
+# Zen creates its profile directory on FIRST LAUNCH, not at package install. On a
+# fresh machine this stage therefore runs before any profile exists, finds nothing
+# to write to, and says so. There is no clean way around it from inside the
+# installer: we are not going to launch a browser on the user's behalf mid-install,
+# and fabricating a profile directory by hand risks colliding with the one Zen
+# generates itself. So on a fresh install this stage WARNS and defers; the user
+# launches Zen once and re-runs install.sh (or update.sh, which carries the same
+# step as a migration). On any machine where Zen has been used at all — which is
+# every existing-install case — it applies immediately.
+stage "17/18  Zen browser theming"
+zen_apply_theming || true
+
+# =============================================================================
+# 18. Done — next steps
+# =============================================================================
+stage "18/18  Done"
 # Mark the manifest complete (a partial/crashed run leaves status "in-progress").
 manifest_finalize
 # Surface failed installs HERE, at the end, where they can't scroll past unseen — a
