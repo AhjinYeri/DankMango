@@ -37,6 +37,40 @@ echo " DankMango installer   ($STAMP)"
 echo " repo: $REPO_DIR"
 echo "==================================================================="
 
+# =============================================================================
+# Confirmation gate — runs on EVERY install, before anything else happens.
+# =============================================================================
+# Deliberately universal rather than "only if we detect an existing config":
+# detection is guesswork, and the consequence of guessing wrong is someone's
+# personalised setup changing under them without warning. One typed word is a
+# cheap price for that. This sits above manifest_init so a declined run leaves
+# NOTHING behind — not even a manifest.
+printf '\n%s' "$c_yel"
+cat <<'EOF'
+    ------------------------------------------------------------------
+     READ THIS FIRST
+    ------------------------------------------------------------------
+     This REPLACES your mango + DMS config wholesale. It is not a
+     gentle merge on top of whatever you've already got set up — if
+     you've personalised things, your setup will visibly change the
+     moment this runs.
+
+     Everything it overwrites is backed up first (<file>.bak-<stamp>),
+     and ./uninstall.sh can walk it back. So it's reversible.
+
+     But if you've got a MangoWM/DMS setup you actually care about,
+     back it up yourself too before you continue — a git commit, a
+     snapper snapshot, whatever you'd normally do. Don't lean solely
+     on DankMango's own backups for something you can't afford to lose.
+    ------------------------------------------------------------------
+EOF
+printf '%s\n' "$c_off"
+if ! ask_typed "Type 'I understand' to continue (anything else aborts): " "I understand"; then
+    echo ""
+    info "Aborted — nothing was changed."
+    exit 0
+fi
+
 # Stage 0 (setup, not user-facing): open the install manifest FIRST, so even a run
 # that crashes early leaves an accurate partial record. Every stage below appends to
 # it as it acts (one write per action), rather than a bulk dump at the end.

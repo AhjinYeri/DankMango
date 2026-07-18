@@ -93,6 +93,15 @@ ask_yn_default_yes() {
     case "$ans" in [nN]*) return 1 ;; *) return 0 ;; esac
 }
 
+# ask_typed "question" "expected"  -> returns 0 only if the user types EXACTLY the
+# expected word (case-insensitively). Deliberately NOT a y/N prompt: this is for the
+# one gate that shouldn't be blow-through-able by a reflexive Enter or a stray "y".
+ask_typed() {
+    local ans
+    read -r -p "    $1 " ans
+    [ "${ans,,}" = "${2,,}" ]
+}
+
 # Copy a SYSTEM file (needs sudo). Backs up an existing, differing target.
 # Records the backup (if any) and a system-file-installed change in the manifest,
 # noting whether the target pre-existed (so uninstall knows: restore vs. delete).

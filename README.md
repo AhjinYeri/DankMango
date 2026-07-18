@@ -8,6 +8,12 @@ My MangoWM + DankMaterialShell setup for CachyOS, packaged up so other people ca
 
 ## Install
 
+> **Heads up if you've already got a MangoWM/DMS setup you like.** This replaces your config wholesale — it's not a gentle merge on top of what you've already got. Your setup will visibly change the second you run it.
+>
+> Everything it overwrites gets backed up automatically, and `./uninstall.sh` can walk it back, so it *is* reversible. But if there's stuff in there you can't afford to lose, back up your own dotfiles independently first as well — a git commit, a snapper snapshot, whatever you'd normally do. Don't rely solely on DankMango's backups.
+>
+> The installer asks you to type a confirmation before it touches anything, so you get one more chance to bail.
+
 ```bash
 git clone https://github.com/AhjinYeri/DankMango.git
 cd DankMango
@@ -49,7 +55,7 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 ./uninstall.sh
 ```
 
-Both are safe by default — nothing gets deleted, everything's backed up, and every prompt defaults to "no." Full details in [docs/GUIDE.md](docs/GUIDE.md).
+Both are safe by default — nothing gets deleted, everything's backed up, and every prompt defaults to "no." If you've hand-edited any of the configs DankMango installed, update won't quietly stomp them: it stops and asks you per file whether to keep yours, take the new one, or show you the diff — and keeping yours is the default. Full details in [docs/GUIDE.md](docs/GUIDE.md).
 
 ## Wallpapers
 
