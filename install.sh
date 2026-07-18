@@ -25,268 +25,12 @@ set -uo pipefail
 
 # Resolve the repo root from this script's own location (works from anywhere).
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STAMP="$(date +%Y%m%d-%H%M%S)"
-WARNINGS=0
 
-# Default wallpaper used to SEED first-boot theming (matugen recolors the whole
-# desktop from it — see stage 16). Must be one of the filenames under wallpapers/
-# (they get installed to ~/Pictures/Wallpapers/). Change this to pick a different
-# out-of-the-box look.
-SEED_WALLPAPER="futuristic-cityscape-sunset-stockcake_upscayl_2x_upscayl-standard-4x.png"
-
-# Taskbar/dock apps pinned out of the box. These live in DMS's SessionData
-# (~/.local/state/DankMaterialShell/session.json), NOT settings.json, so the
-# installer seeds them explicitly (stage 16) — otherwise a fresh install boots
-# with an empty taskbar. Values are the exact app IDs DMS matches (.desktop id /
-# WM class), taken from a live working setup. Alacritty/nemo/zen come from the core
-# package set; discord/steam/Spotify are installed by the stage-3 STANDARD_APPS opt-in
-# (issue #5) so these pins aren't dead by default. Edit this list to taste.
-SEED_PINNED_APPS=(Alacritty nemo zen Spotify steam discord)
-
-# Which PACKAGE backs each pin above. Stage 16 checks these with `pacman -Qi` and pins
-# ONLY what is actually installed, so a declined or failed install can never leave a
-# dead icon behind. The names deliberately do NOT match the pin IDs 1:1 -- pins are DMS
-# app IDs, these are pacman targets:
-#   Alacritty -> alacritty        (base CachyOS+mango install; `pacman -Qi Alacritty` FAILS -- case matters)
-#   nemo      -> nemo             (REPO_PKGS, stage 3)
-#   zen       -> zen-browser-bin  (AUR_PKGS, stage 3)
-#   Spotify   -> spotify-launcher (STANDARD_APPS, stage 3)
-#   steam/discord                 (STANDARD_APPS, stage 3 -- these two happen to match)
-# If you edit SEED_PINNED_APPS, add the pin's package here too; an unmapped pin falls
-# back to using its own name as the package name.
-declare -A PIN_PKG=(
-    [Alacritty]=alacritty
-    [nemo]=nemo
-    [zen]=zen-browser-bin
-    [Spotify]=spotify-launcher
-    [steam]=steam
-    [discord]=discord
-)
-
-# ---- pretty output ----------------------------------------------------------
-c_blu=$'\033[1;34m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'; c_red=$'\033[31m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
-# CUR_STAGE tracks the current stage NUMBER (parsed from the "N/17" label) so the
-# manifest helpers can tag each record with the stage that produced it, without
-# every call site having to pass it explicitly.
-CUR_STAGE="0"
-stage() { CUR_STAGE="${1%%/*}"; printf '\n%s==> %s%s\n' "$c_blu" "$1" "$c_off"; }
-ok()    { printf '    %s[ ok ]%s %s\n' "$c_grn" "$c_off" "$1"; }
-info()  { printf '    %s%s%s\n' "$c_dim" "$1" "$c_off"; }
-warn()  { printf '    %s[warn]%s %s\n' "$c_yel" "$c_off" "$1"; WARNINGS=$((WARNINGS+1)); }
-die()   { printf '    %s[FAIL]%s %s\n' "$c_red" "$c_off" "$1"; exit 1; }
-
-have()  { command -v "$1" >/dev/null 2>&1; }
-
-# ask_yn "question"  -> returns 0 for yes, 1 for no. Defaults to No on empty.
-ask_yn() {
-    local ans
-    read -r -p "    $1 [y/N] " ans
-    case "$ans" in [yY]*) return 0 ;; *) return 1 ;; esac
-}
-
-# ask_yn_default_yes "question"  -> returns 0 for yes, 1 for no. Defaults to YES on
-# empty. Used only for the standard-apps prompt: those apps are pinned to the taskbar
-# regardless, so the sensible default is to install them (a "no" leaves dead pins).
-ask_yn_default_yes() {
-    local ans
-    read -r -p "    $1 [Y/n] " ans
-    case "$ans" in [nN]*) return 1 ;; *) return 0 ;; esac
-}
-
-# Copy a SYSTEM file (needs sudo). Backs up an existing, differing target.
-# Records the backup (if any) and a system-file-installed change in the manifest,
-# noting whether the target pre-existed (so uninstall knows: restore vs. delete).
-#   sys_copy SRC DST
-sys_copy() {
-    local src="$1" dst="$2"
-    if [ ! -f "$src" ]; then
-        warn "repo is missing '$src' -> skipping (nothing to install for this step yet)"
-        return 1
-    fi
-    sudo mkdir -p "$(dirname "$dst")"
-    local existed=0
-    if [ -f "$dst" ]; then
-        existed=1
-        if ! sudo cmp -s "$src" "$dst"; then
-            sudo cp -a "$dst" "$dst.bak-$STAMP"
-            info "backed up existing $dst -> $dst.bak-$STAMP"
-            manifest_add_backup "$dst" "$dst.bak-$STAMP" system "$CUR_STAGE"
-        fi
-    fi
-    sudo cp "$src" "$dst"
-    ok "installed $dst"
-    if have jq; then
-        manifest_add_change system-file-installed "$CUR_STAGE" "$dst" \
-            "$(jq -nc --arg p "$dst" --argjson pre "$existed" '{path:$p, preexisting:($pre==1), scope:"system"}')" \
-            "$( [ "$existed" = 1 ] && printf 'preexisting; restore its .bak-* if one was made' || printf 'sudo rm %s' "$dst" )"
-    fi
-    return 0
-}
-
-# Copy a USER file (no sudo). Backs up an existing, differing target. Same manifest
-# bookkeeping as sys_copy, scoped "user".
-#   user_copy SRC DST
-user_copy() {
-    local src="$1" dst="$2"
-    if [ ! -f "$src" ]; then
-        warn "repo is missing '$src' -> skipping this step"
-        return 1
-    fi
-    mkdir -p "$(dirname "$dst")"
-    local existed=0
-    if [ -f "$dst" ]; then
-        existed=1
-        if ! cmp -s "$src" "$dst"; then
-            cp -a "$dst" "$dst.bak-$STAMP"
-            info "backed up existing $dst -> $dst.bak-$STAMP"
-            manifest_add_backup "$dst" "$dst.bak-$STAMP" user "$CUR_STAGE"
-        fi
-    fi
-    cp "$src" "$dst"
-    ok "installed $dst"
-    if have jq; then
-        manifest_add_change user-file-installed "$CUR_STAGE" "$dst" \
-            "$(jq -nc --arg p "$dst" --argjson pre "$existed" '{path:$p, preexisting:($pre==1), scope:"user"}')" \
-            "$( [ "$existed" = 1 ] && printf 'preexisting; restore its .bak-* if one was made' || printf 'rm %s' "$dst" )"
-    fi
-    return 0
-}
-
-# ---- install manifest -------------------------------------------------------
-# A queryable record of what THIS DankMango run did — packages we installed (NOT
-# ones already present), files we backed up, and system-level changes — so the
-# future uninstaller/updater don't have to re-derive it from scattered .bak files.
-# Lives in XDG_STATE_HOME (persistent STATE, not config/cache), beside DMS's own
-# session.json, so it outlives the repo clone. Best-effort: a failed manifest write
-# WARNS and never aborts the install. Every helper is idempotent on a natural key,
-# so re-running install.sh never duplicates entries.
-MANIFEST_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dankmango"
-MANIFEST="$MANIFEST_DIR/manifest.json"
-
-# Atomically apply a jq filter to the manifest (temp file + mv). No-op+warn if jq
-# is unavailable or the edit fails — bookkeeping must never break the install.
-manifest_jq() {
-    local filter="$1"; shift
-    have jq || { warn "jq unavailable — a manifest update was skipped (record is incomplete)"; return 1; }
-    [ -f "$MANIFEST" ] || return 1
-    local tmp; tmp="$(mktemp)"
-    if jq "$@" "$filter" "$MANIFEST" > "$tmp" && [ -s "$tmp" ]; then
-        mv "$tmp" "$MANIFEST"
-    else
-        rm -f "$tmp"; warn "a manifest update failed (jq) — record may be incomplete"; return 1
-    fi
-}
-
-# Create the manifest on first run (full skeleton via printf/heredoc — NO jq needed,
-# so a jq-less fresh system or a crash before stage 3 installs jq still leaves valid,
-# version-stamped JSON). On a re-run (jq guaranteed by then) refresh run metadata.
-# Captures DankMango's git commit + version so the updater knows what it upgrades from.
-manifest_init() {
-    mkdir -p "$MANIFEST_DIR"
-    local commit version now
-    commit="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
-    version="$(git -C "$REPO_DIR" describe --tags --always --dirty 2>/dev/null || echo unknown)"
-    now="$(date --iso-8601=seconds 2>/dev/null || date)"
-    if [ ! -f "$MANIFEST" ]; then
-        # Values here are trusted local strings (a git sha, git-describe output, and a
-        # $HOME-rooted path from pwd) — no untrusted input, so heredoc JSON is safe.
-        cat > "$MANIFEST" <<JSON
-{
-  "manifestVersion": 1,
-  "dankmango": {
-    "version": "$version",
-    "commit": "$commit",
-    "repoDir": "$REPO_DIR",
-    "firstInstall": { "at": "$now", "commit": "$commit" },
-    "lastRunAt": "$now",
-    "runs": ["$STAMP"],
-    "status": "in-progress"
-  },
-  "packages": [],
-  "packagesSkipped": [],
-  "packagesFailed": [],
-  "backups": [],
-  "systemChanges": []
-}
-JSON
-        ok "created install manifest -> $MANIFEST"
-    else
-        # firstInstall is preserved (not touched); refresh current version/run info.
-        manifest_jq '
-            .dankmango.version   = $version
-          | .dankmango.commit    = $commit
-          | .dankmango.repoDir   = $repo
-          | .dankmango.lastRunAt = $now
-          | .dankmango.runs      = ((.dankmango.runs // []) + [$stamp] | unique)
-          | .dankmango.status    = "in-progress"
-        ' --arg version "$version" --arg commit "$commit" --arg repo "$REPO_DIR" \
-          --arg now "$now" --arg stamp "$STAMP" \
-          && info "updated existing install manifest -> $MANIFEST" \
-          || info "existing manifest at $MANIFEST"
-    fi
-}
-
-# manifest_add_package NAME SOURCE CATEGORY  — packages WE installed (ours to remove
-# later). Dedupe by name. SOURCE = repo|aur ; CATEGORY = required|standard-app|optional-feature.
-# Also clears any earlier packagesFailed entry: a package that installs on a later run is
-# no longer failed, and a stale "failed" record is worse than none.
-manifest_add_package() {
-    manifest_jq '
-        .packages = ([ .packages[] | select(.name != $n) ]
-                     + [{name:$n, source:$s, category:$c, stamp:$stamp}])
-      | .packagesFailed = [ (.packagesFailed // [])[] | select(.name != $n) ]
-    ' --arg n "$1" --arg s "$2" --arg c "$3" --arg stamp "$STAMP"
-}
-
-# manifest_add_failed NAME SOURCE CATEGORY  — we TRIED to install it and it is still not
-# there (see manifest_record_pkgs). Recorded so a failure survives the terminal scrollback
-# that hid it on the laptop install: `jq .packagesFailed ~/.local/state/dankmango/manifest.json`
-# answers "did anything fail?" long after the install output is gone. NOT ours to remove --
-# an uninstaller must ignore this list; it exists purely to report. Cleared automatically
-# once the package shows up (see manifest_add_package / manifest_add_skipped).
-manifest_add_failed() {
-    manifest_jq '
-        .packagesFailed = ([ (.packagesFailed // [])[] | select(.name != $n) ]
-                           + [{name:$n, source:$s, category:$c, stamp:$stamp}])
-    ' --arg n "$1" --arg s "$2" --arg c "$3" --arg stamp "$STAMP"
-}
-
-# manifest_add_skipped NAME REASON  — packages present BEFORE us (never ours; the
-# uninstaller must not touch them). Dedupe by name. Also clears any earlier
-# packagesFailed entry (it failed once, the user installed it by hand, it's here now).
-manifest_add_skipped() {
-    manifest_jq '
-        .packagesSkipped = ([ .packagesSkipped[] | select(.name != $n) ]
-                            + [{name:$n, reason:$r, stamp:$stamp}])
-      | .packagesFailed = [ (.packagesFailed // [])[] | select(.name != $n) ]
-    ' --arg n "$1" --arg r "$2" --arg stamp "$STAMP"
-}
-
-# manifest_add_backup ORIGINAL BACKUP SCOPE STAGE  — dedupe by ORIGINAL and KEEP THE
-# FIRST: the earliest backup holds the true pre-DankMango file; a re-run would only
-# back up our own already-installed copy, which is useless for restore.
-manifest_add_backup() {
-    manifest_jq '
-        if (.backups | map(.original) | index($o)) then .
-        else .backups += [{original:$o, backup:$b, scope:$scope, stage:$stage, stamp:$stamp}] end
-    ' --arg o "$1" --arg b "$2" --arg scope "$3" --arg stage "$4" --arg stamp "$STAMP"
-}
-
-# manifest_add_change TYPE STAGE KEY DETAIL_JSON [REVERSAL]  — a system-level change.
-# Dedupe by (type + KEY). DETAIL_JSON must be a valid JSON object string (build it with
-# `jq -nc ...` at the call site so values are escaped). REVERSAL is a short hint string.
-manifest_add_change() {
-    local type="$1" stage="$2" key="$3" detail="$4" reversal="${5:-}"
-    manifest_jq '
-        ($type + "|" + $key) as $sig
-      | .systemChanges = ([ .systemChanges[] | select((.type + "|" + (.key // "")) != $sig) ]
-          + [{type:$type, stage:$stage, key:$key, stamp:$stamp, detail:($detail|fromjson), reversal:$reversal}])
-    ' --arg type "$type" --arg stage "$stage" --arg key "$key" \
-      --arg detail "$detail" --arg reversal "$reversal" --arg stamp "$STAMP"
-}
-
-# Mark the run complete (stage 17). Partial runs keep status "in-progress".
-manifest_finalize() { manifest_jq '.dankmango.status = "complete"'; }
+# Shared helpers, manifest bookkeeping, package/seed arrays, the AUR-helper
+# bootstrap, and the repo->dest routing table all live in lib/common.sh so that
+# install.sh and update.sh use ONE copy. REPO_DIR (above) is resolved first
+# because the library reads it; sourcing only defines things (no actions).
+source "$REPO_DIR/lib/common.sh"
 
 echo "==================================================================="
 echo " DankMango installer   ($STAMP)"
@@ -316,52 +60,13 @@ fi
 # 2. AUR helper: use paru/yay; bootstrap paru if neither is present
 # =============================================================================
 stage "2/17  Ensuring an AUR helper is available"
-AUR=""
-if have paru; then AUR="paru"
-elif have yay; then AUR="yay"
-fi
-if [ -z "$AUR" ]; then
-    info "No AUR helper found — bootstrapping paru from the AUR."
-    sudo pacman -S --needed --noconfirm base-devel git || die "couldn't install base-devel/git (needed to build paru)"
-    tmp="$(mktemp -d)"
-    if git clone https://aur.archlinux.org/paru.git "$tmp/paru"; then
-        ( cd "$tmp/paru" && makepkg -si --noconfirm ) || die "paru build failed — install paru or yay manually, then re-run."
-        AUR="paru"
-        rm -rf "$tmp"
-    else
-        die "couldn't clone paru from the AUR — check your network, then re-run."
-    fi
-fi
+ensure_aur_helper
 ok "using AUR helper: $AUR"
 
 # =============================================================================
 # 3. Install packages
 # =============================================================================
 stage "3/17  Installing packages"
-# Official-repo packages (the AUR helper pulls these straight from the repos).
-# rsync: NOT part of a base CachyOS install, and it's a hard dependency of the
-# SDDM stage's apply.sh -- install it here so that stage never hits its fallback.
-# jq: relied on all over this rice (the dp2-floatsize placer, the taskbar-pin +
-# wallpaper seeds, the popupTransparency edit). It's only incidentally present on
-# some systems (pulled in by scx-scheds etc.), so pin it explicitly here.
-# cava: the runtime backend for DMS's built-in Media-widget audio waveform. Without
-# it CavaService.cavaAvailable is false and the widget silently falls back to a static
-# icon (issue #3). Not in a base install, so pin it here.
-REPO_PKGS=(nemo nemo-fileroller matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava)
-# AUR packages that DankMango needs.
-AUR_PKGS=(zen-browser-bin sddm-astronaut-theme)
-# Standard taskbar apps (issue #5): the SEED_PINNED_APPS set minus what's already
-# core-installed (Alacritty/nemo/zen). OPTIONAL + opt-in (default yes). Declining is
-# safe: stage 16 pins only what is actually installed, so a skipped app is simply not
-# pinned rather than left as a dead icon. All
-# three are official-repo on CachyOS -- no AUR build needed. steam pulls multilib libs
-# (multilib is enabled by default on CachyOS). Spotify ships as spotify-launcher (the
-# official launcher; it fetches the real client on first run).
-STANDARD_APPS=(discord steam spotify-launcher)
-# NOTE: intentionally NOT installed here (CachyOS + MangoWM base already ships
-# them): sddm, alacritty, the pipewire stack, wireplumber, networkmanager,
-# power-profiles-daemon, bluez, fonts (noto / meslo-nerd), jq, libnotify, gawk,
-# psmisc, xdg-desktop-portal-core. And capitaine-cursors is NOT used at all.
 info "official-repo: ${REPO_PKGS[*]}"
 info "AUR (required): ${AUR_PKGS[*]}"
 
@@ -385,24 +90,6 @@ if ! have jq; then
         || "$AUR" -S --needed --noconfirm jq >/dev/null 2>&1 || true
 fi
 
-# manifest_record_pkgs SRC CAT pkg...  — from the pre-snapshot: preexisting -> skipped
-# (not ours); newly present -> ours; still absent -> the install we just attempted FAILED,
-# so record it as failed. Only ever called right AFTER an install attempt (never on the
-# declined path, which records its own skips), so "absent" here unambiguously means the
-# attempt failed rather than "was never tried".
-manifest_record_pkgs() {
-    local src="$1" cat="$2"; shift 2
-    local p
-    for p in "$@"; do
-        if [ "${PKG_PRE[$p]:-0}" = "1" ]; then
-            manifest_add_skipped "$p" already-installed
-        elif pacman -Qi "$p" >/dev/null 2>&1; then
-            manifest_add_package "$p" "$src" "$cat"
-        else
-            manifest_add_failed "$p" "$src" "$cat"
-        fi
-    done
-}
 
 # Install the core set in one resolve (--needed skips already-present ones efficiently).
 if "$AUR" -S --needed --noconfirm "${REPO_PKGS[@]}" "${AUR_PKGS[@]}"; then
@@ -445,9 +132,17 @@ else
 fi
 
 # =============================================================================
-# 4. Nemo as the default file manager
+# 4. Default applications (file manager, image viewer)
 # =============================================================================
-stage "4/17  Setting Nemo as the default file manager"
+stage "4/17  Setting default applications (Nemo, Loupe)"
+
+# Image types Loupe takes over. Loupe already declares these in its own .desktop
+# MimeType list; setting them here only decides which app WINS, so a double-click in
+# Nemo lands in Loupe instead of whatever happens to sort first. Add a type here and
+# it's picked up automatically -- the manifest records one entry per mimetype, so the
+# uninstaller can report each one it changed.
+IMAGE_MIMES=(image/jpeg image/png image/gif image/webp image/bmp image/tiff image/svg+xml)
+
 if have xdg-mime; then
     if xdg-mime default nemo.desktop inode/directory; then
         ok "Nemo set for inode/directory"
@@ -457,8 +152,34 @@ if have xdg-mime; then
     else
         warn "xdg-mime call failed — set Nemo as default file manager manually."
     fi
+
+    # Only claim the image types if Loupe is ACTUALLY installed. Same reasoning as the
+    # taskbar pins in stage 16, and the same failure it prevents: if the stage-3 install
+    # fell over (a mirror hiccup is enough), pointing every image type at a missing app
+    # would make double-clicking a photo do NOTHING -- strictly worse than leaving
+    # whatever viewer you already had. `loupe` is the exact package name in the official
+    # repos (cachyos-extra-v3 / Arch extra); org.gnome.Loupe.desktop is the exact ID it
+    # ships -- both verified against the package, not assumed.
+    if pacman -Qi loupe >/dev/null 2>&1; then
+        if xdg-mime default org.gnome.Loupe.desktop "${IMAGE_MIMES[@]}"; then
+            ok "Loupe set as the default image viewer (${#IMAGE_MIMES[@]} image types)"
+            if have jq; then
+                for m in "${IMAGE_MIMES[@]}"; do
+                    manifest_add_change default-app "$CUR_STAGE" "$m" \
+                        "$(jq -nc --arg m "$m" '{mime:$m, app:"org.gnome.Loupe.desktop"}')" \
+                        "reset with: xdg-mime default <your-previous-viewer>.desktop $m"
+                done
+            fi
+        else
+            warn "xdg-mime call failed — set Loupe as your image viewer manually:"
+            warn "  xdg-mime default org.gnome.Loupe.desktop ${IMAGE_MIMES[*]}"
+        fi
+    else
+        warn "loupe isn't installed — leaving your current image viewer alone."
+        info "  (did stage 3 fail? install it with: sudo pacman -S loupe, then re-run install.sh)"
+    fi
 else
-    warn "xdg-mime not found — skipping default-file-manager step."
+    warn "xdg-mime not found — skipping the default-application steps."
 fi
 
 # =============================================================================

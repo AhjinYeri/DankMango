@@ -15,6 +15,7 @@ DankMango's install script sets up several third-party tools it doesn't author, 
 
 - **Nemo** file manager
 - **Zen Browser**
+- **[Loupe](https://apps.gnome.org/Loupe/)** — GNOME's image viewer, shipped as DankMango's default for common image types
 - **keyd** (for the Windows-style Super-tap launcher)
 - **xdg-desktop-portal-wlr**
 

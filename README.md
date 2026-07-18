@@ -25,6 +25,7 @@ It should work on any monitor count or resolution — nothing here is hardcoded 
 - **Output/Sound switcher plugin** — a custom DMS plugin for switching audio outputs, with auto-detected device names
 - **Alt-tab switcher** — custom icon+title card switcher, frosted/transparent, matugen-themed
 - **Themed Nemo & Zen browser** — frosted transparency, colors follow your wallpaper
+- **Loupe image viewer** — GNOME's viewer, set up as the default for common image types (a base install ships none, so photos don't open at all until something claims them)
 - **SDDM astronaut theme** — 12-hour clock, custom background
 - **Post-update health check** — a script that verifies plugins/theming/borders are intact after a `mango` or DMS update, and tells you what broke
 
@@ -42,8 +43,8 @@ It should work on any monitor count or resolution — nothing here is hardcoded 
    ```
    The script will:
    - Check for an AUR helper (install one if missing)
-   - Install required packages (`nemo`, `matugen`, `zen-browser`, `keyd`, and a few others — full list in `install.sh`)
-   - Set Nemo as your default file manager
+   - Install required packages (`nemo`, `matugen`, `zen-browser`, `keyd`, `loupe`, and a few others — full list in `install.sh`)
+   - Set Nemo as your default file manager, and Loupe as your default image viewer
    - Copy system-level configs (keyd, SDDM theme) into place
    - Install the DMS plugins and register them
    - Ask before pinning your power profile to performance (desktop only — skip this on a laptop)
@@ -65,6 +66,32 @@ It should work on any monitor count or resolution — nothing here is hardcoded 
    ~/.config/mango/scripts/post-update-health.sh
    ```
    It checks that the theming/border colour chain, tagrules, and other moving parts are wired up correctly, and points you at anything that didn't take. Run it any time after an install or a system update.
+
+## Uninstalling
+
+`install.sh` records everything it does — packages it installed (as opposed to ones you already had), files it backed up, and system-level changes — in an install manifest at `~/.local/state/dankmango/manifest.json`. `uninstall.sh` reads that manifest and walks the install back, so you don't have to hunt down every file and setting by hand.
+
+**Always look before you leap.** A dry run prints exactly what would happen and changes nothing:
+
+```bash
+./uninstall.sh --dry-run
+```
+
+When you're happy with the plan:
+
+```bash
+./uninstall.sh
+```
+
+It is conservative by design:
+
+- **Nothing is ever deleted.** Everything it removes is *moved* into a rescue dir (`~/.local/state/dankmango/uninstall-<timestamp>/`) that mirrors the original paths, so any step can be undone by hand. Delete that dir yourself once you're happy.
+- **Your files come back.** Anything the installer overwrote is restored from the backup it made first.
+- **Packages are opt-in.** It offers to remove only packages *it* installed, grouped by category, defaulting to keeping them — anything you already had is never touched, and it won't remove a package something else still depends on.
+- **It asks before anything destructive**, and every prompt defaults to No.
+- **It won't clobber state you've changed since installing.** For example, if your taskbar pins no longer match what the installer seeded, it leaves them alone and tells you so rather than wiping pins you added yourself.
+
+Anything it can't safely reverse on its own (a default-application association, say) is listed at the end as an explicit manual step, alongside the reversal hint the installer recorded at the time. If the manifest is missing, older, or incomplete, it warns about what it couldn't determine instead of guessing.
 
 ## Wallpapers
 
