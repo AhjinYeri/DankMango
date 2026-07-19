@@ -49,6 +49,14 @@ gappov = 40
 
 Lower them if 40 feels too generous (20/20 is a common taste), then `Super+r` to reload. Worth knowing: `gappoh`/`gappov` are also what `dp2-floatsize.sh`'s `effective_gap()` reads when it sizes floating windows, so a change here keeps tiled and floating windows consistent rather than only affecting one of them.
 
+**How long the alt-tab switcher stays up.** The card overlay hides itself a set time after your last Tab press. That's the `interval:` on the `idleHide` Timer in `~/.config/DankMaterialShell/plugins/altSwitcher/AltSwitcherBar.qml` — milliseconds, `800` (0.8s) by default:
+
+```
+interval: 800    // display duration after last Alt+Tab poke (0.8s)
+```
+
+Raise it if the switcher vanishes before you've picked a window, lower it if it lingers. Run `dms restart` afterwards to load the change — editing the file alone does nothing until the shell reloads the plugin.
+
 ## Updating
 
 ```bash

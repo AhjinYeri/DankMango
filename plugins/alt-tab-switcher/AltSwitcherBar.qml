@@ -139,7 +139,7 @@ PluginComponent {
             // Not focused -> no Escape/click close; auto-hide after the last poke.
             Timer {
                 id: idleHide
-                interval: 1200   // display duration after last Alt+Tab poke (1.2s)
+                interval: 800    // display duration after last Alt+Tab poke (0.8s)
                 repeat: false
                 onTriggered: modal.close()
             }

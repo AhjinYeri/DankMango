@@ -144,7 +144,7 @@ The plugin failed to load, usually because DMS renamed a building block.
 ## Everyday tasks
 
 - **Change how long it stays up after your last Tab:** edit `interval:` on the
-  `idleHide` Timer in `AltSwitcherBar.qml` (milliseconds; currently `1200`), then
+  `idleHide` Timer in `AltSwitcherBar.qml` (milliseconds; currently `800`), then
   `dms restart`.
 - **Change card size / panel width:** `modalWidth` and the card `height:` in the
   `DankModal` block, then `dms restart`.
