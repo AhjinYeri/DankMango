@@ -49,6 +49,12 @@ git pull
 
 It won't overwrite something you've hand-edited since installing without checking with you first. And if it can't work out the delta safely — say your last update got interrupted, or your git history's been rebased, or you've got uncommitted changes sitting around — it'll just tell you and point you at `install.sh` instead of guessing.
 
+## What to do when the health check fails
+
+After an update, run `~/.config/mango/scripts/post-update-health.sh`. It checks everything DankMango customises that a MangoWM or DMS update can quietly break — per-monitor tagrules, the bar plugins, the combined audio OSD patch, the border colour chain — and prints a PASS or FAIL line for each, plus which versions changed since you last ran it.
+
+If anything fails you get a numbered list of problems, and each one comes with a plain-English walkthrough: the exact commands to type, what each does, and why you're running it. It assumes no prior Linux knowledge, and following the steps as written is the entire fix — there's no AI tooling involved. A ready-made Claude Code prompt gets printed underneath as well for anyone who happens to use it, but it's strictly optional and safe to ignore. A few failures are expected and take a single command (the audio OSD patch gets wiped by every DMS update and just needs re-applying); one or two genuinely can't be fixed by hand, and those say so plainly instead of sending you round in circles.
+
 ## Uninstalling
 
 ```bash
