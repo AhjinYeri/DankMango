@@ -32,6 +32,23 @@ then `Super+r`.
 
 If you've got a weird setup and want to hand-write rules for a specific monitor, `config.conf` has a commented template you can use instead.
 
+## Customizing your setup
+
+A couple of things people tend to want to change straight away. Neither needs anything clever — they're both single values.
+
+**Bar position.** Click the gear icon on the bar to open DankMaterialShell's settings, go to the **Dank Bar** tab, and set the position on your bar card — Top, Bottom, Left or Right. It's per-bar, so if you've added more than one they move independently. No restart needed.
+
+**Gap width between windows.** In `~/.config/mango/config.conf`:
+
+```
+gappih = 20    # inner gaps — between tiled windows
+gappiv = 20
+gappoh = 40    # outer gaps — between windows and the screen edge
+gappov = 40
+```
+
+Lower them if 40 feels too generous (20/20 is a common taste), then `Super+r` to reload. Worth knowing: `gappoh`/`gappov` are also what `dp2-floatsize.sh`'s `effective_gap()` reads when it sizes floating windows, so a change here keeps tiled and floating windows consistent rather than only affecting one of them.
+
 ## Updating
 
 ```bash
