@@ -16,6 +16,7 @@ DankMango's install script sets up several third-party tools it doesn't author, 
 - **Nemo** file manager
 - **Zen Browser**
 - **[Loupe](https://apps.gnome.org/Loupe/)** — GNOME's image viewer, shipped as DankMango's default for common image types
+- **[Celluloid](https://celluloid-player.github.io/)** — GTK front-end to mpv, shipped as DankMango's default for common video types
 - **keyd** (for the Windows-style Super-tap launcher)
 - **xdg-desktop-portal-wlr**
 - **[Cosmic icon theme](https://github.com/pop-os/cosmic-icon-theme)** by System76 — shipped as DankMango's default icon theme

@@ -5,9 +5,9 @@ The stuff that got cut from the main README to keep it from being a wall of text
 ## What install.sh actually does
 
 - Checks you've got an AUR helper, installs one if not
-- Installs the required packages (`nemo`, `matugen`, `keyd`, `loupe`, `cosmic-icon-theme`, `cava`, `zen-browser-bin`, and a few more — see `REPO_PKGS` / `AUR_PKGS` in `lib/common.sh` for the exact list)
+- Installs the required packages (`nemo`, `matugen`, `keyd`, `loupe`, `celluloid`, `cosmic-icon-theme`, `cava`, `zen-browser-bin`, and a few more — see `REPO_PKGS` / `AUR_PKGS` in `lib/common.sh` for the exact list)
 - Asks if you want the standard taskbar apps (Spotify, Steam, Discord). Say no and nothing bad happens — it only pins apps that actually got installed, so you won't end up with dead icons either way
-- Sets Nemo as your default file manager and Loupe as your default image viewer
+- Sets Nemo as your default file manager, Loupe as your default image viewer, and Celluloid as your default video player
 - Fixes Nemo's icon — Cosmic (the icon theme) draws a filing cabinet for generic file managers instead of a folder, so there's a small override that fixes that
 - Copies the system-level stuff into place (keyd, the SDDM theme)
 - Installs and registers the DMS plugins

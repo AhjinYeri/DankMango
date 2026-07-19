@@ -168,7 +168,7 @@ fi
 # =============================================================================
 # 4. Default applications (file manager, image viewer)
 # =============================================================================
-stage "4/18  Setting default applications (Nemo, Loupe)"
+stage "4/18  Setting default applications (Nemo, Loupe, Celluloid)"
 
 # 4a. Nemo icon override.
 #
@@ -218,6 +218,11 @@ fi
 # uninstaller can report each one it changed.
 IMAGE_MIMES=(image/jpeg image/png image/gif image/webp image/bmp image/tiff image/svg+xml)
 
+# Video types Celluloid takes over -- same reasoning and same mechanism as IMAGE_MIMES
+# above (Celluloid declares these itself; setting them here only decides the winner).
+# Kept to formats mpv handles natively, which is all of these.
+VIDEO_MIMES=(video/mp4 video/x-matroska video/webm video/quicktime video/x-msvideo video/mpeg video/ogg video/x-ms-wmv)
+
 if have xdg-mime; then
     if xdg-mime default nemo.desktop inode/directory; then
         ok "Nemo set for inode/directory"
@@ -252,6 +257,29 @@ if have xdg-mime; then
     else
         warn "loupe isn't installed — leaving your current image viewer alone."
         info "  (did stage 3 fail? install it with: sudo pacman -S loupe, then re-run install.sh)"
+    fi
+
+    # Same guard, same reasoning as Loupe above: only claim the video types if Celluloid
+    # actually installed, so a failed stage 3 can't leave every video file opening
+    # NOTHING. `celluloid` is the package name in the official repos (extra);
+    # io.github.celluloid_player.Celluloid.desktop is the ID it ships.
+    if pacman -Qi celluloid >/dev/null 2>&1; then
+        if xdg-mime default io.github.celluloid_player.Celluloid.desktop "${VIDEO_MIMES[@]}"; then
+            ok "Celluloid set as the default video player (${#VIDEO_MIMES[@]} video types)"
+            if have jq; then
+                for m in "${VIDEO_MIMES[@]}"; do
+                    manifest_add_change default-app "$CUR_STAGE" "$m" \
+                        "$(jq -nc --arg m "$m" '{mime:$m, app:"io.github.celluloid_player.Celluloid.desktop"}')" \
+                        "reset with: xdg-mime default <your-previous-player>.desktop $m"
+                done
+            fi
+        else
+            warn "xdg-mime call failed — set Celluloid as your video player manually:"
+            warn "  xdg-mime default io.github.celluloid_player.Celluloid.desktop ${VIDEO_MIMES[*]}"
+        fi
+    else
+        warn "celluloid isn't installed — leaving your current video player alone."
+        info "  (did stage 3 fail? install it with: sudo pacman -S celluloid, then re-run install.sh)"
     fi
 else
     warn "xdg-mime not found — skipping the default-application steps."

@@ -326,7 +326,11 @@ manifest_finalize() {
 # loupe: GNOME's image viewer, made the default for the common image types in stage 4.
 # A base CachyOS+mango install ships no image viewer at all, so double-clicking a photo
 # in Nemo does nothing until something claims those mimetypes.
-REPO_PKGS=(nemo nemo-fileroller loupe matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava)
+# celluloid: the same gap for VIDEO -- a base install has nothing that opens a video
+# file either. GTK4/libadwaita front-end to mpv, so it matches the rest of the rice
+# (and config/gtk-4.0/celluloid-transparency.css themes it). Made the default for the
+# common video types in stage 4, same guarded pattern as loupe.
+REPO_PKGS=(nemo nemo-fileroller loupe celluloid matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava)
 # AUR packages that DankMango needs.
 AUR_PKGS=(zen-browser-bin sddm-astronaut-theme)
 # Standard taskbar apps (issue #5): the SEED_PINNED_APPS set minus what's already

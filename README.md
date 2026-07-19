@@ -60,6 +60,7 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 - Custom alt-tab switcher, output switcher, and monitor mode plugins
 - Nemo and Zen themed to match
 - Loupe set as your image viewer (a fresh CachyOS install has nothing that opens photos)
+- Celluloid set as your video player (same gap — nothing opens a video file either), themed to match
 - SDDM login theme
 - A health-check script so you know when something's actually broken
 
