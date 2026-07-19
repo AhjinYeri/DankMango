@@ -370,7 +370,7 @@
   "osdMicMuteEnabled": true,
   "osdCapsLockEnabled": true,
   "osdPowerProfileEnabled": false,
-  "osdAudioOutputEnabled": true,
+  "osdAudioOutputEnabled": false,
   "powerActionConfirm": true,
   "powerActionHoldDuration": 0.25,
   "powerMenuActions": [

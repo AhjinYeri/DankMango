@@ -62,6 +62,11 @@ DankOSD {
     // presence is verified by  ~/.config/mango/scripts/post-update-health.sh , which
     // greps for the marker string  "DankMango patch: combined OSD device name"  below.
     readonly property string deviceName: AudioService.sink ? AudioService.displayName(AudioService.sink) : ""
+
+    // Tracks whether a sink has EVER resolved. Used by the onSinkChanged handler below
+    // to tell "the user just switched output" apart from "the shell is starting up and
+    // the sink went null -> real", which must NOT flash the OSD on login.
+    property bool _hadSink: false
     // ---- end DankMango patch ------------------------------------------------------
 
     osdWidth: useVertical ? (40 + Theme.spacingS * 2) : Math.min(260, screenWidth - Theme.spacingM * 2)
@@ -89,11 +94,31 @@ DankOSD {
     Connections {
         target: AudioService
 
+        // ---- DankMango patch: combined OSD device name ----------------------------
+        // Upstream only re-syncs an ALREADY-VISIBLE OSD here (the shouldBeVisible
+        // guard), so a default-sink change on its own can never OPEN the OSD.
+        //
+        // That went unnoticed because this repo's card-profile switching path happens
+        // to work by accident: `pactl set-card-profile` DESTROYS the old sink node and
+        // PipeWire creates a new one, and the new node's volume property populating
+        // asynchronously fires volumeChanged on the Connections block above -- which
+        // does show() unconditionally. The OSD was riding on node creation, not on the
+        // sink change.
+        //
+        // A machine with two genuinely independent sinks (laptop speakers + projector)
+        // never destroys a node: `wpctl set-default` just re-points defaultAudioSink at
+        // an already-populated object. Rebinding a Connections target emits nothing, so
+        // volumeChanged never fires and no OSD ever appeared on those switches.
+        //
+        // So open the OSD from here too -- but only once a sink has previously resolved,
+        // otherwise the startup null -> sink transition flashes it on every login.
         function onSinkChanged() {
             root._syncVolume();
-            if (root.shouldBeVisible && SettingsData.osdVolumeEnabled)
+            if ((root._hadSink || root.shouldBeVisible) && SettingsData.osdVolumeEnabled)
                 root.show();
+            root._hadSink = (AudioService.sink != null);
         }
+        // ---- end DankMango patch --------------------------------------------------
     }
 
     content: Loader {

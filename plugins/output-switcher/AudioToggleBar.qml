@@ -45,9 +45,18 @@ import qs.Modules.Plugins
 //      the old default's sink, so WirePlumber would otherwise auto-pick an
 //      unrelated device (e.g. a USB mic's sink); we steer it back ourselves.
 //    * OSD:             none emitted here. DMS's VolumeOSD -- patched by DankMango to
-//      show the device name (see apply-combined-osd-patch.sh) -- already pops up on
-//      the resulting default-sink change, as ONE popup: icon + device name + slider.
+//      show the device name (see apply-combined-osd-patch.sh) -- pops up on the
+//      resulting default-sink change, as ONE popup: icon + device name + slider.
 //      Emitting audioOutputCycled too would stack a second (AudioOutputOSD) box.
+//
+//      HISTORY: that "pops up on the default-sink change" was NOT true as originally
+//      written -- upstream VolumeOSD only re-syncs an already-visible OSD on a sink
+//      change, so a sink change alone never opened it. The profile path below worked
+//      only by accident (a profile switch destroys/recreates the sink node, and the
+//      new node's async volume population fires volumeChanged, which DOES show()).
+//      The sink-cycling path destroys nothing, so it silently showed no OSD at all on
+//      multi-sink machines. apply-combined-osd-patch.sh now makes onSinkChanged open
+//      the OSD itself, so BOTH paths trigger it deliberately rather than by accident.
 //
 //  This plugin shows NO success toast; the patched VolumeOSD is the visual feedback
 //  on a switch. currentName still drives the bar icon. The only toasts it raises are
@@ -226,8 +235,13 @@ PluginComponent {
         id: setDefaultProc
         running: false
         // Re-read after the switch (refreshes icon + default marker). No OSD emitted
-        // here: DMS's patched VolumeOSD already pops up on the resulting default-sink
-        // change, showing icon + device name + slider as ONE popup (see header note).
+        // here: DMS's patched VolumeOSD pops up on the resulting default-sink change,
+        // showing icon + device name + slider as ONE popup (see header note).
+        //
+        // This is the path that showed NO OSD before the onSinkChanged fix in
+        // apply-combined-osd-patch.sh -- switching between two pre-existing sinks emits
+        // no volumeChanged, so nothing opened the OSD. It relies on that patch being
+        // applied; post-update-health.sh checks for it.
         onExited: {
             root.justSwitched = true
             root.refresh()
@@ -372,6 +386,11 @@ PluginComponent {
                 root.justSwitched = true
                 // No OSD emitted here: the default-sink change drives DMS's patched
                 // VolumeOSD (icon + device name + slider) as ONE popup. See header note.
+                //
+                // Historically this worked by accident -- the profile switch above
+                // recreates the sink node, and the new node's async volume population
+                // fired volumeChanged. Since the onSinkChanged fix it triggers on the
+                // sink change itself, like the sink-cycling path.
             } else {
                 ToastService.showError("Audio switch failed", "Switched profile, but couldn't set the default output")
                 root.pendingName = ""
