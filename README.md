@@ -4,6 +4,8 @@ My MangoWM + DankMaterialShell setup for CachyOS, packaged up so other people ca
 
 **Dank** = DankMaterialShell, **Mango** = MangoWM. Not the most creative name, but it does the job.
 
+<img src="docs/media/dankmango-logo.png" alt="DankMango logo" width="180">
+
 > Needs **CachyOS + MangoWM**. Won't work on Hyprland, Sway, GNOME, or anything non-Arch — the installer's built specifically around this stack.
 
 ## See it in action
