@@ -459,7 +459,7 @@ have jq && manifest_add_change owned-tree "$CUR_STAGE" "$HOME/.config/DankMateri
     "$(jq -nc --arg d "$HOME/.config/DankMaterialShell" '{dir:$d, scope:"user", note:"runtime state (session.json etc.) lives here too; uninstall should preserve or back it up"}')" \
     "back up ~/.config/DankMaterialShell, then remove the DankMango-shipped files"
 
-# 7d. Auto-generate per-monitor tile/float tagrules -> ~/.config/mango/dms/tagrules.conf
+# 7d. Auto-generate per-monitor layout tagrules -> ~/.config/mango/dms/tagrules.conf
 #     config.conf sources this file; the generator queries the RUNNING compositor for
 #     connected outputs and writes one 9-line TILE block per monitor -- replacing the
 #     old "hand-edit the MONITOR-1 template" step. Core functionality, so it runs
