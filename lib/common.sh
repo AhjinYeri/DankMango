@@ -317,7 +317,7 @@ manifest_finalize() {
 # Official-repo packages (the AUR helper pulls these straight from the repos).
 # rsync: NOT part of a base CachyOS install, and it's a hard dependency of the
 # SDDM stage's apply.sh -- install it here so that stage never hits its fallback.
-# jq: relied on all over this rice (the dp2-floatsize placer, the taskbar-pin +
+# jq: relied on all over this rice (the tagrules generator, the taskbar-pin +
 # wallpaper seeds, the popupTransparency edit). It's only incidentally present on
 # some systems (pulled in by scx-scheds etc.), so pin it explicitly here.
 # cava: the runtime backend for DMS's built-in Media-widget audio waveform. Without
@@ -423,6 +423,11 @@ route_dest() {
             printf '%s\tuser\tuser_copy\n' "$HOME/.config/mango/${p#config/mango/}" ;;
         config/gtk-3.0/*|config/gtk-4.0/*|config/alacritty/*)
             printf '%s\tuser\tuser_copy\n' "$HOME/.config/${p#config/}" ;;
+        config/applications/*.nemo_action)
+            # Nemo actions live in nemo/actions/, NOT applications/ — Nemo never
+            # scans the .desktop dir for them. Must come before the generic
+            # config/applications/* rule below or it'd land in the wrong place.
+            printf '%s\tuser\tuser_copy\n' "$HOME/.local/share/nemo/actions/${p#config/applications/}" ;;
         config/applications/*)
             printf '%s\tuser\tuser_copy\n' "$HOME/.local/share/applications/${p#config/applications/}" ;;
         wallpapers/*.png|wallpapers/*.jpg|wallpapers/*.jpeg)

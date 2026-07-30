@@ -1,0 +1,28 @@
+[Nemo Action]
+
+# DankMango: "Copy as Path" right-click entry for Nemo.
+#
+# Nemo ships no built-in "copy the absolute path" action, so this adds one. It
+# copies the full path(s) of the selection to the Wayland clipboard via wl-copy.
+#
+# Exec runs `sh -c` because wl-copy has to be fed the path as an argument and we
+# need the $0 placeholder trick to keep every selected path in "$@":
+#   argv after Nemo expands %F  ->  sh  -c  'wl-copy -- "$@"'  sh  <path1> <path2> ...
+# so $0="sh" (discarded) and "$@" is the selection. `--` guards against a path
+# that begins with '-'. NOTE: we deliberately use NO %-token inside the inner
+# command string (e.g. no printf "%s") — Nemo treats '%' as a token introducer,
+# so a stray %s would be mangled before sh ever sees it.
+#
+# Quote=double makes Nemo wrap each expanded path in double quotes, so paths with
+# spaces survive g_shell_parse_argv into separate "$@" elements.
+#
+# Extensions=any; keeps the action visible on both files and directories.
+
+Name=Copy as Path
+Comment=Copy the full path of the selection to the clipboard
+Exec=sh -c 'wl-copy -- "$@"' sh %F
+Selection=notnone
+Extensions=any;
+Quote=double
+Icon-Name=edit-copy-symbolic
+Dependencies=wl-copy;

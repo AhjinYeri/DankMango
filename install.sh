@@ -211,6 +211,23 @@ else
     info "nemo isn't installed — skipping the Nemo icon override."
 fi
 
+# 4b. Nemo "Copy as Path" right-click action.
+#
+# Nemo has no built-in "copy the absolute path" entry. config/applications/
+# copy-as-path.nemo_action adds one (copies the selection's path to the Wayland
+# clipboard via wl-copy). Same authoring+deploy pattern as the nemo.desktop
+# override: verbatim file in the repo, installed with user_copy (backup + manifest
+# record), and routed by route_dest so update.sh re-syncs it. The ONE difference is
+# the destination — Nemo scans ~/.local/share/nemo/actions/ for actions, NOT the
+# .desktop applications dir — which is why route_dest special-cases *.nemo_action.
+# wl-copy ships with wl-clipboard (a DankMango dependency); the action's own
+# Dependencies=wl-copy; line hides the entry if it's ever missing.
+if pacman -Qi nemo >/dev/null 2>&1; then
+    user_copy "$REPO_DIR/config/applications/copy-as-path.nemo_action" \
+              "$HOME/.local/share/nemo/actions/copy-as-path.nemo_action" \
+        && ok "Nemo 'Copy as Path' action installed" || true
+fi
+
 # Image types Loupe takes over. Loupe already declares these in its own .desktop
 # MimeType list; setting them here only decides which app WINS, so a double-click in
 # Nemo lands in Loupe instead of whatever happens to sort first. Add a type here and

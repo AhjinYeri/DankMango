@@ -17,11 +17,11 @@ The stuff that got cut from the main README to keep it from being a wall of text
 - Asks about the combined audio OSD patch — this one's a bit different since it edits a file DMS itself owns, not something DankMango installed. It's opt-in for that reason, and it heals itself automatically if a DMS update wipes it. You can apply it later by hand too: `~/.config/mango/scripts/apply-combined-osd-patch.sh`
 - Restarts DMS so all of it takes effect
 
-## Per-monitor tiling/floating
+## Per-monitor layout
 
-mango needs to know your monitors' actual output names to handle per-monitor tile/float — it can't work that out on its own from the config. The installer sorts this for you automatically: it runs `generate-tagrules.sh`, which asks mango what's connected (`mmsg get all-monitors`) and writes a tile-mode block for each monitor into `~/.config/mango/dms/tagrules.conf`.
+mango needs to know your monitors' actual output names to handle per-monitor layouts — it can't work that out on its own from the config. The installer sorts this for you automatically: it runs `generate-tagrules.sh`, which asks mango what's connected (`mmsg get all-monitors`) and writes a tile-mode block for each monitor into `~/.config/mango/dms/tagrules.conf`.
 
-Everything starts in tile mode. Flip a monitor to float from the bar (Monitor Mode button) whenever you want — no config editing needed.
+Everything starts in tile mode. Change a monitor's layout from the bar (Monitor Mode button) whenever you want — no config editing needed. (The Monitor Mode plugin is being finalized separately; this section will be expanded once it's ported.)
 
 If you add or remove a monitor later (docking a laptop, say), just re-run it and reload:
 
@@ -47,7 +47,7 @@ gappoh = 40    # outer gaps — between windows and the screen edge
 gappov = 40
 ```
 
-Lower them if 40 feels too generous (20/20 is a common taste), then `Super+r` to reload. Worth knowing: `gappoh`/`gappov` are also what `dp2-floatsize.sh`'s `effective_gap()` reads when it sizes floating windows, so a change here keeps tiled and floating windows consistent rather than only affecting one of them.
+Lower them if 40 feels too generous (20/20 is a common taste), then `Super+r` to reload.
 
 **How long the alt-tab switcher stays up.** The card overlay hides itself a set time after your last Tab press. That's the `interval:` on the `idleHide` Timer in `~/.config/DankMaterialShell/plugins/altSwitcher/AltSwitcherBar.qml` — milliseconds, `800` (0.8s) by default:
 

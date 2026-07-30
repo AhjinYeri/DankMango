@@ -1,6 +1,6 @@
 # DankMango
 
-My MangoWM + DankMaterialShell setup for CachyOS, packaged up so other people can use it too. Wallpaper-based theming, a Windows-style Super-tap launcher, per-monitor tiling/floating, a few custom bar plugins I built along the way.
+My MangoWM + DankMaterialShell setup for CachyOS, packaged up so other people can use it too. Wallpaper-based theming, a Windows-style Super-tap launcher, a few custom bar plugins I built along the way.
 
 **Dank** = DankMaterialShell, **Mango** = MangoWM. Not the most creative name, but it does the job.
 
@@ -13,10 +13,6 @@ My MangoWM + DankMaterialShell setup for CachyOS, packaged up so other people ca
 **Wallpaper-driven theming** — change your wallpaper, everything else follows:
 
 ![Theming demo](docs/media/theme-demo.gif)
-
-**Per-monitor tile/float** — switch a monitor's mode without touching a config file:
-
-![Tile/float demo](docs/media/tile-float-demo.gif)
 
 **Alt-tab switcher** — custom icon+title cards:
 
@@ -56,7 +52,7 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 
 - Wallpaper-driven theming (change your wallpaper, everything recolors — borders, GTK, terminal, the bar)
 - Tap Super to open the launcher, no click needed
-- Per-monitor tile/float, switchable from the bar
+- Per-monitor layout, switchable from the bar
 - Custom alt-tab switcher, output switcher, and monitor mode plugins
 - Nemo and Zen themed to match
 - Loupe set as your image viewer (a fresh CachyOS install has nothing that opens photos)

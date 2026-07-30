@@ -50,7 +50,7 @@ BAR_SETTINGS="$DMS_DIR/settings.json"
 SCRIPTS="$HOME/.config/mango/scripts"
 
 # Per-monitor tagrules now live in an auto-generated, sourced file (not inline in
-# config.conf). generate-tagrules.sh writes it; set-monitor-mode.sh edits it.
+# config.conf). generate-tagrules.sh writes it.
 TAGRULES_FILE="$HOME/.config/mango/dms/tagrules.conf"
 TAGRULES_GEN="$SCRIPTS/generate-tagrules.sh"
 
@@ -58,10 +58,6 @@ COLORS_FILE="$HOME/.config/mango/dms/colors.conf"
 BORDER_CHECK="$SCRIPTS/border-color-healthcheck.sh"       # delegated colour-chain check
 BORDER_WATCHER="$SCRIPTS/wallpaper-border-reload.sh"
 BORDER_LOCK="/tmp/mango-wallpaper-border-reload.lock"
-
-MONITOR_SETTER="$SCRIPTS/set-monitor-mode.sh"
-DP2_HELPER="$SCRIPTS/dp2-floatsize.sh"
-DP2_LOCK="${XDG_RUNTIME_DIR:-/tmp}/mango-dp2-floatsize.lock"
 
 ALTTAB_SCRIPT="$SCRIPTS/alt-switcher.sh"
 
@@ -76,7 +72,6 @@ OSD_APPLY="$SCRIPTS/apply-combined-osd-patch.sh"
 # Commands mango/DMS updates have renamed before. Test-forms used by the checks:
 RELOAD_CMD=(mmsg dispatch reload_config)   # 0.13 was `mmsg -d reload_config` (now dead)
 FOCUSSTACK_CMD=(mmsg dispatch focusstack,next)
-CLIENTS_CMD=(mmsg get all-clients)         # must return {"clients":[{title,appid,is_focused,monitor}]}
 
 # Where we remember last run's versions (state, not config -- keep out of dotfiles).
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mango-health"
@@ -252,7 +247,7 @@ if printf '%s' "$reload_out" | grep -q '"success"'; then
 else
     fail "MangoWM config reload command" \
          "'${RELOAD_CMD[*]}' returned: $reload_out (mode changes won't apply to NEW windows)" \
-         "$MONITOR_SETTER (mango_reload_config), $BORDER_WATCHER (RELOAD_CMD), and RELOAD_CMD in this script" \
+         "$BORDER_WATCHER (RELOAD_CMD) and RELOAD_CMD in this script" \
          "mango renamed the reload verb before (0.13 'mmsg -d reload_config' -> 0.14 'mmsg dispatch reload_config'). Run 'mmsg --help', find the new reload verb, update it in those files. It returns exit 0 even when wrong, so it fails SILENTLY." \
 "WORKAROUND FIRST (works right now, no editing):
   Press Super+r whenever a setting doesn't seem to apply. That is the
@@ -261,7 +256,7 @@ else
   the Windows logo.) Everything keeps working - it just needs that
   keypress instead of happening on its own.
 
-PROPER FIX (a MangoWM update renamed the command, so 3 files need the
+PROPER FIX (a MangoWM update renamed the command, so 2 files need the
 new name). Do the workaround above first, then when you have 10 minutes:
 
 1. See what the reload command is called now:
@@ -273,18 +268,14 @@ new name). Do the workaround above first, then when you have 10 minutes:
    wording, e.g. it might now be \"mmsg dispatch reloadconfig\".
 
 3. Open the first file:
-     nano $MONITOR_SETTER
+     nano $BORDER_WATCHER
    (\"nano\" is a plain text editor inside the terminal; arrow keys move
    the cursor, the mouse does nothing.) Press Ctrl+W, type
-   mango_reload_config and press Enter to jump to the right line.
+   RELOAD_CMD and press Enter to jump to the right line.
    Replace the old command with the new wording.
    Save with Ctrl+O then Enter, and quit with Ctrl+X.
 
-4. Do exactly the same in the second file:
-     nano $BORDER_WATCHER
-   searching (Ctrl+W) for RELOAD_CMD this time.
-
-5. And the third, so this health check stops reporting it:
+4. And the second, so this health check stops reporting it:
      nano $SCRIPTS/post-update-health.sh
    searching for RELOAD_CMD.
 
@@ -302,11 +293,11 @@ if { [ -f "$TAGRULES_FILE" ] && grep -qE '^[[:space:]]*tagrule[[:space:]]*=' "$T
    || grep -qE '^[[:space:]]*tagrule[[:space:]]*=' "$MANGO_CFG"; then
     pass "per-monitor tagrules present (dms/tagrules.conf or config.conf)"
 else
-    fail "Per-monitor tagrules" "no tagrules in dms/tagrules.conf — per-monitor tile/float is not active" \
+    fail "Per-monitor tagrules" "no tagrules in dms/tagrules.conf — per-monitor layout is not active" \
          "$TAGRULES_FILE (auto-generated; sourced by config.conf)" \
-         "Re-generate them: $TAGRULES_GEN  (detects your monitors via 'mmsg get all-monitors' and writes the file, then Super+r). Fresh installs run this automatically; if it's empty, mango probably wasn't running when it ran — re-run it now. (A monitor FLOATS once its rules gain open_as_floating:1, set via the Monitor Mode plugin.)" \
+         "Re-generate them: $TAGRULES_GEN  (detects your monitors via 'mmsg get all-monitors' and writes the file, then Super+r). Fresh installs run this automatically; if it's empty, mango probably wasn't running when it ran — re-run it now." \
 "This one is a single command. MangoWM needs to be told the names of your
-actual monitors before per-monitor tile/float can work, and that list is
+actual monitors before per-monitor layout can work, and that list is
 missing or empty.
 
 1. Make sure you are logged in to the MangoWM desktop right now (not a
@@ -318,7 +309,7 @@ missing or empty.
      $TAGRULES_GEN
    (That script asks MangoWM what monitors you have and writes one rule
    block per monitor into a settings file. A \"rule\" here just records
-   whether that screen tiles windows or floats them.)
+   how that screen arranges its windows (its layout).)
 
 3. Press Super+r to make MangoWM re-read its settings.
 
@@ -330,110 +321,10 @@ missing or empty.
    redo step 2.
 
 5. Your monitors all start in tile mode. Use the Monitor Mode button on
-   the bar to flip one to floating - you never need to edit this file
-   by hand.
+   the bar to pick a different layout per monitor - you never need to edit
+   this file by hand.
 
 Note: re-run this same command any time you plug in or unplug a monitor."
-fi
-
-# 1c. helper scripts present + executable
-execu "$MONITOR_SETTER" && pass "set-monitor-mode.sh present & executable" \
-    || fail "set-monitor-mode.sh" "missing or not executable" "$MONITOR_SETTER" "Restore it, then: chmod +x '$MONITOR_SETTER'" \
-            "$(manual_restore_script "$MONITOR_SETTER")
-
-What breaks meanwhile: the Monitor Mode button on the bar can't switch a
-screen between tiling and floating. Nothing else is affected."
-execu "$DP2_HELPER" && pass "dp2-floatsize.sh present & executable" \
-    || fail "dp2-floatsize.sh" "missing or not executable" "$DP2_HELPER" "Restore it, then: chmod +x '$DP2_HELPER'" \
-            "$(manual_restore_script "$DP2_HELPER")
-
-What breaks meanwhile: windows on a floating monitor open at the wrong
-size. You can still drag/resize them by hand, so this is cosmetic."
-
-# 1d. float-size helper actually running (needs the focus/clients IPC below too)
-if have fuser && [ -n "$(fuser "$DP2_LOCK" 2>/dev/null)" ]; then
-    pass "float-size helper (dp2-floatsize.sh) is running"
-elif grep -qE '^[[:space:]]*exec-once[[:space:]]*=.*dp2-floatsize' "$MANGO_CFG"; then
-    warn "float-size helper is NOT running (but is wired to autostart on login)" \
-         "Start it now:  setsid '$DP2_HELPER' >/dev/null 2>&1 & disown"
-    offer "start the float-size helper (dp2-floatsize.sh)" "setsid '$DP2_HELPER' >/dev/null 2>&1 &"
-else
-    fail "float-size helper autostart" "dp2-floatsize.sh isn't running and isn't in exec-once" \
-         "$MANGO_CFG (exec-once lines)" \
-         "Add:  exec-once = ~/.config/mango/scripts/dp2-floatsize.sh   then reload (SUPER+r)." \
-"A small background program that sizes floating windows sensibly isn't
-running, and isn't set to start when you log in either. Two steps: start
-it now, then make it start automatically from then on.
-
-1. Start it for this session. Open a terminal (Super+Return) and type:
-     setsid $DP2_HELPER >/dev/null 2>&1 &
-   (\"setsid ... &\" starts the program in the background and detaches it,
-   so it keeps running after you close the terminal. The \">/dev/null 2>&1\"
-   part just stops it printing chatter at you.)
-
-2. Now make it automatic. Open MangoWM's main settings file:
-     nano $MANGO_CFG
-   (\"nano\" is a text editor inside the terminal. Arrow keys move the
-   cursor; the mouse won't work.)
-
-3. Press Ctrl+W, type exec-once and press Enter. That jumps you to the
-   list of programs MangoWM starts at login. (\"exec-once\" literally means
-   \"run this one thing when the desktop starts\".)
-
-4. Move to the end of that group of lines and add a new line, exactly:
-     exec-once = ~/.config/mango/scripts/dp2-floatsize.sh
-
-5. Save with Ctrl+O then Enter. Quit with Ctrl+X.
-
-6. Press Super+r to reload MangoWM's settings.
-
-7. Re-run this health check - it should now report the helper as running:
-     $SCRIPTS/post-update-health.sh"
-fi
-
-# 1e. the mango IPC the helper depends on (focus + client list w/ fields it reads)
-if "${CLIENTS_CMD[@]}" 2>/dev/null | grep -q '"is_floating"'; then
-    pass "window-list IPC OK (${CLIENTS_CMD[*]} exposes is_floating/appid)"
-else
-    fail "Window-list IPC for float helper" "'${CLIENTS_CMD[*]}' missing or lost the is_floating field" \
-         "$DP2_HELPER (its mango_* command wrappers)" \
-         "mango renamed the command or a JSON field. Run '${CLIENTS_CMD[*]}' and 'mmsg --help'; update the wrappers in dp2-floatsize.sh (it reads is_floating, appid, monitor)." \
-"A MangoWM update changed how it reports your open windows, so the
-float-sizing helper can no longer understand the answer it gets back.
-
-Impact first, so you can judge whether to bother: floating windows open
-at the wrong size. Tiling, theming, Alt+Tab and audio are unaffected. If
-that doesn't annoy you, it is completely safe to ignore this.
-
-1. See what MangoWM reports now. Type:
-     ${CLIENTS_CMD[*]}
-   (That prints a list of your open windows as JSON - a machine-readable
-   format full of \"name\": value pairs. It will look dense; that's fine.)
-
-2. Look through that output for a field describing whether a window is
-   floating. It used to be called is_floating. It may now be spelled
-   differently, e.g. \"floating\" or \"isFloating\". Note the exact spelling.
-   If there is no such field at all, stop here and report it at
-   https://github.com/AhjinYeri/DankMango/issues - nothing you can type
-   will fix that, it needs a repo update.
-
-3. If you did find a renamed field, open the helper:
-     nano $DP2_HELPER
-   (\"nano\" is a terminal text editor; arrow keys move, mouse does not.)
-
-4. Press Ctrl+W, type is_floating and press Enter to jump to it. Replace
-   each occurrence with the new spelling from step 2. Press Ctrl+W then
-   Enter again to find the next one, until there are no more.
-   (It also reads fields named appid and monitor - check in step 1's
-   output that those two still exist and rename them the same way if not.)
-
-5. Save with Ctrl+O then Enter, quit with Ctrl+X.
-
-6. Restart the helper so it picks up your edit:
-     pkill -f dp2-floatsize.sh
-     setsid $DP2_HELPER >/dev/null 2>&1 &
-   (\"pkill -f\" stops a running program by name; the second line starts
-   it again in the background.)"
 fi
 
 # 1f. plugin enabled
@@ -442,9 +333,8 @@ plugin_enabled monitorMode && pass "monitorMode plugin enabled" \
             "Re-enable: DMS Settings -> Plugins -> Monitor Mode on; confirm it's in the bar layout too. Then 'dms restart'." \
             "$(manual_reenable_plugin "Monitor Mode")
 
-What breaks meanwhile: you lose the bar button that flips a screen
-between tiling and floating. Your monitors keep whatever mode they were
-last set to."
+What breaks meanwhile: you lose the bar button that sets a screen's
+layout. Your monitors keep whatever layout they were last set to."
 
 # =============================================================================
 # 2. AUDIO OUTPUT-SWITCHER PLUGIN (audioToggle)
