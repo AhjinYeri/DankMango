@@ -1,26 +1,32 @@
 // =============================================================================
-//  Monitor Mode  --  DMS bar plugin (front-end for set-monitor-mode.sh)
+//  Monitor Mode  --  DMS bar plugin (front-end for the monitor scripts)
 // =============================================================================
 //
 //  >>> IF THIS PLUGIN STOPPED WORKING AFTER A SYSTEM UPDATE, START HERE <<<
 //  The plain-English guide next to this file explains what to check:
 //        README.md  (in this same folder)
 //
-//  This plugin holds NO logic -- every button just runs the shell script
-//  set-monitor-mode.sh. The only things here that can break after an update are:
+//  This plugin holds almost NO logic -- every button just runs a shell script.
+//  The things here that can break after an update are:
 //
-//    1. `setter` (below) -- the path to set-monitor-mode.sh, resolved from $HOME
-//       at run time via `sh -c` (execDetached runs no shell, so a bare "~" would
-//       not expand). If you move your scripts, change it here.
-//    2. `monitors` (below) -- now detected LIVE from Quickshell.screens (connector
-//       + EDID model name), sorted left-to-right. Nothing to hand-edit when your
-//       monitors change; if a name looks wrong, check `s.model`/`s.name` there.
-//    3. DMS (DankMaterialShell) building blocks used below -- PluginComponent,
-//       PopoutComponent, DankButton, DankIcon, StyledRect, StyledText, Theme.*,
-//       and Quickshell.execDetached / Quickshell.screens. If a DMS update renames
-//       one of these, the plugin fails to load; see README.md for how to read the
-//       error log. (Gotcha that bit us once: DankIcon uses `size:`, NOT
-//       `font.pixelSize:`.)
+//    1. `layoutSetter` / `setter` (below) -- paths to the scripts, resolved from
+//       $HOME at run time via `sh -c` (execDetached runs no shell, so a bare "~"
+//       would not expand). If you move your scripts, change them here.
+//         layoutSetter -> set-monitor-layout.sh  (the 6 tiling layouts; ACTIVE)
+//         setter       -> set-monitor-mode.sh    (tile/float; retained for the
+//                         Float re-introduction -- see the big comment in the
+//                         popout. Float is intentionally hidden for now.)
+//    2. `monitors` (below) -- detected LIVE from Quickshell.screens (connector +
+//       EDID model name), sorted left-to-right. Nothing to hand-edit when your
+//       monitors change.
+//    3. DMS building blocks used below -- PluginComponent, PopoutComponent,
+//       DankIcon, StateLayer, StyledRect, StyledText, Theme.*, FileView, and
+//       Quickshell.execDetached / Quickshell.screens / Quickshell.env. If a DMS
+//       update renames one of these the plugin fails to load; see README.md.
+//       (Gotcha that bit us once: DankIcon uses `size:`, NOT `font.pixelSize:`.)
+//
+//  All accent/selection colour comes from Theme.* (the live matugen palette),
+//  so the UI re-tints on a wallpaper change with no restart.
 //
 //  After ANY edit to this file, run `dms restart` to pick it up (a plain
 //  re-toggle reuses a cached copy). See README.md.
@@ -28,29 +34,74 @@
 
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Common
 import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 
-// Front-end ONLY. Every button just calls set-monitor-mode.sh with MON:mode args;
-// all mode logic + the desktop notification live in that proven script
-// (~/.config/mango/scripts/set-monitor-mode.sh). The plugin holds no state.
 PluginComponent {
     id: root
 
-    // Path resolved from $HOME at run time (matches audioToggle) so no personal
-    // absolute path is baked in; execDetached runs no shell, so setMode() invokes
-    // it through `sh -c` to expand $HOME.
-    readonly property string setter: "\"$HOME/.config/mango/scripts/set-monitor-mode.sh\""
+    // --- Script paths (resolved from $HOME at run time via `sh -c`) -----------
+    // execDetached runs no shell, so setLayout()/setMode() invoke through `sh -c`
+    // to expand $HOME; no personal absolute path is baked in.
+    readonly property string layoutSetter: "\"$HOME/.config/mango/scripts/set-monitor-layout.sh\""
+    readonly property string setter: "\"$HOME/.config/mango/scripts/set-monitor-mode.sh\"" // retained for Float re-add
 
-    // Monitors are detected LIVE from the compositor (Quickshell.screens) — no
-    // hardcoded connectors, so this works on any setup. `conn` is the connector
-    // passed to the script; `label` is the EDID model name DMS Displays shows
-    // (falls back to the connector if the model is missing OR the literal
-    // sentinel "Unknown" that Quickshell returns when no EDID is exposed --
-    // e.g. displays behind a KVM/adapter, or with a 0-byte EDID). Sorted
-    // left-to-right by x so cards and combos match the physical layout.
+    // --- The 6 curated tiling layouts -----------------------------------------
+    // `name` is the exact mango layout_name string (verified; see the
+    // mango-layout-names note). `icon` is a Material Symbol (decorative -- the
+    // label is the source of truth). set-monitor-layout.sh whitelists these
+    // exact names, so a typo here just no-ops rather than breaking the config.
+    readonly property var layouts: [
+        { "name": "tile",        "label": "Tiling",        "icon": "grid_view" },
+        { "name": "monocle",     "label": "Monocle",       "icon": "crop_square" },
+        { "name": "scroller",    "label": "Scrolling",     "icon": "view_carousel" },
+        { "name": "grid",        "label": "Grid",          "icon": "grid_on" },
+        { "name": "deck",        "label": "Deck",          "icon": "layers" },
+        { "name": "center_tile", "label": "Center Tiling", "icon": "align_horizontal_center" }
+    ]
+
+    // --- Live per-monitor layout, parsed from tagrules.conf -------------------
+    // Reflects the CURRENT config so the grid shows which layout is active and
+    // re-tints after a change (set-monitor-layout.sh writes the file + reloads;
+    // watchChanges -> reload() -> onLoaded repopulates this map). Same reactive
+    // FileView pattern DMS uses for settings.json.
+    property var currentLayouts: ({})
+
+    FileView {
+        id: tagrulesFile
+        path: Quickshell.env("HOME") + "/.config/mango/dms/tagrules.conf"
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: root.currentLayouts = root.parseLayouts(tagrulesFile.text())
+    }
+
+    // One "layout_name" per monitor (all 9 tag lines share it) -> {conn: layout}.
+    function parseLayouts(txt) {
+        var map = {}
+        if (!txt)
+            return map
+        var lines = txt.split("\n")
+        var reMon = /monitor_name:\s*([A-Za-z0-9_-]+)/
+        var reLay = /layout_name:\s*([A-Za-z_]+)/
+        for (var i = 0; i < lines.length; i++) {
+            var l = lines[i]
+            if (l.indexOf("tagrule") < 0)
+                continue
+            var m = reMon.exec(l)
+            var y = reLay.exec(l)
+            if (m && y && !(m[1] in map))
+                map[m[1]] = y[1]
+        }
+        return map
+    }
+
+    // --- Live monitor detection (UNCHANGED -- works on any hardware) ----------
+    // Detected LIVE from the compositor (Quickshell.screens) -- no hardcoded
+    // connectors. `conn` is passed to the scripts; `label` is the EDID model
+    // name DMS Displays shows (fallbacks below). Sorted left-to-right by x.
     readonly property var monitors: {
         // Reference WlrOutputService.serial so this binding RE-EVALUATES when the
         // dms backend pushes output data asynchronously (make/model arrive after
@@ -74,15 +125,12 @@ PluginComponent {
     }
 
     // Best available human label for a screen, in priority order:
-    //   1. Real make + model from WlrOutputService -- fed by the dms backend via
-    //      the wlr-output protocol, the SAME source DMS Settings > Displays uses.
-    //      Works even when sysfs EDID is 0 bytes and Quickshell's s.model is the
-    //      literal "Unknown" sentinel (this hardware).
+    //   1. Real make + model from WlrOutputService (the SAME source DMS Settings
+    //      > Displays uses; works even when sysfs EDID is 0 bytes and s.model is
+    //      the literal "Unknown" sentinel).
     //   2. WlrOutputService model alone (guarded against "Unknown").
     //   3. Quickshell's s.model (guarded against "Unknown") -- legacy path.
-    //   4. The connector name (s.name, e.g. "DP-1") -- always-correct last resort,
-    //      and the graceful fallback when the backend lacks the "wlroutput"
-    //      capability (WlrOutputService.outputs empty -> getOutput() returns null).
+    //   4. The connector name (s.name, e.g. "DP-1") -- always-correct last resort.
     function labelFor(s) {
         var o = WlrOutputService.getOutput(s.name)
         if (o) {
@@ -96,7 +144,7 @@ PluginComponent {
         return s.name
     }
 
-    // Live "WxH" for a connector from Quickshell.screens (matches DMS Displays styling).
+    // Live "WxH" for a connector from Quickshell.screens (matches DMS Displays).
     function resolutionFor(conn) {
         for (var i = 0; i < Quickshell.screens.length; i++) {
             var s = Quickshell.screens[i]
@@ -106,19 +154,30 @@ PluginComponent {
         return ""
     }
 
-    // Single call site for every button: run the setter with MON:mode tokens.
-    // One call = one config reload + one notification (the script handles both).
-    // Run via `sh -c` so $HOME in `setter` expands; tokens are forwarded as "$@".
-    function setMode(args) {
-        Quickshell.execDetached(["sh", "-c", root.setter + " \"$@\"", "sh"].concat(args))
+    // Friendly label for a connector (for the section header).
+    function labelForConn(conn) {
+        for (var i = 0; i < root.monitors.length; i++)
+            if (root.monitors[i].conn === conn)
+                return root.monitors[i].label
+        return conn
     }
 
-    // Every detected monitor set to one mode (each connector + ":" + mode).
-    function allMode(mode) {
-        var a = []
-        for (var i = 0; i < root.monitors.length; i++)
-            a.push(root.monitors[i].conn + ":" + mode)
-        return a
+    // --- Script call sites ----------------------------------------------------
+    // Apply a layout to ONE monitor. Run via `sh -c` so $HOME expands; the
+    // MON:layout token is forwarded as "$@". No popout close -- the picker stays
+    // open so you can set several monitors in one go (dismiss with the X).
+    function setLayout(conn, layout) {
+        if (!conn)
+            return
+        Quickshell.execDetached(["sh", "-c", root.layoutSetter + " \"$@\"", "sh", conn + ":" + layout])
+    }
+
+    // Set a monitor to tile/float. UNUSED while Float is hidden -- kept so the
+    // Float re-introduction (see popout comment) is a button add, not a rebuild.
+    function setMode(conn, mode) {
+        if (!conn)
+            return
+        Quickshell.execDetached(["sh", "-c", root.setter + " \"$@\"", "sh", conn + ":" + mode])
     }
 
     horizontalBarPill: Component {
@@ -141,173 +200,215 @@ PluginComponent {
         PopoutComponent {
             id: popout
 
-            headerText: "Window Modes"
-            detailsText: "Set each monitor, or pick a combo"
+            headerText: "Window Layout"
+            detailsText: "Pick a monitor, then a layout"
             showCloseButton: true
+
+            // Which monitor the layout grid targets. Defaults to the first
+            // monitor every time the popout opens (fresh instance) -- never an
+            // empty state. Clicking a card assigns this (breaking the default).
+            property string activeConn: root.monitors.length > 0 ? root.monitors[0].conn : ""
 
             Column {
                 width: parent.width
                 spacing: Theme.spacingL
 
-                // ---- Per-monitor: a DMS-style monitor card + Tile/Float under each ----
+                // ---- Monitor selector: clickable DMS-style cards ----
+                // Selected card uses the SAME treatment as the wallpaper picker's
+                // selected thumbnail: 3px Theme.primary border + primaryPressed
+                // tint + StateLayer hover -- all live matugen colours.
                 Row {
+                    id: monRow
                     width: parent.width
                     spacing: Theme.spacingM
+
+                    // Equal-width cards that fill the row for any monitor count.
+                    property real cardW: root.monitors.length > 0
+                        ? (width - Theme.spacingM * (root.monitors.length - 1)) / root.monitors.length
+                        : width
 
                     Repeater {
                         model: root.monitors
 
-                        Column {
-                            // Two equal columns across the popout width.
-                            width: (parent.width - Theme.spacingM) / 2
-                            spacing: Theme.spacingS
+                        StyledRect {
+                            id: monCard
+                            property bool isActive: popout.activeConn === modelData.conn
 
-                            // Monitor card — mirrors DMS Displays > Monitor Configuration:
-                            // bordered surfaceContainerHigh panel, monitor icon, name,
-                            // resolution underneath.
-                            StyledRect {
-                                width: parent.width
-                                height: cardCol.implicitHeight + Theme.spacingM * 2
-                                radius: Theme.cornerRadius
-                                color: Theme.surfaceContainerHigh
-                                border.width: 1
-                                border.color: Qt.rgba(Theme.outline.r, Theme.outline.g, Theme.outline.b, 0.4)
+                            width: monRow.cardW
+                            height: cardCol.implicitHeight + Theme.spacingM * 2
+                            radius: Theme.cornerRadius
+                            color: Theme.surfaceContainerHigh
+                            border.width: isActive ? 3 : 1
+                            border.color: isActive
+                                ? Theme.primary
+                                : Qt.rgba(Theme.outline.r, Theme.outline.g, Theme.outline.b, 0.4)
 
-                                Column {
-                                    id: cardCol
-                                    anchors.centerIn: parent
-                                    width: parent.width - Theme.spacingM * 2
-                                    spacing: Theme.spacingXS
-
-                                    DankIcon {
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        name: "monitor"
-                                        size: Theme.iconSize
-                                        color: Theme.primary
-                                    }
-
-                                    StyledText {
-                                        width: parent.width
-                                        horizontalAlignment: Text.AlignHCenter
-                                        text: modelData.label
-                                        color: Theme.surfaceText
-                                        font.pixelSize: Theme.fontSizeMedium
-                                        font.weight: Font.Medium
-                                        elide: Text.ElideRight
-                                    }
-
-                                    StyledText {
-                                        width: parent.width
-                                        horizontalAlignment: Text.AlignHCenter
-                                        text: root.resolutionFor(modelData.conn)
-                                        color: Theme.surfaceVariantText
-                                        font.pixelSize: Theme.fontSizeSmall
+                            // Selected fill tint (matches wallpaper picker).
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: parent.radius
+                                color: monCard.isActive ? Theme.primaryPressed : Theme.withAlpha(Theme.primaryPressed, 0)
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: Theme.shortDuration
+                                        easing.type: Theme.standardEasing
                                     }
                                 }
                             }
 
-                            DankButton {
-                                width: parent.width
-                                buttonHeight: 36
-                                text: "Tile"
-                                iconName: "grid_view"
-                                onClicked: {
-                                    root.setMode([modelData.conn + ":tile"])
-                                    popout.closePopout()
+                            Column {
+                                id: cardCol
+                                anchors.centerIn: parent
+                                width: parent.width - Theme.spacingM * 2
+                                spacing: Theme.spacingXS
+
+                                DankIcon {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    name: "monitor"
+                                    size: Theme.iconSize
+                                    color: monCard.isActive ? Theme.primary : Theme.surfaceText
+                                }
+
+                                StyledText {
+                                    width: parent.width
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: modelData.label
+                                    color: Theme.surfaceText
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Medium
+                                    elide: Text.ElideRight
+                                }
+
+                                StyledText {
+                                    width: parent.width
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: root.resolutionFor(modelData.conn)
+                                    color: Theme.surfaceVariantText
+                                    font.pixelSize: Theme.fontSizeSmall
                                 }
                             }
 
-                            DankButton {
-                                width: parent.width
-                                buttonHeight: 36
-                                text: "Float"
-                                iconName: "open_in_full"
-                                onClicked: {
-                                    root.setMode([modelData.conn + ":float"])
-                                    popout.closePopout()
-                                }
+                            // StateLayer IS a MouseArea: gives ripple/hover AND click.
+                            StateLayer {
+                                stateColor: Theme.primary
+                                onClicked: popout.activeConn = modelData.conn
                             }
                         }
                     }
                 }
 
-                // ---- Divider between per-monitor and combos ----
+                // ---- Divider ----
                 Rectangle {
                     width: parent.width
                     height: 1
                     color: Qt.rgba(Theme.outline.r, Theme.outline.g, Theme.outline.b, 0.3)
                 }
 
-                // ---- Combo presets (2×2 grid; left of "/" = first monitor, right = second) ----
+                // ---- Layout grid (always visible; 3×2 of the 6 curated layouts) ----
                 Column {
                     width: parent.width
                     spacing: Theme.spacingS
 
                     StyledText {
-                        text: root.monitors.length === 2 ? ("Combos · " + root.monitors[0].conn + " / " + root.monitors[1].conn) : "Combos"
+                        text: popout.activeConn !== "" ? ("Layout · " + root.labelForConn(popout.activeConn)) : "Layout"
                         color: Theme.surfaceVariantText
                         font.pixelSize: Theme.fontSizeSmall
+                        elide: Text.ElideRight
+                        width: parent.width
                     }
 
                     Grid {
+                        id: layoutGrid
                         width: parent.width
-                        columns: 2
+                        columns: 3
                         columnSpacing: Theme.spacingS
                         rowSpacing: Theme.spacingS
 
-                        property real cellWidth: (width - columnSpacing) / 2
+                        property real cellW: (width - columnSpacing * (columns - 1)) / columns
 
-                        DankButton {
-                            width: parent.cellWidth
-                            buttonHeight: 36
-                            text: "All Tile"
-                            iconName: "grid_view"
-                            onClicked: {
-                                root.setMode(root.allMode("tile"))
-                                popout.closePopout()
-                            }
-                        }
+                        Repeater {
+                            model: root.layouts
 
-                        DankButton {
-                            width: parent.cellWidth
-                            buttonHeight: 36
-                            text: "All Float"
-                            iconName: "open_in_full"
-                            onClicked: {
-                                root.setMode(root.allMode("float"))
-                                popout.closePopout()
-                            }
-                        }
+                            StyledRect {
+                                id: layTile
+                                // Reflects the live config layout for the active monitor.
+                                property bool isSelected: root.currentLayouts[popout.activeConn] === modelData.name
 
-                        // Mixed presets only make sense with exactly two monitors;
-                        // positioners skip invisible children, so they vanish otherwise.
-                        DankButton {
-                            visible: root.monitors.length === 2
-                            width: parent.cellWidth
-                            buttonHeight: 36
-                            text: "Tile / Float"
-                            onClicked: {
-                                root.setMode([root.monitors[0].conn + ":tile", root.monitors[1].conn + ":float"])
-                                popout.closePopout()
-                            }
-                        }
+                                width: layoutGrid.cellW
+                                height: 74
+                                radius: Theme.cornerRadius
+                                color: Theme.surfaceContainerHigh
+                                border.width: isSelected ? 3 : 1
+                                border.color: isSelected
+                                    ? Theme.primary
+                                    : Qt.rgba(Theme.outline.r, Theme.outline.g, Theme.outline.b, 0.4)
 
-                        DankButton {
-                            visible: root.monitors.length === 2
-                            width: parent.cellWidth
-                            buttonHeight: 36
-                            text: "Float / Tile"
-                            onClicked: {
-                                root.setMode([root.monitors[0].conn + ":float", root.monitors[1].conn + ":tile"])
-                                popout.closePopout()
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: parent.radius
+                                    color: layTile.isSelected ? Theme.primaryPressed : Theme.withAlpha(Theme.primaryPressed, 0)
+                                    Behavior on color {
+                                        ColorAnimation {
+                                            duration: Theme.shortDuration
+                                            easing.type: Theme.standardEasing
+                                        }
+                                    }
+                                }
+
+                                Column {
+                                    anchors.centerIn: parent
+                                    width: parent.width - Theme.spacingS * 2
+                                    spacing: Theme.spacingXS
+
+                                    DankIcon {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        name: modelData.icon
+                                        size: Theme.iconSize
+                                        color: layTile.isSelected ? Theme.primary : Theme.surfaceText
+                                    }
+
+                                    StyledText {
+                                        width: parent.width
+                                        horizontalAlignment: Text.AlignHCenter
+                                        text: modelData.label
+                                        color: layTile.isSelected ? Theme.primary : Theme.surfaceText
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.weight: layTile.isSelected ? Font.Medium : Font.Normal
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
+                                StateLayer {
+                                    stateColor: Theme.primary
+                                    onClicked: root.setLayout(popout.activeConn, modelData.name)
+                                }
                             }
                         }
                     }
                 }
+
+                // =====================================================================
+                //  FLOAT MODE -- TEMPORARILY REMOVED (easy add-back point)
+                // ---------------------------------------------------------------------
+                //  Float (tile/float per monitor) is intentionally hidden here until the
+                //  known "floating window stays at native size" bug in dp2-floatsize.sh
+                //  is refined. The underlying feature is UNTOUCHED and still works
+                //  (set-monitor-mode.sh + dp2-floatsize.sh + the SUPER+SHIFT+v keybind).
+                //  NOTE: those two scripts are NO LONGER IN THE REPO (private dots only) -- reintroducing Float here means restoring/rebuilding them too, not just uncommenting this UI.
+                //
+                //  To bring it back into THIS UI, drop a per-monitor Tile/Float control
+                //  under the layout grid (or as a header segment) that calls, for the
+                //  selected monitor:
+                //        root.setMode(popout.activeConn, "tile")     // re-tile
+                //        root.setMode(popout.activeConn, "float")    // float
+                //  `setMode()` and the `setter` path above are retained for exactly
+                //  this. A matching "current mode" glow can read open_as_floating from
+                //  tagrules.conf via the same parse used for layouts (currentLayouts).
+                // =====================================================================
             }
         }
     }
 
-    popoutWidth: 360
-    popoutHeight: 470
+    popoutWidth: 380
+    popoutHeight: 440
 }

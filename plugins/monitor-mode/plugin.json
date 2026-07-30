@@ -1,7 +1,7 @@
 {
     "id": "monitorMode",
     "name": "Monitor Mode",
-    "description": "Switch per-monitor tile/float window modes for MangoWM (front-end for set-monitor-mode.sh)",
+    "description": "Pick a per-monitor tiling layout for MangoWM from the bar (front-end for set-monitor-layout.sh)",
     "version": "0.1.0",
     "author": "AhjinYeri",
     "type": "widget",
