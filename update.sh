@@ -72,6 +72,7 @@ echo "==================================================================="
 MIGRATIONS=(
     "reseed-pins-installed-only:remove dead taskbar/dock pins whose package isn't installed (the pin-seed fix, for installs made before it)"
     "zen-userchrome-bridge:write the Zen userChrome.css/user.js bridge so matugen's zen.css is actually loaded (Zen theming never worked before this)"
+    "strip-dead-floatsize-execonce:remove the dead 'exec-once = .../dp2-floatsize.sh' autostart left in a hand-edited config.conf after the float helper was retired"
 )
 
 # Every install made before this migration existed has a themed zen.css sitting unused
@@ -120,6 +121,36 @@ migrate_reseed-pins-installed-only() {
         warn "  couldn't edit session.json — left as-is"
     fi
     rm -f "$tmp"
+}
+
+# Float mode was pulled from the repo: dp2-floatsize.sh is retired by stage 4, but a user
+# who hand-edited config.conf keeps their file (edit-detection), so their old
+# `exec-once = ~/.config/mango/scripts/dp2-floatsize.sh` autostart survives and now points at
+# a removed script. mango just fails to spawn it (fork-and-forget, no error/dialog), so it's
+# harmless — but stale. This strips ONLY that active autostart line, leaving all surrounding
+# lines/comments/formatting untouched. The regex is anchored to an uncommented `exec-once`
+# assignment, so commented refs and the example `spawn` bind elsewhere are never matched.
+# Idempotent: if the line isn't there (fresh install, already-migrated, never had float) it
+# reports nothing-to-do and returns 0.
+migrate_strip-dead-floatsize-execonce() {
+    local cfg="$HOME/.config/mango/config.conf"
+    [ -f "$cfg" ] || { info "  no config.conf — nothing to do"; return 0; }
+    local re='^[[:space:]]*exec-once[[:space:]]*=.*dp2-floatsize\.sh'
+    if ! grep -qE "$re" "$cfg"; then
+        info "  no dead dp2-floatsize.sh exec-once line — nothing to do"; return 0
+    fi
+    local n; n="$(grep -cE "$re" "$cfg")"
+    info "  found $n dead exec-once autostart line(s) pointing at the retired dp2-floatsize.sh"
+    [ "$DRY_RUN" = 1 ] && return 0
+    local tmp; tmp="$(mktemp)"
+    if grep -vE "$re" "$cfg" > "$tmp" && [ -s "$tmp" ]; then
+        cp -a "$cfg" "$cfg.bak-$STAMP"; cat "$tmp" > "$cfg"
+        ok "  removed dead dp2-floatsize.sh exec-once line (backup: $cfg.bak-$STAMP)"
+    else
+        warn "  couldn't rewrite config.conf — left as-is"; rm -f "$tmp"; return 1
+    fi
+    rm -f "$tmp"
+    return 0
 }
 
 # =============================================================================
