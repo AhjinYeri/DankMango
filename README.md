@@ -69,6 +69,7 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 
 ```bash
 cd DankMango              # the folder from when you cloned it
+git pull                  # fetch the latest DankMango
 ./update.sh --dry-run     # see what it'd do first
 ./update.sh                # then actually do it
 ```
