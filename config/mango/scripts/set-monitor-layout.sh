@@ -54,6 +54,15 @@ set -euo pipefail
 # dms/tagrules.conf (sourced by config.conf), so we edit THAT -- not config.conf.
 CONFIG="$HOME/.config/mango/dms/tagrules.conf"                # per-monitor tagrules (this script edits it)
 
+# Every layout change funnels through THIS script (the Monitor Mode plugin and the
+# hotplug watcher both shell out to it), so this is where the persistent
+# monitor->layout memory gets updated. That memory is what lets an UNPLUGGED
+# monitor come back on its own layout instead of tile -- while it is unplugged it
+# has no tagrules at all, so CONFIG above cannot remember anything about it.
+# Best-effort by design: if the watcher script is missing, layouts still work, you
+# just lose the across-a-replug memory.
+MEMORY_HOOK="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/monitor-watcher.sh"
+
 # --- 2. THE "LAYOUT" FIELD IN THE CONFIG ------------------------------------
 # A monitor's layout is written "layout_name:<name>" on its tag rules. This
 # script rewrites exactly this field. If a future MangoWM renames it, change
@@ -158,5 +167,14 @@ cat "$TMP" > "$CONFIG"
 # Reload live (SUPER+r equivalent; works without a fresh login). This alone
 # re-arranges already-open tiled windows -- no sweep needed.
 mango_reload_config
+
+# Record what was just applied, so a replug of any of these monitors restores it.
+# `|| true` twice over: this script runs under `set -e` on the user's click path,
+# and a memory failure must never turn a successful layout change into an error.
+if [ -x "$MEMORY_HOOK" ]; then
+  for p in "${PAIRS[@]}"; do
+    "$MEMORY_HOOK" --remember "${p%% *}" "${p##* }" >/dev/null 2>&1 || true
+  done
+fi
 
 echo "set-monitor-layout: $(printf '%b' "$SUMMARY")"

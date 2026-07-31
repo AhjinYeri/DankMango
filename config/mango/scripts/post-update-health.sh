@@ -54,6 +54,12 @@ SCRIPTS="$HOME/.config/mango/scripts"
 TAGRULES_FILE="$HOME/.config/mango/dms/tagrules.conf"
 TAGRULES_GEN="$SCRIPTS/generate-tagrules.sh"
 
+# The hotplug watcher that re-runs the generator (and re-applies your layouts)
+# whenever a monitor is plugged in or unplugged. Started from config.conf's
+# exec-once; single-instance via this lock, so the lock is how we detect it.
+MONITOR_WATCHER="$SCRIPTS/monitor-watcher.sh"
+MONITOR_WATCHER_LOCK="/tmp/mango-monitor-watcher.lock"
+
 COLORS_FILE="$HOME/.config/mango/dms/colors.conf"
 BORDER_CHECK="$SCRIPTS/border-color-healthcheck.sh"       # delegated colour-chain check
 BORDER_WATCHER="$SCRIPTS/wallpaper-border-reload.sh"
@@ -324,7 +330,57 @@ missing or empty.
    the bar to pick a different layout per monitor - you never need to edit
    this file by hand.
 
-Note: re-run this same command any time you plug in or unplug a monitor."
+Note: the monitor watcher normally re-runs this for you whenever you plug
+in or unplug a monitor - see the next check."
+fi
+
+# 1c. the monitor hotplug watcher. Without it, plugging in a monitor leaves that
+#     monitor with NO tagrules until you re-run the generator by hand -- and
+#     re-running the generator by hand resets every monitor to tile, which the
+#     watcher avoids by re-applying your layouts afterwards.
+if execu "$MONITOR_WATCHER"; then
+    if have fuser && [ -n "$(fuser "$MONITOR_WATCHER_LOCK" 2>/dev/null)" ]; then
+        pass "monitor hotplug watcher is running"
+    else
+        warn "monitor hotplug watcher is NOT running (autostarts on next login)" \
+             "Start now:  setsid '$MONITOR_WATCHER' >/dev/null 2>&1 & disown"
+        offer "start the monitor hotplug watcher" "setsid '$MONITOR_WATCHER' >/dev/null 2>&1 &"
+    fi
+    # Is it actually wired to autostart? A running-but-unwired watcher passes the
+    # check above today and silently vanishes at the next login.
+    grep -qE '^[[:space:]]*exec-once[[:space:]]*=.*monitor-watcher\.sh' "$MANGO_CFG" \
+        || warn "monitor-watcher.sh is not in config.conf's exec-once (won't start at login)" \
+                "Add:  exec-once = ~/.config/mango/scripts/monitor-watcher.sh"
+else
+    fail "Monitor hotplug watcher" \
+         "missing or not executable — monitors you plug in get no tagrules until you re-run the generator by hand" \
+         "$MONITOR_WATCHER (autostarted from $MANGO_CFG exec-once)" \
+         "Restore it from the repo (config/mango/scripts/monitor-watcher.sh), then: chmod +x '$MONITOR_WATCHER'. Check it with '$MONITOR_WATCHER --status'; its log is /tmp/mango-monitor-watcher.log." \
+"What this does: when you plug in or unplug a monitor, it re-writes the
+per-monitor rules automatically and puts back the layout each screen had.
+Without it, a newly plugged-in monitor has no rules until you re-run the
+generator yourself - and doing that by hand resets every screen to tile.
+
+1. Check whether the file is there at all:
+     ls -l $MONITOR_WATCHER
+   (\"ls -l\" lists a file and its permissions.) If it says \"No such file
+   or directory\", copy it back from your DankMango folder:
+     cp ~/Projects/DankMango/config/mango/scripts/monitor-watcher.sh $SCRIPTS/
+
+2. Mark it runnable (files copied around sometimes lose this):
+     chmod +x $MONITOR_WATCHER
+
+3. Start it now, without logging out:
+     setsid $MONITOR_WATCHER >/dev/null 2>&1 & disown
+   (\"setsid\" lets it keep running after you close the terminal.)
+
+4. Confirm it is up:
+     $MONITOR_WATCHER --status
+   The last line should say \"watcher : RUNNING\".
+
+In the meantime, nothing is lost - after plugging in a monitor just run
+$TAGRULES_GEN and press Super+r, then set that screen's layout from the
+Monitor Mode button on the bar."
 fi
 
 # 1f. plugin enabled
