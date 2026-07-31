@@ -68,11 +68,13 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 ## Updating / uninstalling
 
 ```bash
+cd DankMango              # the folder from when you cloned it
 ./update.sh --dry-run     # see what it'd do first
 ./update.sh                # then actually do it
 ```
 
 ```bash
+cd DankMango
 ./uninstall.sh --dry-run   # same idea
 ./uninstall.sh
 ```
