@@ -23,14 +23,61 @@ mango needs to know your monitors' actual output names to handle per-monitor lay
 
 Everything starts in tile mode. Change a monitor's layout from the bar (Monitor Mode button) whenever you want — no config editing needed. (The Monitor Mode plugin is being finalized separately; this section will be expanded once it's ported.)
 
-If you add or remove a monitor later (docking a laptop, say), just re-run it and reload:
+If you add or remove a monitor later (docking a laptop, say), you don't need to do anything — a background watcher handles it, [see below](#monitors-plugging-them-in-and-out). If you ever want to force it by hand anyway:
 
 ```bash
 ~/.config/mango/scripts/generate-tagrules.sh
 ```
-then `Super+r`.
+then `Super+r`. Be aware that running it directly resets every monitor to tile — the watcher is the path that puts your layouts back.
 
 If you've got a weird setup and want to hand-write rules for a specific monitor, `config.conf` has a commented template you can use instead.
+
+## Monitors: plugging them in and out
+
+DankMango runs one small background program: `monitor-watcher.sh`, started automatically from an `exec-once` line in `config.conf`. It sits and waits for you to plug in or unplug a monitor, and does nothing else the rest of the time. It's mentioned here because you didn't ask for it and it never announces itself — worth knowing what's running on your machine.
+
+It handles two situations, and treats them very differently on purpose.
+
+**Plugging a monitor in or out — handled silently.** mango stores its layout rules per monitor, keyed by output name, so a monitor you've just plugged in has no rules at all until they're regenerated. The watcher does that for you and reloads mango. There's no prompt because there's no decision to make: the monitors are what they are, and there's exactly one correct answer. Asking would just be a dialog with one button.
+
+The part that isn't obvious: regenerating those rules resets every monitor to tile. So the watcher captures your layouts first and puts them back afterwards. It also remembers them **persistently**, so a monitor you unplug and plug back in later comes back on the layout it had, rather than reverting to tile. A monitor it's never seen before starts on tile, as you'd expect. None of this needs anything from you.
+
+**Your main display going away — always asked, never assumed.** If the monitor you picked as your main display gets unplugged, the watcher picks a temporary stand-in (leftmost, largest if that ties) so anything depending on it keeps working, and sends you a notification saying what happened. It does **not** quietly rewrite your choice — plug the original back in and everything returns to normal without you touching anything.
+
+The notification has buttons: one to make the stand-in your new main display, one to keep your original. **DankMaterialShell only shows notification buttons when you hover the notification**, which catches people out. Ignoring it entirely is fine and changes nothing. Plug a genuinely new monitor in and you'll get a quieter notification offering to make that one your main display — offered once per monitor, so it won't nag.
+
+## Your main display
+
+The installer asks which monitor is your main one, since nothing can work it out for you — "the biggest" and "the leftmost" are both wrong often enough (a small primary next to a big secondary is a normal desk). Monitors are listed by physical position, left to right:
+
+```
+( ) DP-1  1st from left  2560x1440
+( ) DP-2  2nd from left  1920x1080
+```
+
+To change it later:
+
+```bash
+./install.sh --reselect-main-display
+```
+
+That re-opens the same picker and changes nothing else — it won't re-run the installer. Move with the **arrow keys** or **Ctrl-P / Ctrl-N** (handy if your keyboard has no dedicated arrows), **Space** to select, **Enter** to confirm. Space matters: pressing Enter without it just accepts whatever was already highlighted.
+
+**What it actually changes:** games launched from Steam open on that monitor instead of wherever your mouse happens to be. That's it, currently. It works through a generated rules file (`~/.config/mango/dms/mainmonitor.conf`) that the watcher rewrites whenever your main display changes — mango can't read a preference from disk at runtime, so the monitor name has to be written into a real rule. Don't hand-edit that file; it gets overwritten.
+
+Skipping the question is fine. With no main display set, games just open wherever the pointer is, which is mango's normal behaviour.
+
+## If the monitor stuff seems wrong
+
+Check what the watcher currently thinks:
+
+```bash
+~/.config/mango/scripts/monitor-watcher.sh --status
+```
+
+That prints your connected monitors, your stored main display, which one is actually in use right now, and the layouts it has remembered. Its log is at `/tmp/mango-monitor-watcher.log` — every hotplug it handled, and what it did about it.
+
+`post-update-health.sh` also checks this: it'll tell you if the watcher has stopped running, or if it's running but no longer wired into `config.conf` to start at login (which would work fine now and silently vanish at your next reboot).
 
 ## Customizing your setup
 
