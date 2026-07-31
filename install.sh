@@ -32,6 +32,28 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # because the library reads it; sourcing only defines things (no actions).
 source "$REPO_DIR/lib/common.sh"
 
+# ---- --reselect-main-display: re-run JUST the main-display prompt -------------
+# A user who dismissed the watcher's "main display disconnected" notification
+# without clicking either button has no other way back — the next prompt would only
+# come with the next hotplug. Rather than invent a second UI, this re-runs the very
+# same selector stage 7e uses and exits. Deliberately placed ABOVE the confirmation
+# gate and manifest_init: it changes exactly one preference key, so making someone
+# type "I understand" (a warning about replacing their whole config) would be a lie.
+if [ "${1:-}" = "--reselect-main-display" ]; then
+    echo "==================================================================="
+    echo " DankMango — reselect main display"
+    echo "==================================================================="
+    if [ ! -f "$MANIFEST" ]; then
+        die "no install manifest at $MANIFEST — run the installer first (bash install.sh)"
+    fi
+    if select_main_display; then
+        info "monitor-watcher.sh has regenerated the game windowrules for the new choice."
+    else
+        info "nothing changed."
+    fi
+    exit 0
+fi
+
 echo "==================================================================="
 echo " DankMango installer   ($STAMP)"
 echo " repo: $REPO_DIR"
@@ -489,6 +511,29 @@ if [ -x "$TAGRULES_GEN" ]; then
 else
     warn "generate-tagrules.sh not found/executable at $TAGRULES_GEN — per-monitor tagrules not generated."
     info "Was config/mango/scripts/ copied in stage 7a? Then run: $TAGRULES_GEN"
+fi
+
+# 7e. Main display -- the ONE thing here that genuinely cannot be inferred.
+#     "Biggest" and "leftmost" are both wrong often enough (small primary + big
+#     secondary is a common desk) that guessing would be worse than asking. The
+#     answer goes in the manifest under .userPrefs.mainDisplay, which
+#     scripts/monitor-watcher.sh reads to keep the generated Steam game
+#     windowrules (dms/mainmonitor.conf) pointed at the right monitor.
+#     Never fatal: declining, cancelling, a single-monitor machine, or mango not
+#     being up all leave the key unset, which the watcher treats as a valid state.
+if select_main_display; then
+    MAINRULES_FILE="$HOME/.config/mango/dms/mainmonitor.conf"
+    if have jq && [ -f "$MAINRULES_FILE" ]; then
+        # The rules file is generated (never backed up), so record it for uninstall.
+        # The PREFERENCE itself is not recorded: userPrefs is the user's, not install
+        # bookkeeping, and uninstall has no business reverting it.
+        manifest_add_change files-generated "$CUR_STAGE" "$MAINRULES_FILE" \
+            "$(jq -nc --arg f "$MAINRULES_FILE" '{file:$f, generator:"monitor-watcher.sh", note:"regenerated whenever the main display changes"}')" \
+            "rm $MAINRULES_FILE (re-created by monitor-watcher.sh)"
+    fi
+else
+    info "no main display recorded — Steam games will open wherever the pointer is."
+    info "you can set it any time with:  ./install.sh --reselect-main-display"
 fi
 
 # =============================================================================

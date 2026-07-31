@@ -102,6 +102,161 @@ ask_typed() {
     [ "${ans,,}" = "${2,,}" ]
 }
 
+# ---- main-display selection --------------------------------------------------
+# Which monitor is "the main one" is a USER preference — nothing can infer it from
+# hardware (biggest/leftmost is a guess, and often wrong for a desk with a small
+# primary and a big secondary). So we ask, once, and store the answer in the
+# manifest under .userPrefs.mainDisplay.
+#
+# That key is read by scripts/monitor-watcher.sh, which keeps
+# $XDG_RUNTIME_DIR/mango-monitor-watcher/effective-main-display current and
+# regenerates the main-display windowrules. Nothing else may write the key: if the
+# chosen monitor is unplugged, the watcher stands in a temporary replacement but
+# deliberately leaves the stored preference alone, so a replug restores intent.
+#
+# Kept HERE rather than in install.sh because `install.sh --reselect-main-display`
+# re-runs exactly this prompt later (a user who dismissed the watcher's drift
+# notification needs a way back without waiting for the next hotplug).
+
+# monitor_names_for_prompt -> connected output names, one per line. Delegates to
+# generate-tagrules.sh --list-outputs so the mmsg query lives in exactly ONE place
+# (that script's EDIT-HERE box) and a mango rename is a one-file fix.
+#
+# The --list-outputs support check is STATIC (grep) and not optional: an older
+# generator without the flag ignores it and does its normal job instead, which
+# REWRITES tagrules.conf and resets every monitor to the tile layout. Probing by
+# running it would cause exactly the damage the check exists to avoid. The output
+# is then filtered to bare output names, so the generator's human-readable progress
+# lines can never be mistaken for monitors.
+monitor_names_for_prompt() {
+    local gen
+    for gen in "$REPO_DIR/config/mango/scripts/generate-tagrules.sh" \
+               "$HOME/.config/mango/scripts/generate-tagrules.sh"; do
+        [ -x "$gen" ] || continue
+        grep -q -- '--list-outputs' "$gen" || continue
+        "$gen" --list-outputs 2>/dev/null | grep -xE '[A-Za-z0-9._-]+'
+        return 0
+    done
+    return 1
+}
+
+# _ordinal N -> "1st", "2nd", "3rd", "4th"... Handles the 11th/12th/13th exception,
+# which the naive last-digit rule gets wrong. Nobody is plugging in eleven monitors,
+# but the rule costs one case statement and a wrong ordinal reads as a bug.
+_ordinal() {
+    local n="$1"
+    case $(( n % 100 )) in
+        11|12|13) printf '%dth' "$n"; return ;;
+    esac
+    case $(( n % 10 )) in
+        1) printf '%dst' "$n" ;;
+        2) printf '%dnd' "$n" ;;
+        3) printf '%drd' "$n" ;;
+        *) printf '%dth' "$n" ;;
+    esac
+}
+
+# select_main_display  -> prompts, writes .userPrefs.mainDisplay, returns 0.
+# Returns 1 (with an explanatory info/warn) when it can't run: mango not up, no
+# outputs, whiptail missing, or the user cancelled. Never fatal — the whole feature
+# is optional, and the watcher treats "nothing stored" as a valid steady state.
+select_main_display() {
+    local -a names=()
+    mapfile -t names < <(monitor_names_for_prompt)
+    if [ "${#names[@]}" -eq 0 ]; then
+        warn "couldn't list monitors (is MangoWM running?) — skipping main-display selection"
+        info "set it later with:  ./install.sh --reselect-main-display"
+        return 1
+    fi
+
+    # One monitor: nothing to choose. Store it silently rather than making the user
+    # confirm the only possible answer — and it still gets recorded, so plugging in
+    # a second monitor later behaves correctly from the first moment.
+    if [ "${#names[@]}" -eq 1 ]; then
+        _store_main_display "${names[0]}" && ok "main display: ${names[0]} (only monitor connected)"
+        return $?
+    fi
+
+    if ! have whiptail; then
+        warn "whiptail not found — skipping main-display selection"
+        info "set it later with:  ./install.sh --reselect-main-display"
+        return 1
+    fi
+
+    # One geometry snapshot, reused for ordering, labels and the default pick, so the
+    # list can't be built from two different moments in time.
+    local geom; geom="$(mmsg get all-monitors 2>/dev/null)"
+
+    # Order the monitors LEFT TO RIGHT by x. Physical position is the only thing a
+    # user reliably knows about their own desk — "DP-2" means nothing, "2nd from
+    # left" is unambiguous at any monitor count (unlike "middle", which stops working
+    # the moment there are four).
+    # KNOWN LIMIT, deliberately not solved: purely horizontal. A vertically stacked
+    # pair shares an x and will read as two adjacent ordinals. Out of scope.
+    local -a ordered=()
+    mapfile -t ordered < <(
+        local nm x
+        for nm in "${names[@]}"; do
+            x="$(printf '%s' "$geom" | jq -r --arg m "$nm" '.monitors[]|select(.name==$m)|.x' 2>/dev/null)"
+            case "$x" in ''|null) x=999999 ;; esac   # unknown geometry sorts last, never drops the row
+            printf '%s\t%s\n' "$x" "$nm"
+        done | sort -n -k1,1 -k2,2 | cut -f2
+    )
+    [ "${#ordered[@]}" -gt 0 ] || ordered=("${names[@]}")
+
+    # Pre-select whatever is already stored, else the leftmost monitor — the same
+    # tie-break the watcher uses for its temporary stand-in, so the suggested answer
+    # matches what the system would do on its own.
+    local current=""
+    [ -f "$MANIFEST" ] && have jq && current="$(jq -r '.userPrefs.mainDisplay // empty' "$MANIFEST" 2>/dev/null)"
+    local default_pick="$current"
+    [ -n "$default_pick" ] || default_pick="${ordered[0]}"
+
+    # Radiolist rows: TAG "description" ON/OFF. whiptail always renders the TAG
+    # column first, so the connector leads and the description carries the position
+    # and resolution. The tag has to stay the connector: it is the return value and
+    # what gets stored.
+    local -a rows=() n desc res i=0
+    for n in "${ordered[@]}"; do
+        i=$((i + 1))
+        res="$(printf '%s' "$geom" | jq -r --arg m "$n" \
+            '.monitors[]|select(.name==$m)|"\(.width)x\(.height)"' 2>/dev/null)"
+        desc="$(_ordinal "$i") from left"
+        [ -n "$res" ] && [ "$res" != "null" ] && desc="$desc  $res"
+        rows+=("$n" "$desc" "$([ "$n" = "$default_pick" ] && echo ON || echo OFF)")
+    done
+
+    # Height: fixed chrome (title, body, buttons) + one line per monitor, so the box
+    # grows with the list instead of clipping it on a 3+ monitor desk.
+    local box_h=$(( 14 + ${#ordered[@]} ))
+
+    local choice
+    choice="$(whiptail --title "DankMango — main display" \
+        --radiolist "Which monitor is your MAIN display?\n\nGames launched from Steam are sent here instead of wherever the mouse happens to be. You can change this later with:\n  ./install.sh --reselect-main-display\n\nMove: ↑/↓ or Ctrl-P/Ctrl-N   Select: Space   Confirm: Enter" \
+        "$box_h" 74 "${#ordered[@]}" "${rows[@]}" 3>&1 1>&2 2>&3)" || {
+        info "main-display selection cancelled — nothing stored"
+        info "set it later with:  ./install.sh --reselect-main-display"
+        return 1
+    }
+    [ -n "$choice" ] || { info "no monitor picked — nothing stored"; return 1; }
+
+    _store_main_display "$choice" && ok "main display: $choice"
+}
+
+# _store_main_display NAME — the one writer of .userPrefs.mainDisplay on the
+# install side. userPrefs is created if absent and otherwise left alone: it is user
+# preference, NOT install bookkeeping, so uninstall must not try to revert it.
+_store_main_display() {
+    local name="$1"
+    [ -f "$MANIFEST" ] || { warn "no manifest yet — cannot store the main display"; return 1; }
+    manifest_jq '.userPrefs = ((.userPrefs // {}) | .mainDisplay = $n)' --arg n "$name" || return 1
+    # Make it take effect now rather than at the next hotplug: the watcher owns the
+    # generated windowrules, so ask it to refresh them (no-op if it isn't installed).
+    local watcher="$HOME/.config/mango/scripts/monitor-watcher.sh"
+    [ -x "$watcher" ] && "$watcher" --once >/dev/null 2>&1
+    return 0
+}
+
 # Copy a SYSTEM file (needs sudo). Backs up an existing, differing target.
 # Records the backup (if any) and a system-file-installed change in the manifest,
 # noting whether the target pre-existed (so uninstall knows: restore vs. delete).
