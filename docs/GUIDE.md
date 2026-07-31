@@ -12,6 +12,7 @@ The stuff that got cut from the main README to keep it from being a wall of text
 - Copies the system-level stuff into place (keyd, the SDDM theme)
 - Installs and registers the DMS plugins
 - Sets up your per-monitor tagrules (more on this below) and seeds your taskbar pins + a default wallpaper
+- Asks which monitor is your main display — the one Steam games should open on. Skipping is fine, and you can set or change it any time later with `./install.sh --reselect-main-display`
 - Asks about pinning your power profile to performance (desktop only — it'll skip this on a laptop)
 - Asks about autostarting easyeffects
 - Asks about the combined audio OSD patch — this one's a bit different since it edits a file DMS itself owns, not something DankMango installed. It's opt-in for that reason, and it heals itself automatically if a DMS update wipes it. You can apply it later by hand too: `~/.config/mango/scripts/apply-combined-osd-patch.sh`
@@ -21,7 +22,7 @@ The stuff that got cut from the main README to keep it from being a wall of text
 
 mango needs to know your monitors' actual output names to handle per-monitor layouts — it can't work that out on its own from the config. The installer sorts this for you automatically: it runs `generate-tagrules.sh`, which asks mango what's connected (`mmsg get all-monitors`) and writes a tile-mode block for each monitor into `~/.config/mango/dms/tagrules.conf`.
 
-Everything starts in tile mode. Change a monitor's layout from the bar (Monitor Mode button) whenever you want — no config editing needed. (The Monitor Mode plugin is being finalized separately; this section will be expanded once it's ported.)
+Everything starts in tile mode. Change a monitor's layout from the bar (Monitor Mode button) whenever you want — no config editing needed.
 
 If you add or remove a monitor later (docking a laptop, say), you don't need to do anything — a background watcher handles it, [see below](#monitors-plugging-them-in-and-out). If you ever want to force it by hand anyway:
 
@@ -107,6 +108,7 @@ Raise it if the switcher vanishes before you've picked a window, lower it if it 
 ## Updating
 
 ```bash
+cd DankMango
 git pull
 ./update.sh --dry-run
 ./update.sh
@@ -123,7 +125,7 @@ It won't overwrite something you've hand-edited since installing without checkin
 
 ## What to do when the health check fails
 
-After an update, run `~/.config/mango/scripts/post-update-health.sh`. It checks everything DankMango customises that a MangoWM or DMS update can quietly break — per-monitor tagrules, the bar plugins, the combined audio OSD patch, the border colour chain — and prints a PASS or FAIL line for each, plus which versions changed since you last ran it.
+After an update, run `~/.config/mango/scripts/post-update-health.sh`. It checks everything DankMango customises that a MangoWM or DMS update can quietly break — per-monitor tagrules, the monitor watcher (both that it's running and that it's still wired to start at login), the generated main-display game rules, the bar plugins, the combined audio OSD patch, the border colour chain — and prints a PASS or FAIL line for each, plus which versions changed since you last ran it.
 
 If anything fails you get a numbered list of problems, and each one comes with a plain-English walkthrough: the exact commands to type, what each does, and why you're running it. It assumes no prior Linux knowledge, and following the steps as written is the entire fix — there's no AI tooling involved. A ready-made Claude Code prompt gets printed underneath as well for anyone who happens to use it, but it's strictly optional and safe to ignore. A few failures are expected and take a single command (the audio OSD patch gets wiped by every DMS update and just needs re-applying); one or two genuinely can't be fixed by hand, and those say so plainly instead of sending you round in circles.
 
