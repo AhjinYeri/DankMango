@@ -1,0 +1,24 @@
+[SddmGreeterTheme]
+Name=DankMango
+Description=DankMango login theme
+Author=DankMango
+License=MIT
+Type=sddm-theme
+Version=0.1
+MainScript=Main.qml
+ConfigFile=theme.conf
+Theme-Id=dankmango
+Theme-API=2.0
+QtVersion=6
+
+# NOTE ON THE FILENAME: this file is "metadata.desktop", lowercase. SDDM's theme
+# loader looks for that exact name -- every stock theme (elarun/maldives/maya)
+# and sddm-astronaut-theme uses it. "Metadata.desktop" will NOT be found.
+#
+# QtVersion=6 selects /usr/bin/sddm-greeter-qt6. sddm 0.21 ships both a Qt5 and
+# a Qt6 greeter; the key here is what decides which one runs.
+#
+# Deliberately omitted for now (add when the assets exist -- a key pointing at a
+# missing file is worse than an absent key):
+#   Screenshot=Previews/dankmango.png
+#   TranslationsDirectory=translations

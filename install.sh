@@ -342,56 +342,84 @@ else
     info "no keyd config shipped in the repo yet -> not enabling the keyd service."
 fi
 
-# 5b. SDDM: Japanese astronaut theme (12h clock + custom background), installed
-#     via the UPDATE-PROOF apply.sh pattern -- NOT a theme/conf split.
-#     How it really works (verified against the live system):
-#       * The source of truth is a small config dir (apply.sh + the customized
-#         japanese_aesthetic.conf + the background png). We install it to
-#         ~/.config/sddm-astronaut-japanese/.
-#       * apply.sh (run as root) rsyncs the package-owned upstream theme into a
-#         SEPARATE copy dir that pacman never touches, overlays our conf + bg,
-#         fixes metadata.desktop, and writes /etc/sddm.conf.d/theme.conf. That's
-#         what survives sddm-astronaut-theme package updates.
-#     So here we (1) drop the config dir into ~/.config, then (2) run apply.sh.
-SDDM_SRC="$REPO_DIR/system/sddm/sddm-astronaut-japanese"
-SDDM_CFG_DST="$HOME/.config/sddm-astronaut-japanese"
-if [ -f "$SDDM_SRC/apply.sh" ]; then
-    if [ -d "$SDDM_CFG_DST" ]; then
-        cp -a "$SDDM_CFG_DST" "$SDDM_CFG_DST.bak-$STAMP" && info "backed up existing $SDDM_CFG_DST -> $SDDM_CFG_DST.bak-$STAMP"
-        manifest_add_backup "$SDDM_CFG_DST" "$SDDM_CFG_DST.bak-$STAMP" user "$CUR_STAGE"
-    fi
-    mkdir -p "$SDDM_CFG_DST"
-    cp -a "$SDDM_SRC/." "$SDDM_CFG_DST/"
-    chmod +x "$SDDM_CFG_DST/apply.sh"
-    ok "SDDM theme config -> $SDDM_CFG_DST"
-    have jq && manifest_add_change owned-tree "$CUR_STAGE" "$SDDM_CFG_DST" \
-        "$(jq -nc --arg d "$SDDM_CFG_DST" '{dir:$d, scope:"user"}')" "rm -rf $SDDM_CFG_DST"
-    info "(tip: your display isn't 1080p? edit ScreenWidth/ScreenHeight in japanese_aesthetic.conf first.)"
-
-    # apply.sh needs rsync and the upstream package to be present.
-    if ! have rsync; then
-        warn "rsync not found — apply.sh needs it. Install rsync, then run: sudo $SDDM_CFG_DST/apply.sh"
-    elif [ ! -d /usr/share/sddm/themes/sddm-astronaut-theme ]; then
-        warn "upstream sddm-astronaut-theme not installed yet — run 'sudo $SDDM_CFG_DST/apply.sh' after it is."
+# 5b. SDDM: DankMango's own login theme.
+#
+#     REPLACES the old sddm-astronaut-theme (AUR) + apply.sh arrangement. That one
+#     needed an AUR package, rsync, and an update-proof copy dance purely because we
+#     were customising somebody else's package-owned theme. Shipping our own theme
+#     deletes all three problems, and buys the thing the astronaut theme could never
+#     do: the login screen follows the wallpaper, via scripts/sddm-palette-sync.sh.
+#
+#     THE PRIVILEGE BOUNDARY IS THE WHOLE DESIGN — the theme's install.sh owns it:
+#       $SDDM_THEME_DEST/            root:root 0755   <- the greeter EXECUTES the QML
+#       $SDDM_THEME_DEST/*.qml       root:root 0644      in here, as the `sddm` user,
+#       $SDDM_THEME_DEST/theme.conf  root:root 0644      BEFORE anyone authenticates
+#       $SDDM_THEME_DEST/theme.conf.user      $USER 0644 <- palette (2 writable leaves,
+#       $SDDM_THEME_DEST/wallpaper-[ab].jpg   $USER 0644    values only, never code)
+#     We deliberately do NOT reimplement that split here: one copy of a pre-auth
+#     privilege boundary is enough. sddm_theme_install() shells out to the theme's
+#     own installer (see lib/common.sh).
+#
+#     WHAT THIS STAGE DOES NOT DO: set Current=. See SDDM_SET_CURRENT in lib/common.sh.
+if [ -d "$REPO_DIR/system/sddm/themes/$SDDM_THEME_ID" ]; then
+    info "Installing the DankMango login theme to $SDDM_THEME_DEST — needs sudo."
+    if sddm_theme_install; then
+        ok "DankMango login theme installed (root-owned code, user-owned palette leaves)"
+        # Recorded as a SYSTEM-scoped owned-tree: uninstall.sh moves the whole tree to
+        # the rescue dir (with sudo — the tree is root-owned) rather than deleting it.
+        have jq && manifest_add_change owned-tree "$CUR_STAGE" "$SDDM_THEME_DEST" \
+            "$(jq -nc --arg d "$SDDM_THEME_DEST" --arg id "$SDDM_THEME_ID" \
+                '{dir:$d, scope:"system", themeId:$id, note:"root-owned theme tree; holds the user-writable theme.conf.user + wallpaper-[ab].jpg leaves"}')" \
+            "sudo rm -rf $SDDM_THEME_DEST"
     else
-        info "Running apply.sh (builds the update-proof theme copy + sets it active) — needs sudo."
-        if sudo "$SDDM_CFG_DST/apply.sh"; then
-            ok "SDDM Japanese theme applied (12h clock, custom background, update-proof copy)"
-            have jq && manifest_add_change sddm-theme-applied "$CUR_STAGE" "theme.conf" \
-                "$(jq -nc --arg cd "$SDDM_CFG_DST" '{configDir:$cd, writes:["/etc/sddm.conf.d/theme.conf"], note:"apply.sh also builds an update-proof theme copy under /usr/share/sddm/themes"}')" \
-                "remove /etc/sddm.conf.d/theme.conf (reverts to default SDDM theme)"
-        else
-            warn "apply.sh failed — re-run it manually: sudo $SDDM_CFG_DST/apply.sh"
+        warn "the login theme didn't install — re-run: sudo $REPO_DIR/system/sddm/themes/$SDDM_THEME_ID/install.sh"
+    fi
+
+    # ---- the deferred cutover (OFF by default) ------------------------------
+    # Gated, not commented out, so the cutover session can exercise this exact path.
+    if [ "$SDDM_SET_CURRENT" = 1 ] && [ -d "$SDDM_THEME_DEST" ]; then
+        warn "DANKMANGO_SDDM_SET_CURRENT=1 — switching the ACTIVE login theme to $SDDM_THEME_ID."
+        warn "Keep a TTY (Ctrl+Alt+F2) available before you reboot."
+        sddm_warn_shadowing_dropin || true
+        # Capture the pre-flip state BEFORE writing, so uninstall can put it back even
+        # when Current= lived in a file we never touch (e.g. /etc/sddm.conf).
+        prev_cur=""; prev_file=""
+        if cur_tsv="$(sddm_current_theme)"; then
+            IFS=$'\t' read -r prev_cur prev_file <<<"$cur_tsv"
+            info "previous login theme: ${prev_cur:-<sddm default>} (from ${prev_file:-nowhere})"
         fi
+        # Write via a temp file + sys_copy so the existing /etc/sddm.conf.d/theme.conf
+        # (if any) gets the standard manifest-tracked backup — that backup is what
+        # uninstall.sh stage 3 restores.
+        tmp_theme_conf="$(mktemp)"
+        printf '[Theme]\nCurrent=%s\n' "$SDDM_THEME_ID" > "$tmp_theme_conf"
+        if sys_copy "$tmp_theme_conf" "$SDDM_THEME_CONF"; then
+            ok "login theme switched -> $SDDM_THEME_ID"
+            have jq && manifest_add_change sddm-theme-applied "$CUR_STAGE" "theme.conf" \
+                "$(jq -nc --arg id "$SDDM_THEME_ID" --arg w "$SDDM_THEME_CONF" \
+                          --arg pc "$prev_cur" --arg pf "$prev_file" \
+                    '{themeId:$id, writes:[$w],
+                      previousCurrent:(if $pc=="" then null else $pc end),
+                      previousCurrentFile:(if $pf=="" then null else $pf end),
+                      note:"if previousCurrentFile is not this file, removing this drop-in restores the old value on its own"}')" \
+                "remove $SDDM_THEME_CONF (reverts to ${prev_cur:-the SDDM default theme})"
+        else
+            warn "couldn't write $SDDM_THEME_CONF — the login theme was NOT switched."
+        fi
+        rm -f "$tmp_theme_conf"
+    else
+        sddm_print_cutover_hint
     fi
 else
-    warn "no SDDM theme config in system/sddm/sddm-astronaut-japanese/ -> skipping SDDM theming."
-    info "(the sddm-astronaut-theme AUR package still installed its own default theme.)"
+    warn "no login theme in system/sddm/themes/$SDDM_THEME_ID/ -> skipping SDDM theming."
+    info "(SDDM keeps whatever login theme it is already using.)"
 fi
 
-# 5c. SDDM drop-in config(s) that apply.sh does NOT manage (e.g. numlock.conf):
+# 5c. SDDM drop-in config(s) that are plain static copies (e.g. numlock.conf):
 #     system/sddm/sddm.conf.d/*.conf -> /etc/sddm.conf.d/
-#     NOTE: theme.conf is intentionally NOT shipped here — apply.sh writes it.
+#     NOTE: theme.conf is intentionally NOT shipped here. It is written (or not)
+#     by the gated cutover in 5b, because it has to record the PREVIOUS Current=
+#     value in the manifest — a static copy can't do that.
 shopt -s nullglob
 sddm_confs=("$REPO_DIR"/system/sddm/sddm.conf.d/*.conf)
 shopt -u nullglob
@@ -870,6 +898,21 @@ elif have dms && sleep 1 && seed_out="$(dms ipc call wallpaper set "$seed_wall" 
     ok "applied theming from $SEED_WALLPAPER via DMS now (wallpaper set + matugen, state persisted)"
 else
     info "DMS not running yet — wallpaper was seeded into session.json above; DMS themes on first login."
+fi
+
+# Push that freshly-generated palette to the LOGIN screen too. This has to happen
+# here, not in stage 5b: the theme install runs before stage 7 deploys the script and
+# before matugen has ever produced ~/.cache/DankMaterialShell/dms-colors.json, so at
+# that point there is simply no palette to sync. Best-effort and silent-on-skip by
+# design — no theme installed, no colors json yet, or no imagemagick all exit 0.
+SDDM_SYNC="$HOME/.config/mango/scripts/sddm-palette-sync.sh"
+if [ -x "$SDDM_SYNC" ]; then
+    if "$SDDM_SYNC"; then
+        ok "login-screen palette synced from the current wallpaper"
+    else
+        info "login-screen palette not synced yet — it retries on the next wallpaper change."
+    fi
+    info "(from now on wallpaper-border-reload.sh re-runs this on every wallpaper change.)"
 fi
 
 # =============================================================================

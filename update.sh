@@ -44,6 +44,9 @@ done
 
 # Report buckets, printed together at the end (same spirit as install/uninstall).
 UPDATED=(); PKGS_ADDED=(); MIGRATED=(); RETIRED=(); LEFT=(); MANUAL=()
+# The login theme is reinstalled as a WHOLE TREE, so however many of its files changed
+# in this delta, the installer runs once. Guards apply_change's dankmango-sddm-theme arm.
+SDDM_THEME_REINSTALLED=0
 
 # Prompts must read the TERMINAL, not stdin: we never loop over a pipe while
 # prompting (the git delta is collected into an array first), but be defensive
@@ -73,7 +76,77 @@ MIGRATIONS=(
     "reseed-pins-installed-only:remove dead taskbar/dock pins whose package isn't installed (the pin-seed fix, for installs made before it)"
     "zen-userchrome-bridge:write the Zen userChrome.css/user.js bridge so matugen's zen.css is actually loaded (Zen theming never worked before this)"
     "strip-dead-floatsize-execonce:remove the dead 'exec-once = .../dp2-floatsize.sh' autostart left in a hand-edited config.conf after the float helper was retired"
+    "sddm-dankmango-theme:install DankMango's own login theme (replaces the sddm-astronaut-theme AUR package) — deploys it, does NOT switch the login screen over"
 )
+
+# v1.x installs got their login screen from the sddm-astronaut-theme AUR package,
+# customised through ~/.config/sddm-astronaut-japanese/apply.sh. v2 ships DankMango's
+# own theme instead, which is what makes the login screen able to follow the wallpaper.
+#
+# THIS MIGRATION DELIBERATELY DOES NOT FLIP Current=. That is not timidity, it is the
+# one irreversible-ish failure mode in the project: a bad Current= is discovered at the
+# next reboot, at a login screen, with no session to fix it from. install.sh gates the
+# same step behind DANKMANGO_SDDM_SET_CURRENT for identical reasons. An updater that
+# runs semi-unattended, with none of the TTY-escape-hatch briefing a fresh install
+# gives you, is the last place that decision should be made for someone.
+#
+# So this leaves the machine in the one state that is safe and complete: the new theme
+# fully installed and syncing, the old one still serving the login screen, and the
+# switch a one-liner in the report. Nothing is uninstalled either — the astronaut
+# package and its config dir are still what the CURRENT login screen is built from, and
+# pulling them out from under an active greeter is how you get a black screen at boot.
+#
+# Idempotent: the theme's install.sh is `install -o root ...` throughout, so re-running
+# it is a no-op-with-the-same-result; and if the tree is already installed AND recorded
+# in the manifest (i.e. install.sh got there first), this returns immediately.
+migrate_sddm-dankmango-theme() {
+    local src="$REPO_DIR/system/sddm/themes/$SDDM_THEME_ID"
+    [ -d "$src" ] || { info "  repo ships no login theme at system/sddm/themes/$SDDM_THEME_ID — nothing to do"; return 0; }
+
+    # Already done by an install.sh run? Then there is nothing for the migration to add.
+    if [ -d "$SDDM_THEME_DEST" ] && \
+       jq -e --arg d "$SDDM_THEME_DEST" '[ .systemChanges[]? | select(.type=="owned-tree" and (.detail.dir // .key)==$d) ] | length > 0' "$MANIFEST" >/dev/null 2>&1; then
+        info "  already installed at $SDDM_THEME_DEST and recorded — nothing to do"
+        return 0
+    fi
+
+    # What is serving the login screen right now? Purely informational, but it is the
+    # difference between "you're still on the old theme" and "you have no theme set".
+    local cur="" cur_file="" cur_tsv
+    if cur_tsv="$(sddm_current_theme)"; then
+        IFS=$'\t' read -r cur cur_file <<<"$cur_tsv"
+        info "  current login theme: $cur  (from $cur_file)"
+    else
+        info "  no Current= set anywhere — SDDM is on its built-in default"
+    fi
+    if pacman -Qi sddm-astronaut-theme >/dev/null 2>&1; then
+        info "  sddm-astronaut-theme (AUR) is installed — leaving it alone; it is still serving your login screen"
+    fi
+
+    [ "$DRY_RUN" = 1 ] && { info "  (dry-run) would install the theme to $SDDM_THEME_DEST via sudo"; return 0; }
+
+    if ! sddm_theme_install; then
+        warn "  theme install failed — re-run by hand: sudo $src/install.sh"
+        return 1
+    fi
+    ok "  installed $SDDM_THEME_DEST (root-owned code, user-owned palette leaves)"
+
+    # Same record install.sh writes, so uninstall.sh treats it identically.
+    manifest_add_change owned-tree "$CUR_STAGE" "$SDDM_THEME_DEST" \
+        "$(jq -nc --arg d "$SDDM_THEME_DEST" --arg id "$SDDM_THEME_ID" \
+            '{dir:$d, scope:"system", themeId:$id, note:"root-owned theme tree; holds the user-writable theme.conf.user + wallpaper-[ab].jpg leaves"}')" \
+        "sudo rm -rf $SDDM_THEME_DEST"
+
+    # Prime the palette now rather than waiting for the next wallpaper change.
+    local sync="$HOME/.config/mango/scripts/sddm-palette-sync.sh"
+    [ -x "$sync" ] && "$sync" >/dev/null 2>&1 && info "  login palette synced from your current wallpaper"
+
+    MANUAL+=("SDDM: the new login theme is installed but NOT active. Preview: sddm-greeter-qt6 --test-mode --theme $SDDM_THEME_DEST — then switch with: sudo sh -c 'printf \"[Theme]\\nCurrent=$SDDM_THEME_ID\\n\" > $SDDM_THEME_CONF' (keep a TTY open on the first reboot)")
+    if [ -n "$cur" ]; then
+        MANUAL+=("SDDM: once you have switched and rebooted happily, the old theme can go: sudo pacman -Rns sddm-astronaut-theme && rm -rf ~/.config/sddm-astronaut-japanese")
+    fi
+    return 0
+}
 
 # Every install made before this migration existed has a themed zen.css sitting unused
 # on disk, because nothing ever wrote the userChrome.css that imports it. This applies
@@ -317,6 +390,34 @@ apply_change() {  # apply_change REPO_REL
             mkdir -p "$(dirname "$dst")"; cp "$src" "$dst" && { ok "SDDM theme file -> $dst"; UPDATED+=("$dst"); }
             MANUAL+=("SDDM theme changed — re-run: sudo ~/.config/sddm-astronaut-japanese/apply.sh")
             ;;
+        dankmango-sddm-theme)
+            # NOT a per-file copy. The destination tree is root-owned with two
+            # user-writable leaves, and only the theme's own install.sh reproduces that
+            # split correctly — a plain `cp` here would land QML as the wrong owner, in
+            # a directory the greeter executes from pre-auth. So any change anywhere in
+            # the tree means "re-run the installer", once, no matter how many files moved.
+            if [ "$SDDM_THEME_REINSTALLED" = 1 ]; then
+                info "login theme handled once per run — nothing further for: $rel"
+                return
+            fi
+            SDDM_THEME_REINSTALLED=1
+            # Only refresh what we actually installed. If the tree isn't there, the user
+            # is on the old theme and hasn't migrated — the migration owns that case.
+            if [ ! -d "$SDDM_THEME_DEST" ]; then
+                info "login theme not installed here yet — the sddm-dankmango-theme migration will handle it."
+                LEFT+=("$SDDM_THEME_DEST — not installed; left to the migration"); return
+            fi
+            [ "$DRY_RUN" = 1 ] && { info "would re-run the login theme installer -> $SDDM_THEME_DEST (sudo)"; UPDATED+=("$SDDM_THEME_DEST"); return; }
+            if sddm_theme_install; then
+                ok "login theme refreshed -> $SDDM_THEME_DEST"; UPDATED+=("$SDDM_THEME_DEST")
+                # theme.conf is root-owned and just got overwritten with the new defaults;
+                # theme.conf.user (the live palette) is a separate file and is untouched.
+                MANUAL+=("SDDM login theme files changed — preview before your next reboot: sddm-greeter-qt6 --test-mode --theme $SDDM_THEME_DEST")
+            else
+                warn "couldn't refresh the login theme — re-run: sudo $REPO_DIR/system/sddm/themes/$SDDM_THEME_ID/install.sh"
+                MANUAL+=("sudo $REPO_DIR/system/sddm/themes/$SDDM_THEME_ID/install.sh")
+            fi
+            ;;
         dms-state)
             # settings.json / plugin_settings.json are LIVE STATE, not a static copy.
             warn "DMS state file changed in the repo: $rel"
@@ -335,6 +436,25 @@ retire_file() {  # retire_file REPO_REL
     route="$(route_dest "$rel")" || { info "removed from repo, not an installed path: $rel"; return; }
     IFS=$'\t' read -r dst scope kind <<<"$route"
     [ -e "$dst" ] || { info "already gone: $dst"; return; }
+
+    # The login theme tree is never recorded file-by-file (it's one owned-tree record),
+    # so the is_ours check below can't see it — and the theme installer only ever adds
+    # or overwrites, so a file dropped from the repo would otherwise linger forever in a
+    # root-owned directory the greeter loads from. Prune it explicitly.
+    if [ "$kind" = dankmango-sddm-theme ]; then
+        [ "$DRY_RUN" = 1 ] && { info "would remove stale login-theme file: $dst"; RETIRED+=("$dst"); return; }
+        if ask_tty "DankMango dropped $rel. Remove the stale $dst from the installed theme? (needs sudo)"; then
+            # NO .bak- copy here, unlike every other retire path, and deliberately:
+            # this file came from the repo, so git still has it — a backup would add
+            # nothing except a stray file inside a root-owned directory the greeter
+            # loads from pre-auth, which is the one place not to leave litter.
+            if sudo rm -f "$dst"; then ok "retired $dst (still in git history if you want it back)"; RETIRED+=("$dst")
+            else warn "couldn't remove $dst"; MANUAL+=("sudo rm $dst"); fi
+        else
+            LEFT+=("$dst — stale login-theme file kept, by your choice")
+        fi
+        return
+    fi
     if ! is_ours "$dst"; then
         info "repo dropped $rel, but manifest doesn't show $dst as ours — leaving it."
         LEFT+=("$dst — repo removed it but it isn't recorded as ours"); return

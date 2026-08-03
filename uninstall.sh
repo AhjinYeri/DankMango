@@ -80,6 +80,10 @@ ask_yn() {
 # Collected as we go, printed in one place at the end (stage 11). A user running a
 # destructive script should not have to scroll back through it to find out what it did.
 RESTORED=(); REMOVED=(); LEFT=(); MANUAL=(); PKGS_REMOVED=()
+# Set when anything ROOT-OWNED was moved into the rescue dir (the SDDM theme tree).
+# The final "delete it when you're happy" hint has to say `sudo rm -rf` in that case,
+# or the user hits EPERM on a directory this script told them was safe to remove.
+RESCUED_SYSTEM=0
 # Absolute paths we restored from a backup this run. Used to protect those files
 # from the later tree-removal stage — restoring your file and then moving it into
 # the rescue dir would be an expensive no-op at best.
@@ -385,14 +389,21 @@ done < <(jq -r '(.systemChanges // [])[]
 # Opt-in, one prompt per tree, default NO. A tree is NOT offered for removal if it
 # holds a file we restored in stage 3 — that means it predates DankMango in part,
 # and removing it would take your file with it.
+#
+# SCOPE MATTERS HERE. Most owned trees are under $HOME and move with a plain mv.
+# The SDDM login theme (/usr/share/sddm/themes/dankmango) is root-owned on purpose —
+# the greeter executes its QML pre-auth — so moving it needs sudo. A scope-blind
+# `rescue_move "$dir" 0` would fail on it and leave an orphaned root-owned directory
+# behind, which is exactly the leftover this stage exists to prevent.
 stage "6/11  Directories DankMango created"
 
 tree_n=0
-while IFS=$'\t' read -r dir note; do
+while IFS=$'\t' read -r dir scope note; do
     [ -n "${dir:-}" ] || continue
     tree_n=$((tree_n+1))
+    need_sudo=0; [ "${scope:-user}" = system ] && need_sudo=1
     echo
-    info "tree: $dir"
+    info "tree: $dir${scope:+  (scope: $scope)}"
     [ -n "${note:-}" ] && info "  install.sh noted: $note"
     if [ ! -d "$dir" ]; then info "  already gone."; continue; fi
     if tree_holds_backup "$dir"; then
@@ -401,15 +412,29 @@ while IFS=$'\t' read -r dir note; do
         LEFT+=("$dir — holds pre-DankMango files; not removed")
         continue
     fi
+    if [ "$need_sudo" = 1 ] && ! have sudo; then
+        warn "need sudo to move $dir — skipped"; MANUAL+=("sudo mv $dir $(rescue_path "$dir")"); continue
+    fi
     sz="$(du -sh "$dir" 2>/dev/null | cut -f1)"
     info "  size: ${sz:-?}   contents stay recoverable under $RESCUE"
     if ask_yn "Remove $dir?"; then
-        if rescue_move "$dir" 0; then ok "removed $dir"; REMOVED+=("$dir/"); fi
+        if rescue_move "$dir" "$need_sudo"; then
+            # Verify, don't assume. A partial move (or a mv that reported success
+            # while leaving the directory in place) must not be reported as removed.
+            if [ -e "$dir" ]; then
+                warn "$dir is STILL PRESENT after the move — check it by hand."
+                MANUAL+=("$dir — move to the rescue dir did not fully clear it")
+                LEFT+=("$dir — still present")
+            else
+                ok "removed $dir"; REMOVED+=("$dir/")
+                [ "$need_sudo" = 1 ] && RESCUED_SYSTEM=1
+            fi
+        fi
     else
         LEFT+=("$dir — kept, by your choice")
     fi
 done < <(jq -r '(.systemChanges // [])[] | select(.type=="owned-tree")
-                | [(.detail.dir // .key), (.detail.note // "")] | @tsv' "$MANIFEST")
+                | [(.detail.dir // .key), (.detail.scope // "user"), (.detail.note // "")] | @tsv' "$MANIFEST")
 [ "$tree_n" = 0 ] && info "no owned directories recorded."
 
 # =============================================================================
@@ -507,24 +532,55 @@ done < <(jq -r '(.systemChanges // [])[] | select(.type=="service-enabled")
                 | [(.detail.service // .key), (.detail.profile // "")] | @tsv' "$MANIFEST")
 [ "$svc_n" = 0 ] && info "no services recorded."
 
-# 8b. SDDM theme. The file it writes is /etc/sddm.conf.d/theme.conf; if that had a
-# previous version, stage 3 already restored it and there's nothing to remove.
+# 8b. SDDM login theme — restoring the ACTIVE theme (Current=).
+#
+# Three ways this resolves, and all three are already correct by construction:
+#   * The drop-in existed before us -> install.sh's sys_copy backed it up, stage 3
+#     restored that backup verbatim. Nothing to do here but say so.
+#   * The drop-in is ours alone -> stage 5c already moved it to the rescue dir
+#     (preexisting:false). Removing it is what reverts Current=.
+#   * Current= actually lived somewhere else (/etc/sddm.conf, or another drop-in)
+#     and our drop-in only SHADOWED it -> dropping ours un-shadows the original,
+#     which is why previousCurrentFile is recorded: so we can say what comes back
+#     rather than making the user guess.
+# The recorded previousCurrent is printed in every case, because "what will my
+# login screen be after this?" is the only question that matters here.
+#
+# Handles BOTH shapes of this record: the legacy astronaut one (writes[] only) and
+# the DankMango-theme one (writes[] + previousCurrent/previousCurrentFile).
 sddm_n=0
-while IFS= read -r w; do
-    [ -n "$w" ] || continue
+while IFS=$'\t' read -r w prev_cur prev_file; do
+    [ -n "${w:-}" ] || continue
     sddm_n=$((sddm_n+1))
-    if was_restored "$w"; then ok "$w restored to its pre-DankMango version."; continue; fi
-    [ -f "$w" ] || { info "$w already gone."; continue; }
     echo
+    if [ -n "${prev_cur:-}" ]; then
+        info "Login theme before DankMango: Current=$prev_cur  (set in ${prev_file:-?})"
+    else
+        info "No Current= was set before DankMango — SDDM's built-in default applies once this is gone."
+    fi
+    if was_restored "$w"; then
+        ok "$w restored to its pre-DankMango version."
+        continue
+    fi
+    if [ ! -f "$w" ]; then
+        info "$w already gone — Current= reverted."
+        continue
+    fi
     info "SDDM login theme is set by: $w"
-    info "  Removing it reverts the login screen to SDDM's default."
+    if [ -n "${prev_file:-}" ] && [ "$prev_file" != "$w" ]; then
+        info "  Removing it un-shadows $prev_file, so the login screen goes back to '$prev_cur'."
+    else
+        info "  Removing it reverts the login screen to SDDM's default."
+    fi
     if ask_yn "Remove $w? (needs sudo)"; then
         if rescue_move "$w" 1; then ok "removed $w"; REMOVED+=("$w"); fi
     else
         LEFT+=("$w — login theme kept, by your choice")
     fi
-done < <(jq -r '(.systemChanges // [])[] | select(.type=="sddm-theme-applied") | (.detail.writes // [])[]' "$MANIFEST")
-[ "$sddm_n" = 0 ] && info "no SDDM theme changes recorded."
+done < <(jq -r '(.systemChanges // [])[] | select(.type=="sddm-theme-applied")
+                | . as $c | (.detail.writes // [])[]
+                | [., ($c.detail.previousCurrent // ""), ($c.detail.previousCurrentFile // "")] | @tsv' "$MANIFEST")
+[ "$sddm_n" = 0 ] && info "no SDDM theme changes recorded (the login screen was never switched over)."
 
 # 8c. config-edit / default-app: things with no safe automatic reversal. install.sh
 # recorded a 'reversal' hint for each — surface it verbatim rather than acting.
@@ -651,7 +707,12 @@ if [ -d "$RESCUE" ]; then
     ok "Everything removed is recoverable here:"
     info "  $RESCUE"
     info "It mirrors the original paths, so you can copy anything back by hand."
-    info "Delete it when you're happy: rm -rf $RESCUE"
+    if [ "$RESCUED_SYSTEM" = 1 ]; then
+        info "Delete it when you're happy: sudo rm -rf $RESCUE"
+        info "  (sudo because it holds the root-owned SDDM theme tree — plain rm can't remove it.)"
+    else
+        info "Delete it when you're happy: rm -rf $RESCUE"
+    fi
 else
     info "Nothing was removed, so no rescue dir was created."
 fi

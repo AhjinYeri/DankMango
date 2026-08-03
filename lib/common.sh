@@ -470,8 +470,11 @@ manifest_finalize() {
 
 # ---- package sets (moved verbatim from install.sh stage 3) ------------------
 # Official-repo packages (the AUR helper pulls these straight from the repos).
-# rsync: NOT part of a base CachyOS install, and it's a hard dependency of the
-# SDDM stage's apply.sh -- install it here so that stage never hits its fallback.
+# rsync: NOT part of a base CachyOS install. It is no longer needed by the SDDM
+# stage (DankMango's own login theme replaced the astronaut theme's apply.sh, which
+# was the thing that needed it), but it stays pinned: an existing v1.x user who has
+# not cut over yet still re-runs that apply.sh by hand, and it would be a poor trade
+# to break their login-screen tooling to save one small, universally-useful package.
 # jq: relied on all over this rice (the tagrules generator, the taskbar-pin +
 # wallpaper seeds, the popupTransparency edit). It's only incidentally present on
 # some systems (pulled in by scx-scheds etc.), so pin it explicitly here.
@@ -485,9 +488,26 @@ manifest_finalize() {
 # file either. GTK4/libadwaita front-end to mpv, so it matches the rest of the rice
 # (and config/gtk-4.0/celluloid-transparency.css themes it). Made the default for the
 # common video types in stage 4, same guarded pattern as loupe.
-REPO_PKGS=(nemo nemo-fileroller loupe celluloid matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava)
+# imagemagick: `magick` is what scripts/sddm-palette-sync.sh uses to downscale and
+# re-encode the wallpaper into the login theme's slot files. Without it the palette
+# still syncs but the login screen keeps a stale/blank backdrop, silently (the script
+# logs and exits 0 by design). It is NOT part of a base CachyOS install -- on this dev
+# box it was only present as a zbar dependency -- so pin it explicitly.
+REPO_PKGS=(nemo nemo-fileroller loupe celluloid matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava imagemagick)
 # AUR packages that DankMango needs.
-AUR_PKGS=(zen-browser-bin sddm-astronaut-theme)
+#
+# sddm-astronaut-theme was REMOVED from this list when DankMango grew its own login
+# theme (system/sddm/themes/dankmango). Two things follow from that, and both are
+# deliberate:
+#   * Existing v1.x installs keep the package. Nothing here uninstalls it -- their
+#     login screen is still SERVED by it until they flip Current= by hand, and pulling
+#     the package out from under an active greeter is how you get a black login screen.
+#     It stays in their manifest's .packages, so uninstall.sh still offers to remove it.
+#   * system/sddm/sddm-astronaut-japanese/ stays in the repo for the same reason. If it
+#     were deleted, update.sh's retire_file() would offer to remove the very config dir
+#     those users' working login screen is built from. It is inert for new installs
+#     (nothing copies it any more) and costs a few hundred KB.
+AUR_PKGS=(zen-browser-bin)
 # Standard taskbar apps (issue #5): the SEED_PINNED_APPS set minus what's already
 # core-installed (Alacritty/nemo/zen). OPTIONAL + opt-in (default yes). Declining is
 # safe: stage 16 pins only what is actually installed, so a skipped app is simply not
@@ -554,6 +574,93 @@ file_hash() {
     else printf ''; fi
 }
 
+# =============================================================================
+# SDDM login theme (DankMango's own)
+# =============================================================================
+# Shared by install.sh (stage 5b) and update.sh (the migration + the
+# dankmango-sddm-theme route), so the ownership rules and the "we do NOT flip
+# Current= for you" policy live in exactly one place.
+SDDM_THEME_ID="dankmango"
+# DANKMANGO_SDDM_THEME_DIR is a TESTING hook, and the same one scripts/sddm-palette-sync.sh
+# already documents: point it at a scratch dir to exercise the install/update/retire
+# paths without root and without touching the real login screen. Unset in normal use.
+SDDM_THEME_DEST="${DANKMANGO_SDDM_THEME_DIR:-/usr/share/sddm/themes/$SDDM_THEME_ID}"
+# The drop-in DankMango would write if/when it ever flips the active theme.
+# /etc/sddm.conf.d/*.conf is read AFTER /etc/sddm.conf, so a drop-in wins over the
+# main file; within the directory it is plain alphabetical order, last one wins.
+SDDM_THEME_CONF="/etc/sddm.conf.d/theme.conf"
+
+# ---- THE DEFERRED CUTOVER ---------------------------------------------------
+# Setting Current= is the ONE step in this whole project that can leave a machine
+# with no usable login screen, and the failure mode is discovered at reboot, long
+# after the installer's output has scrolled away. So it is opt-in, and OFF:
+#
+#     DANKMANGO_SDDM_SET_CURRENT=1 ./install.sh
+#
+# The code path below is fully written and exercised by that flag -- it is gated,
+# not commented out, so the cutover session can dry-run the exact code that will
+# run for real. Until someone sets the flag, install.sh/update.sh deploy the theme
+# and print the one-liner, and the live login screen is not touched at all.
+SDDM_SET_CURRENT="${DANKMANGO_SDDM_SET_CURRENT:-0}"
+
+# sddm_current_theme -> prints "VALUE<TAB>FILE" for the Current= that is in effect
+# right now, or nothing if no file sets one (SDDM then falls back to its built-in
+# default). Scans in SDDM's own precedence order and keeps the LAST match, so the
+# answer is the one the greeter will actually use.
+sddm_current_theme() {
+    local f val out=""
+    for f in /etc/sddm.conf /etc/sddm.conf.d/*.conf; do
+        [ -f "$f" ] || continue
+        # Uncommented `Current=` only; take the last one in the file.
+        val="$(sed -n 's/^[[:space:]]*Current[[:space:]]*=[[:space:]]*\(.*\)$/\1/p' "$f" 2>/dev/null | tail -1)"
+        [ -n "$val" ] && out="$val"$'\t'"$f"
+    done
+    [ -n "$out" ] && printf '%s\n' "$out"
+}
+
+# Warn if a drop-in that sorts AFTER ours also sets Current=: our write would be
+# silently overridden, which looks exactly like "the cutover didn't work".
+sddm_warn_shadowing_dropin() {
+    local base f shadow=0
+    base="$(basename "$SDDM_THEME_CONF")"
+    for f in /etc/sddm.conf.d/*.conf; do
+        [ -f "$f" ] || continue
+        [ "$(basename "$f")" \> "$base" ] || continue
+        grep -qE '^[[:space:]]*Current[[:space:]]*=' "$f" 2>/dev/null || continue
+        warn "$f also sets Current= and sorts after $base — it would override our theme."
+        shadow=1
+    done
+    return "$shadow"
+}
+
+# sddm_theme_install [--quiet] -- run the theme's own install.sh under sudo.
+# That script owns the ownership split (root-owned dir + QML, user-writable
+# theme.conf.user / wallpaper-[ab].jpg leaves); duplicating it here would mean two
+# places to get a pre-auth privilege boundary right. Returns non-zero on failure.
+sddm_theme_install() {
+    local src="$REPO_DIR/system/sddm/themes/$SDDM_THEME_ID" quiet=0
+    [ "${1:-}" = "--quiet" ] && quiet=1
+    if [ ! -x "$src/install.sh" ]; then
+        warn "no theme installer at $src/install.sh — skipping the login theme."
+        return 1
+    fi
+    have sudo || { warn "sudo not available — can't install the login theme."; return 1; }
+    if [ "$quiet" = 1 ]; then
+        sudo "$src/install.sh" --user "$(id -un)" >/dev/null 2>&1
+    else
+        sudo "$src/install.sh" --user "$(id -un)"
+    fi
+}
+
+# Print the manual cutover instructions. Used by install.sh and by the update
+# migration, so the wording (and the TTY warning) can't drift between them.
+sddm_print_cutover_hint() {
+    info "The login screen has NOT been switched over — that stays a deliberate step."
+    info "  1. Preview it first:   sddm-greeter-qt6 --test-mode --theme $SDDM_THEME_DEST"
+    info "  2. Then switch:        sudo sh -c 'printf \"[Theme]\\nCurrent=$SDDM_THEME_ID\\n\" > $SDDM_THEME_CONF'"
+    info "  Keep a TTY (Ctrl+Alt+F2) open the first time you reboot into it."
+}
+
 # ---- repo path -> install destination routing table -------------------------
 # route_dest REPO_REL_PATH -> prints "DEST<TAB>SCOPE<TAB>KIND", or returns 1 if the
 # path isn't something DankMango installs. Derived DIRECTLY from what install.sh's
@@ -563,7 +670,9 @@ file_hash() {
 #   dms-state  : a DankMaterialShell state JSON (settings/plugin_settings) -- NOT a
 #                blind copy; belongs to a migration (user may have customised it)
 #   plugin     : lives in a DMS plugin tree (needs plugin.json id handling, stage 14)
-#   sddm-theme : part of the SDDM theme config dir (needs a sudo apply.sh re-run)
+#   sddm-theme : part of the LEGACY astronaut SDDM config dir (sudo apply.sh re-run)
+#   dankmango-sddm-theme : part of DankMango's own login theme -- reinstalled as a
+#                whole tree by the theme's install.sh (ownership split), never file-by-file
 #   wallpaper  : a bundled wallpaper (copy into ~/Pictures/Wallpapers)
 route_dest() {
     local p="$1"
@@ -593,6 +702,16 @@ route_dest() {
             printf '/etc/keyd/%s\tsystem\tsys_copy\n' "${p#system/keyd/}" ;;
         system/sddm/sddm.conf.d/*)
             printf '/etc/sddm.conf.d/%s\tsystem\tsys_copy\n' "${p#system/sddm/sddm.conf.d/}" ;;
+        system/sddm/themes/dankmango/*)
+            # DankMango's own login theme. The DEST is the real per-file path, but the
+            # KIND tells update.sh not to treat it as a per-file copy: reproducing the
+            # ownership split (root-owned dir + code, two user-writable leaves) is the
+            # theme installer's job, and a plain `cp` would land QML as the wrong owner
+            # in a directory the greeter executes from pre-auth. So an ADDED/MODIFIED
+            # file means "re-run the installer once"; the per-file path only matters for
+            # the REMOVED case, where a stale file has to be deleted out of the live
+            # tree (the installer only ever adds/overwrites, it never prunes).
+            printf '%s\tsystem\tdankmango-sddm-theme\n' "$SDDM_THEME_DEST/${p#system/sddm/themes/dankmango/}" ;;
         system/sddm/sddm-astronaut-japanese/*)
             printf '%s\tuser\tsddm-theme\n' "$HOME/.config/sddm-astronaut-japanese/${p#system/sddm/sddm-astronaut-japanese/}" ;;
         system/xdg-desktop-portal/*)
