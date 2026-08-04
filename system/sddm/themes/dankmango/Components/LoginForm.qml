@@ -11,19 +11,36 @@ import QtQuick.Layouts 1.15
 
 ColumnLayout {
     id: form
-    spacing: 14
 
     // Injected by Main.qml. Declared with a default so this file still has a
     // resolvable palette if it is ever instantiated on its own.
     property var pal: null
+
+    // Set by the card, which derives it from its own width against the 380px it
+    // was tuned at. EVERY size in this file goes through s() rather than being a
+    // literal, because the card is now screen-relative: without this the form's
+    // type and padding would stay put while the card grew around them, and a
+    // bigger card would just mean more empty glass and stubbier fields.
+    //
+    // Default 1.0 so instantiating this on its own still gives the tuned look.
+    property real uiScale: 1.0
+
+    // Reads as a unit conversion at every call site, which is the point -- the
+    // literals stay recognisable as the values they were tuned at.
+    function s(px) { return Math.round(px * form.uiScale) }
+
+    // Row gap. Raised from the tuned 14 as part of making the card taller: the
+    // four gaps between the five visible rows are the cheapest vertical height
+    // to buy, because they add air without touching field or type size.
+    spacing: s(20)
 
     property string errorText: ""
     // Guards against a second login() while one is already in flight -- SDDM
     // does not queue attempts, and a double-submit wedges the greeter.
     property bool busy: false
 
-    readonly property int fieldHeight: 44
-    readonly property int fieldRadius: 12
+    readonly property int fieldHeight: s(44)
+    readonly property int fieldRadius: s(12)
 
     function focusPassword() {
         passwordField.forceActiveFocus()
@@ -43,17 +60,19 @@ ColumnLayout {
     // Card header: wordmark + mango icon, centred as a unit.
     RowLayout {
         Layout.fillWidth: true
-        Layout.bottomMargin: 4
-        spacing: 10
+        // On top of the row gap, so the wordmark sits clear of the fields rather
+        // than reading as the first item in the same stack.
+        Layout.bottomMargin: form.s(8)
+        spacing: form.s(10)
 
         Item { Layout.fillWidth: true }   // centring spacer
 
         Label {
             text: "DankMango"
             color: pal.text
-            font.pixelSize: 30
+            font.pixelSize: form.s(30)
             font.weight: Font.Bold
-            font.letterSpacing: 2
+            font.letterSpacing: form.s(2)
         }
 
         Image {
@@ -63,7 +82,7 @@ ColumnLayout {
             source: "../logo.png"
             // Sized off the title's cap height rather than a magic number, so it
             // keeps sitting naturally beside the text if the title size changes.
-            Layout.preferredHeight: 30
+            Layout.preferredHeight: form.s(30)
             Layout.preferredWidth: Layout.preferredHeight * (implicitWidth / implicitHeight)
             fillMode: Image.PreserveAspectFit
             // Pixel-art source at 588x672 shown around 26px wide -- let Qt
@@ -94,26 +113,26 @@ ColumnLayout {
             Behavior on color { ColorAnimation { duration: 120 } }
         }
         contentItem: Text {
-            leftPadding: 14
-            rightPadding: userField.indicator.width + 8
+            leftPadding: form.s(14)
+            rightPadding: userField.indicator.width + form.s(8)
             text: userField.displayText
             color: pal.text
-            font.pixelSize: 15
+            font.pixelSize: form.s(15)
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
         indicator: Chevron {
-            width: 14
-            height: 14
-            x: userField.width - width - 14
+            width: form.s(14)
+            height: width
+            x: userField.width - width - form.s(14)
             y: (userField.height - height) / 2
             color: pal.subText
         }
         popup: Popup {
-            y: userField.height + 4
+            y: userField.height + form.s(4)
             width: userField.width
-            implicitHeight: Math.min(contentItem.implicitHeight + 8, 220)
-            padding: 4
+            implicitHeight: Math.min(contentItem.implicitHeight + form.s(8), form.s(220))
+            padding: form.s(4)
             background: Rectangle {
                 radius: form.fieldRadius
                 color: pal.surfaceHigh
@@ -129,18 +148,18 @@ ColumnLayout {
             }
         }
         delegate: ItemDelegate {
-            width: userField.width - 8
-            height: 36
+            width: userField.width - form.s(8)
+            height: form.s(36)
             highlighted: userField.highlightedIndex === index
             background: Rectangle {
-                radius: 8
+                radius: form.s(8)
                 color: highlighted ? pal.fieldBgHot : "transparent"
             }
             contentItem: Text {
-                leftPadding: 10
+                leftPadding: form.s(10)
                 text: model[userField.textRole] || ""
                 color: pal.text
-                font.pixelSize: 14
+                font.pixelSize: form.s(14)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -156,9 +175,9 @@ ColumnLayout {
         placeholderText: "Password"
         placeholderTextColor: pal.subText
         color: pal.text
-        font.pixelSize: 15
-        leftPadding: 14
-        rightPadding: 14
+        font.pixelSize: form.s(15)
+        leftPadding: form.s(14)
+        rightPadding: form.s(14)
         enabled: !form.busy
         onAccepted: form.doLogin()
 
@@ -197,41 +216,41 @@ ColumnLayout {
             Text {
                 id: sessionLabel
                 anchors.left: parent.left
-                anchors.leftMargin: 14
+                anchors.leftMargin: form.s(14)
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Session"
                 color: pal.subText
                 opacity: 0.75
-                font.pixelSize: 12
-                font.letterSpacing: 1
+                font.pixelSize: form.s(12)
+                font.letterSpacing: form.s(1)
             }
 
             Text {
                 anchors.left: sessionLabel.right
-                anchors.leftMargin: 10
+                anchors.leftMargin: form.s(10)
                 anchors.right: parent.right
-                anchors.rightMargin: sessionField.indicator.width + 24
+                anchors.rightMargin: sessionField.indicator.width + form.s(24)
                 anchors.verticalCenter: parent.verticalCenter
                 text: sessionField.displayText
                 color: pal.text
-                font.pixelSize: 14
+                font.pixelSize: form.s(14)
                 horizontalAlignment: Text.AlignRight
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
         }
         indicator: Chevron {
-            width: 14
-            height: 14
-            x: sessionField.width - width - 14
+            width: form.s(14)
+            height: width
+            x: sessionField.width - width - form.s(14)
             y: (sessionField.height - height) / 2
             color: pal.subText
         }
         popup: Popup {
-            y: sessionField.height + 4
+            y: sessionField.height + form.s(4)
             width: sessionField.width
-            implicitHeight: Math.min(contentItem.implicitHeight + 8, 220)
-            padding: 4
+            implicitHeight: Math.min(contentItem.implicitHeight + form.s(8), form.s(220))
+            padding: form.s(4)
             background: Rectangle {
                 radius: form.fieldRadius
                 color: pal.surfaceHigh
@@ -247,18 +266,18 @@ ColumnLayout {
             }
         }
         delegate: ItemDelegate {
-            width: sessionField.width - 8
-            height: 36
+            width: sessionField.width - form.s(8)
+            height: form.s(36)
             highlighted: sessionField.highlightedIndex === index
             background: Rectangle {
-                radius: 8
+                radius: form.s(8)
                 color: highlighted ? pal.fieldBgHot : "transparent"
             }
             contentItem: Text {
-                leftPadding: 10
+                leftPadding: form.s(10)
                 text: model.name || ""
                 color: pal.text
-                font.pixelSize: 14
+                font.pixelSize: form.s(14)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -270,7 +289,9 @@ ColumnLayout {
         id: loginButton
         Layout.fillWidth: true
         Layout.preferredHeight: form.fieldHeight
-        Layout.topMargin: 4
+        // Matches the header's bottom margin, so the three input rows read as one
+        // group with the wordmark above and the action below it.
+        Layout.topMargin: form.s(8)
         text: form.busy ? "Signing in…" : "Log In"
         enabled: !form.busy
 
@@ -285,7 +306,7 @@ ColumnLayout {
         contentItem: Text {
             text: loginButton.text
             color: loginButton.enabled ? pal.onAccent : pal.subText
-            font.pixelSize: 15
+            font.pixelSize: form.s(15)
             font.weight: Font.Medium
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -298,7 +319,7 @@ ColumnLayout {
         Layout.fillWidth: true
         horizontalAlignment: Text.AlignHCenter
         color: form.errorText !== "" ? pal.error : pal.subText
-        font.pixelSize: 13
+        font.pixelSize: form.s(13)
         visible: text.length > 0
         text: form.errorText !== "" ? form.errorText
                                     : (keyboard.capsLock ? "Caps Lock is on" : "")

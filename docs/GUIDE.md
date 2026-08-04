@@ -80,6 +80,72 @@ That prints your connected monitors, your stored main display, which one is actu
 
 `post-update-health.sh` also checks this: it'll tell you if the watcher has stopped running, or if it's running but no longer wired into `config.conf` to start at login (which would work fine now and silently vanish at your next reboot).
 
+## If the login screen seems wrong
+
+First, the thing worth knowing before you touch anything:
+
+**Your way back in is Ctrl+Alt+F3.** If a login screen ever won't let you in, hold Ctrl and Alt and press F3. You get a plain text login prompt — type your username, Enter, your password, Enter — and you're on the machine with a working shell, from where anything below can be fixed. Ctrl+Alt+F1 takes you back to the graphical screen.
+
+Use **F3**, not F2. SDDM sits on the first console, and if it's crashing and restarting it tends to take the second one as well, so F2 can just land you back in the mess you're trying to escape. F3 is the first one reliably clear of it. (F4 and F5 work just as well if you need them.)
+
+It's worth doing this *before* you change anything to do with the login screen, not after — a console you already know works is a lot more reassuring than one you're hoping works.
+
+### The login screen doesn't look like DankMango's
+
+Installing the theme and *switching to it* are two separate steps on purpose — flipping that switch is the one change that can leave you staring at a broken login screen, so DankMango never does it behind your back. If you never ran the switch command, everything's working exactly as intended; you're just still on your old login screen.
+
+Check which one is actually set:
+
+```bash
+cat /etc/sddm.conf.d/theme.conf
+```
+
+If it doesn't say `Current=dankmango`, that's your answer. To switch:
+
+```bash
+sudo sh -c 'printf "[Theme]\nCurrent=dankmango\n" > /etc/sddm.conf.d/theme.conf'
+```
+
+Then reboot — with a console open on Ctrl+Alt+F3, the first time.
+
+You can also just look at it without logging out at all:
+
+```bash
+sddm-greeter-qt6 --test-mode --theme /usr/share/sddm/themes/dankmango
+```
+
+That opens a preview window you can close again. Handy for checking a change took, though see the power-button note below — some things genuinely can't work in a preview.
+
+`post-update-health.sh` checks all of this too, and will tell you which of the two situations you're in.
+
+### The colours or background are out of date
+
+The login screen can't read your home folder. It genuinely can't — it runs as a separate system user before you've logged in, and your home directory isn't readable by anyone but you. So it can't follow your wallpaper the way the bar and your window borders do.
+
+What happens instead is that a small script copies your wallpaper's colours, and a shrunk copy of the image itself, into a couple of files the login screen *is* allowed to read. That runs automatically every time you change your wallpaper.
+
+If the login screen is showing an old wallpaper or the wrong colours, run that script by hand:
+
+```bash
+~/.config/mango/scripts/sddm-palette-sync.sh --verbose
+```
+
+No password needed — that's the whole point of the design. `--verbose` makes it tell you what it did, or why it decided there was nothing to do.
+
+If that fixes it but it goes stale again next time you change your wallpaper, the automatic trigger is what's broken rather than the sync itself. Nothing runs the sync on a timer — it's fired by the same background watcher that updates your window border colours. `post-update-health.sh` checks specifically for that and will say so.
+
+### The power buttons don't do anything
+
+**If you're looking at a `--test-mode` preview, this is expected and nothing is wrong.** The shutdown, restart and suspend buttons are deliberately disabled unless the SDDM service itself confirms the machine can do each one, and in a preview there's no SDDM service attached to confirm anything. They'd fail silently if they *were* clickable, so the theme greys them out instead. Log out properly and they'll work.
+
+On a real login screen, a button that's greyed out means the system reported it can't do that action — most often suspend, on a machine with it disabled. Shutdown and restart being greyed out on a real login screen isn't normal; that points at something wrong with your system's login service rather than with the theme:
+
+```bash
+systemctl status sddm
+```
+
+There's no lock or log-out button, and that's not an oversight — the login screen runs before any session exists, so there's nothing yet to lock or log out of.
+
 ## Customizing your setup
 
 A couple of things people tend to want to change straight away. Neither needs anything clever — they're both single values.
@@ -125,7 +191,7 @@ It won't overwrite something you've hand-edited since installing without checkin
 
 ## What to do when the health check fails
 
-After an update, run `~/.config/mango/scripts/post-update-health.sh`. It checks everything DankMango customises that a MangoWM or DMS update can quietly break — per-monitor tagrules, the monitor watcher (both that it's running and that it's still wired to start at login), the generated main-display game rules, the bar plugins, the combined audio OSD patch, the border colour chain — and prints a PASS or FAIL line for each, plus which versions changed since you last ran it.
+After an update, run `~/.config/mango/scripts/post-update-health.sh`. It checks everything DankMango customises that a MangoWM or DMS update can quietly break — per-monitor tagrules, the monitor watcher (both that it's running and that it's still wired to start at login), the generated main-display game rules, the bar plugins, the combined audio OSD patch, the border colour chain, and the SDDM login theme (that it's installed, whether it's actually the one in use, and that its wallpaper sync is still wired up) — and prints a PASS or FAIL line for each, plus which versions changed since you last ran it.
 
 If anything fails you get a numbered list of problems, and each one comes with a plain-English walkthrough: the exact commands to type, what each does, and why you're running it. It assumes no prior Linux knowledge, and following the steps as written is the entire fix — there's no AI tooling involved. A ready-made Claude Code prompt gets printed underneath as well for anyone who happens to use it, but it's strictly optional and safe to ignore. A few failures are expected and take a single command (the audio OSD patch gets wiped by every DMS update and just needs re-applying); one or two genuinely can't be fixed by hand, and those say so plainly instead of sending you round in circles.
 

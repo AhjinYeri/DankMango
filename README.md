@@ -62,7 +62,7 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 - Nemo and Zen themed to match
 - Loupe set as your image viewer (a fresh CachyOS install has nothing that opens photos)
 - Celluloid set as your video player (same gap — nothing opens a video file either), themed to match
-- SDDM login theme
+- Custom SDDM login theme that follows your wallpaper too — colours and background, no password needed to update it
 - A health-check script so you know when something's actually broken
 
 ## Updating / uninstalling
@@ -88,7 +88,7 @@ A handful of neon/cyberpunk ones ship with it, all free to use — sources are i
 
 ## Credits & license
 
-Full credits (MangoWM, DMS, matugen, the SDDM theme, everyone this is built on) are in [CREDITS.md](CREDITS.md). Some of this was built with AI assistance — details on that are in there too.
+Full credits (MangoWM, DMS, matugen, SDDM, everyone this is built on) are in [CREDITS.md](CREDITS.md). Some of this was built with AI assistance — details on that are in there too.
 
 License is [MIT](LICENSE). Bundled wallpapers/theme assets keep their own licenses, noted in CREDITS.md.
 

@@ -113,4 +113,6 @@ echo
 echo "Then, to actually use it as the login screen:"
 echo "    sudo sh -c 'printf \"[Theme]\\nCurrent=dankmango\\n\" > /etc/sddm.conf.d/theme.conf'"
 echo
-echo "Keep a TTY (Ctrl+Alt+F2) available the first time you reboot into it."
+echo "Keep a TTY (Ctrl+Alt+F3) available the first time you reboot into it."
+echo "F3, not F2: SDDM holds the first console and takes the second one too"
+echo "if it is crash-looping, so F2 can land you back in the broken greeter."

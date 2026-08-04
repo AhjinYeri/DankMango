@@ -658,7 +658,9 @@ sddm_print_cutover_hint() {
     info "The login screen has NOT been switched over — that stays a deliberate step."
     info "  1. Preview it first:   sddm-greeter-qt6 --test-mode --theme $SDDM_THEME_DEST"
     info "  2. Then switch:        sudo sh -c 'printf \"[Theme]\\nCurrent=$SDDM_THEME_ID\\n\" > $SDDM_THEME_CONF'"
-    info "  Keep a TTY (Ctrl+Alt+F2) open the first time you reboot into it."
+    info "  Keep a TTY (Ctrl+Alt+F3) open the first time you reboot into it."
+    info "  F3, not F2 — SDDM holds the first console, and a crash-looping"
+    info "  greeter takes the second one too."
 }
 
 # ---- repo path -> install destination routing table -------------------------

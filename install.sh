@@ -379,7 +379,8 @@ if [ -d "$REPO_DIR/system/sddm/themes/$SDDM_THEME_ID" ]; then
     # Gated, not commented out, so the cutover session can exercise this exact path.
     if [ "$SDDM_SET_CURRENT" = 1 ] && [ -d "$SDDM_THEME_DEST" ]; then
         warn "DANKMANGO_SDDM_SET_CURRENT=1 — switching the ACTIVE login theme to $SDDM_THEME_ID."
-        warn "Keep a TTY (Ctrl+Alt+F2) available before you reboot."
+        warn "Keep a TTY (Ctrl+Alt+F3) available before you reboot (F3, not F2 —"
+        warn "SDDM holds the first console and a crash-loop takes the second too)."
         sddm_warn_shadowing_dropin || true
         # Capture the pre-flip state BEFORE writing, so uninstall can put it back even
         # when Current= lived in a file we never touch (e.g. /etc/sddm.conf).

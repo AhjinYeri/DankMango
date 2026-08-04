@@ -83,6 +83,30 @@ VOLUME_OSD="/usr/share/quickshell/dms/Modules/OSD/VolumeOSD.qml"
 OSD_PATCH_MARKER='DankMango patch: combined OSD device name'
 OSD_APPLY="$SCRIPTS/apply-combined-osd-patch.sh"
 
+# DankMango's own SDDM login theme.
+#
+# SEVERITY IS GATED ON WHETHER IT IS ACTUALLY LIVE, deliberately. Deploying the
+# theme and SWITCHING the login screen to it are two separate steps (install.sh
+# never flips Current= for you -- that is the one change that can leave you at a
+# broken login screen, so it stays an explicit decision). "Deployed but not
+# current" is therefore a NORMAL state, not a fault, and warns rather than fails.
+# Once it IS current it is serving the real login screen, and the checks below
+# become genuine failures.
+SDDM_THEME_DIR="/usr/share/sddm/themes/dankmango"
+SDDM_THEME_ID="dankmango"
+SDDM_CONF_D="/etc/sddm.conf.d"
+SDDM_SYNC="$SCRIPTS/sddm-palette-sync.sh"
+# The palette sync has no timer, no daemon and no autostart of its own: the
+# border watcher fires it whenever DMS regenerates its palette. That one call IS
+# the wallpaper-change hook, so its absence from that file is exactly what "the
+# login screen has stopped following the wallpaper" looks like from here.
+SDDM_SYNC_HOOK="$BORDER_WATCHER"
+# The user-writable leaves inside the root-owned theme directory. This split is
+# the privilege boundary itself (greeter executes the QML pre-auth as the sddm
+# user, so the DIRECTORY must stay root-owned; only these leaves are yours), so
+# checking it is a security check, not a tidiness one.
+SDDM_USER_LEAVES=(theme.conf.user wallpaper-a.jpg wallpaper-b.jpg)
+
 # Commands mango/DMS updates have renamed before. Test-forms used by the checks:
 RELOAD_CMD=(mmsg dispatch reload_config)   # 0.13 was `mmsg -d reload_config` (now dead)
 FOCUSSTACK_CMD=(mmsg dispatch focusstack,next)
@@ -913,6 +937,188 @@ else
 What breaks meanwhile: nothing visible. This file is only a checker - its
 absence means this health check can't test your border colours, not that
 the colours themselves are broken."
+fi
+
+section "5. SDDM login theme"
+
+# Which theme SDDM will actually use. sddm.conf is read first, then everything in
+# sddm.conf.d alphabetically, and the LAST Current= wins -- so a correct-looking
+# theme.conf can still be overridden by a file sorting after it. Resolve it the
+# same way SDDM does rather than trusting the first match we find.
+sddm_current_theme() {
+    local f v last=""
+    for f in /etc/sddm.conf "$SDDM_CONF_D"/*.conf; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/^[[:space:]]*Current[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$f" | tail -n1)"
+        [ -n "$v" ] && last="$v"
+    done
+    printf '%s' "$last"
+}
+
+if [ ! -d "$SDDM_THEME_DIR" ]; then
+    warn "DankMango login theme is not installed ($SDDM_THEME_DIR missing)" \
+         "Nothing is broken — your current login screen is unaffected. To deploy it: cd into your DankMango folder, then  sudo ./system/sddm/themes/dankmango/install.sh"
+else
+    sddm_cur="$(sddm_current_theme)"
+
+    # --- is the deployed copy complete? --------------------------------------
+    if [ -f "$SDDM_THEME_DIR/Main.qml" ] && [ -f "$SDDM_THEME_DIR/metadata.desktop" ]; then
+        pass "login theme installed ($SDDM_THEME_DIR)"
+    else
+        fail "SDDM login theme is incomplete" \
+             "$SDDM_THEME_DIR exists but Main.qml and/or metadata.desktop is missing" \
+             "$SDDM_THEME_DIR — expected Main.qml, metadata.desktop, theme.conf, Components/*.qml" \
+             "Re-run the theme's own installer: sudo ./system/sddm/themes/dankmango/install.sh (idempotent; re-copies every file and re-applies ownership)" \
+"Part of your login screen's files are missing. If this theme is the
+one currently in use, your next login screen could fail to draw.
+
+1. Before anything else, open a spare text console so you always have
+   a way back in if the login screen does break. Hold Ctrl and Alt and
+   press F3. You'll get a plain text login prompt - type your username,
+   press Enter, type your password, press Enter. To come back to your
+   desktop, hold Ctrl and Alt and press F1.
+
+2. Re-install the theme. Go to the folder you cloned DankMango into
+   (if you're not sure, try:  cd ~/DankMango  ) and run:
+     sudo ./system/sddm/themes/dankmango/install.sh
+   (\"sudo\" runs it as administrator - it will ask for your password.)
+   This is safe to run as many times as you like; it just re-copies
+   every file into place and does not change which theme is in use.
+
+3. Check it looks right without logging out:
+     sddm-greeter-qt6 --test-mode --theme $SDDM_THEME_DIR
+   A preview of the login screen opens. Close it when you're happy.
+   (If that command isn't found, skip this step - it's only a preview.)"
+    fi
+
+    # --- is it the theme SDDM will actually use? -----------------------------
+    # A warn, not a fail: deploying deliberately does not switch you over.
+    if [ "$sddm_cur" = "$SDDM_THEME_ID" ]; then
+        pass "SDDM is set to use it (Current=$SDDM_THEME_ID)"
+    elif [ -z "$sddm_cur" ]; then
+        warn "SDDM has no theme set — you're on its built-in default, not DankMango's" \
+             "Switch over with:  sudo sh -c 'printf \"[Theme]\\nCurrent=$SDDM_THEME_ID\\n\" > $SDDM_CONF_D/theme.conf'  — then keep a text console (Ctrl+Alt+F3) open the first time you reboot"
+    else
+        warn "login theme is deployed but NOT in use (SDDM is set to \"$sddm_cur\")" \
+             "That's normal if you haven't switched over yet. To switch:  sudo sh -c 'printf \"[Theme]\\nCurrent=$SDDM_THEME_ID\\n\" > $SDDM_CONF_D/theme.conf'  — keep a text console (Ctrl+Alt+F3) open the first time you reboot"
+    fi
+
+    # --- the palette sync, and the hook that fires it ------------------------
+    if execu "$SDDM_SYNC"; then
+        if [ -f "$SDDM_SYNC_HOOK" ] && grep -q 'sddm-palette-sync.sh' "$SDDM_SYNC_HOOK"; then
+            pass "wallpaper→login-screen palette sync is wired up"
+        else
+            fail "Login screen no longer follows your wallpaper" \
+                 "sddm-palette-sync.sh exists but nothing calls it — the hook in wallpaper-border-reload.sh is gone" \
+                 "$SDDM_SYNC_HOOK — expected a line invoking \$SDDM_PALETTE_SYNC on a dms-colors.json change" \
+                 "wallpaper-border-reload.sh is the ONLY trigger (the sync has no timer or autostart of its own). Restore that file from the repo; re-running the sync by hand fixes the current colours but not the trigger." \
+"Your login screen has stopped re-colouring when you change your
+wallpaper. It will keep showing whatever colours it last picked up.
+Everything else still follows your wallpaper normally.
+
+1. Fix the colours right now, so your login screen matches again:
+     $SDDM_SYNC --verbose
+   (No password needed - this deliberately runs as you.)
+
+2. That fixed today's colours but not the cause: the program that is
+   supposed to run it for you automatically has lost that instruction.
+   Update DankMango to restore the file. Go to your DankMango folder:
+     cd ~/DankMango
+     git pull
+     ./update.sh --dry-run
+   The last command only SHOWS what it would change. Read it, and if
+   it mentions wallpaper-border-reload.sh, run it for real:
+     ./update.sh
+
+3. Restart the restored watcher so it takes effect now:
+     pkill -f wallpaper-border-reload.sh
+     setsid $SDDM_SYNC_HOOK >/dev/null 2>&1 &
+   (\"pkill -f\" stops a running program by name; the second line starts
+   it again in the background.)"
+        fi
+    else
+        fail "Login-screen palette sync is missing" \
+             "sddm-palette-sync.sh is absent or not executable — the login screen can't follow your wallpaper" \
+             "$SDDM_SYNC" \
+             "Restore it, then: chmod +x '$SDDM_SYNC'" \
+             "$(manual_restore_script "$SDDM_SYNC")
+
+What breaks meanwhile: only the login screen's colours and background,
+which will stay on whatever they last synced to. Logging in is
+completely unaffected."
+    fi
+
+    # --- the privilege boundary: root-owned dir, user-owned leaves -----------
+    # Only meaningful once the theme is live; before that it is just files.
+    me="$(id -un)"
+    sddm_dir_owner="$(stat -c %U "$SDDM_THEME_DIR" 2>/dev/null)"
+    if [ "$sddm_dir_owner" = "root" ]; then
+        pass "theme directory is root-owned (greeter runs its QML pre-auth)"
+    else
+        fail "SDDM theme directory is NOT root-owned" \
+             "$SDDM_THEME_DIR is owned by \"$sddm_dir_owner\" — anything running as you could drop code into a pre-authentication execution context" \
+             "$SDDM_THEME_DIR — must be root:root 0755; only theme.conf.user and the wallpaper-?.jpg slots may be user-owned" \
+             "Re-run the theme installer (it sets ownership declaratively): sudo ./system/sddm/themes/dankmango/install.sh. Do NOT 'fix' this by chowning the directory to your user." \
+"This is a security problem rather than a broken feature, so it is
+worth fixing even though your login screen looks fine.
+
+Your login screen's program files are in a folder your own account can
+write to. The login screen runs those files BEFORE anyone has typed a
+password, so anything running as you could change what happens there.
+
+1. Put the ownership back the way it is meant to be. Go to your
+   DankMango folder and re-run the theme installer:
+     cd ~/DankMango
+     sudo ./system/sddm/themes/dankmango/install.sh
+   It sets every file's owner explicitly, so this is the whole fix.
+
+2. Check it worked - this should print \"root\":
+     stat -c %U $SDDM_THEME_DIR
+
+Please do NOT fix this by giving your own account ownership of that
+folder. That is the problem, not the solution."
+    fi
+
+    sddm_bad_leaves=()
+    for leaf in "${SDDM_USER_LEAVES[@]}"; do
+        if [ ! -f "$SDDM_THEME_DIR/$leaf" ]; then
+            sddm_bad_leaves+=("$leaf (missing)")
+        elif [ "$(stat -c %U "$SDDM_THEME_DIR/$leaf" 2>/dev/null)" != "$me" ]; then
+            sddm_bad_leaves+=("$leaf (owned by $(stat -c %U "$SDDM_THEME_DIR/$leaf" 2>/dev/null), not $me)")
+        elif [ ! -w "$SDDM_THEME_DIR/$leaf" ]; then
+            sddm_bad_leaves+=("$leaf (not writable by you)")
+        fi
+    done
+    if [ "${#sddm_bad_leaves[@]}" -eq 0 ]; then
+        pass "palette + wallpaper slots are yours to write (${#SDDM_USER_LEAVES[@]} files)"
+    else
+        fail "Login screen can't be re-coloured without a password" \
+             "these files must be yours but aren't: ${sddm_bad_leaves[*]}" \
+             "$SDDM_THEME_DIR — theme.conf.user and wallpaper-a/b.jpg must be owned by $me, mode 0644, inside the root-owned directory" \
+             "The sync script deliberately refuses to CREATE files here (creating one needs write access to the directory, which must stay root-only). Re-run: sudo ./system/sddm/themes/dankmango/install.sh — it creates the leaves and hands them to you." \
+"Your login screen will keep working, but it can no longer update its
+colours or background when you change your wallpaper.
+
+The reason is deliberate: the folder these files live in is owned by
+the administrator account, and only these few files inside it are
+handed to you. That is what lets your wallpaper reach the login screen
+without giving your account any extra power. Right now that handover
+hasn't happened for at least one file.
+
+1. Re-run the theme installer, which creates those files and hands
+   them to you. Go to your DankMango folder:
+     cd ~/DankMango
+     sudo ./system/sddm/themes/dankmango/install.sh
+   (It will ask for your password. Safe to run repeatedly.)
+
+2. Now push your current wallpaper's colours to the login screen:
+     $SDDM_SYNC --verbose
+
+3. Check the files are yours - each line should show your username:
+     ls -l $SDDM_THEME_DIR/theme.conf.user
+     ls -l $SDDM_THEME_DIR/wallpaper-a.jpg
+     ls -l $SDDM_THEME_DIR/wallpaper-b.jpg"
+    fi
 fi
 
 # =============================================================================
