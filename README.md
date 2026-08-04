@@ -10,7 +10,7 @@ My MangoWM + DankMaterialShell setup for CachyOS, packaged up so other people ca
 
 ## See it in action
 
-**Login screen** — follows your wallpaper too:
+**Login screen** — follows your wallpaper:
 
 ![SDDM demo](docs/media/sddm-demo.gif)
 
