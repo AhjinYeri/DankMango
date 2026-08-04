@@ -10,13 +10,13 @@ My MangoWM + DankMaterialShell setup for CachyOS, packaged up so other people ca
 
 ## See it in action
 
-**Wallpaper-driven theming** — change your wallpaper, everything else follows:
-
-![Theming demo](docs/media/theme-demo.gif)
-
 **Login screen** — follows your wallpaper too:
 
 ![SDDM demo](docs/media/sddm-demo.gif)
+
+**Wallpaper-driven theming** — change your wallpaper, everything else follows:
+
+![Theming demo](docs/media/theme-demo.gif)
 
 **Per-monitor layout** — pick a tiling layout for each monitor from the bar:
 

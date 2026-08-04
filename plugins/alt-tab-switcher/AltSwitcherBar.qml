@@ -250,13 +250,23 @@ PluginComponent {
                                             width: parent.width - 32 - Theme.spacingM
                                             spacing: 1
 
+                                            // TEXT COLOR IS DELIBERATELY THE SAME ON EVERY CARD.
+                                            // It used to flip to Theme.primaryText when focused, which
+                                            // is matugen's `on_primary` -- the color meant for text on
+                                            // Theme.primary, NOT on Theme.primaryContainer (what the
+                                            // card is actually painted with). Those two roles are both
+                                            // dark tones, so on some wallpapers the selected row came
+                                            // out near-black on dark magenta and was unreadable
+                                            // (e.g. #640035 text on #8d004d). Selection is shown by the
+                                            // background, border and weight instead -- do not
+                                            // reintroduce a per-state text color here.
                                             StyledText {
                                                 width: parent.width
                                                 elide: Text.ElideRight
                                                 text: modelData.appid || "Unknown"
                                                 font.pixelSize: Theme.fontSizeMedium
                                                 font.weight: modelData.is_focused ? Font.DemiBold : Font.Normal
-                                                color: modelData.is_focused ? Theme.primaryText : Theme.surfaceText
+                                                color: Theme.surfaceText
                                             }
                                             StyledText {
                                                 width: parent.width
@@ -264,9 +274,7 @@ PluginComponent {
                                                 visible: (modelData.title || "") !== ""
                                                 text: modelData.title || ""
                                                 font.pixelSize: Theme.fontSizeSmall
-                                                color: modelData.is_focused
-                                                       ? Qt.rgba(Theme.primaryText.r, Theme.primaryText.g, Theme.primaryText.b, 0.75)
-                                                       : Qt.rgba(Theme.surfaceText.r, Theme.surfaceText.g, Theme.surfaceText.b, 0.65)
+                                                color: Qt.rgba(Theme.surfaceText.r, Theme.surfaceText.g, Theme.surfaceText.b, 0.75)
                                             }
                                         }
                                     }
