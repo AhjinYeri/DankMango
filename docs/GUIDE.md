@@ -80,6 +80,26 @@ That prints your connected monitors, your stored main display, which one is actu
 
 `post-update-health.sh` also checks this: it'll tell you if the watcher has stopped running, or if it's running but no longer wired into `config.conf` to start at login (which would work fine now and silently vanish at your next reboot).
 
+## If your colours are stuck on the old wallpaper
+
+Your window borders, the login screen and the visualiser accents all follow your wallpaper through one small background watcher. If you changed your wallpaper and those didn't change with it, the usual reason is that the watcher wasn't running at the moment you changed it. The health check tells you whether it's running now:
+
+```bash
+~/.config/mango/scripts/post-update-health.sh
+```
+
+Here's the part that catches people out. **Starting the watcher again doesn't fix colours that are already wrong.** It takes a reading of things the moment it starts and then waits for the *next* wallpaper change, so anything it missed while it was gone stays missed. You can have a perfectly healthy watcher running and stale colours sitting there indefinitely, and nothing will look broken.
+
+To actually resync, you have to give it a change to react to. Changing your wallpaper to something else and back does it. So does nudging it directly, which is the lighter option since it leaves your wallpaper alone:
+
+```bash
+touch ~/.cache/DankMaterialShell/dms-colors.json
+```
+
+Within a second your borders, the login screen palette and the visualiser accents are all back in step.
+
+One thing not to lean on here: `border-color-healthcheck.sh` checks that every link in the chain is *wired up*, not that your colours are *current*. It'll report "All links OK" while your borders are still showing last week's wallpaper — because the wiring genuinely is fine, it's the contents that are stale. Use it to find a broken chain, not to confirm your colours are up to date.
+
 ## If the login screen seems wrong
 
 First, the thing worth knowing before you touch anything:

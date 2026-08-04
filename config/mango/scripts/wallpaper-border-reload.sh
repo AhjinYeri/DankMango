@@ -2,27 +2,50 @@
 #
 # wallpaper-border-reload.sh
 # ==========================
-# Makes mango window-border colors follow the wallpaper AUTOMATICALLY.
+# Carries the wallpaper's palette to the three places DMS does NOT push it:
+# mango's window borders, the SDDM login screen, and the cava visualiser accents.
 #
 # WHAT IT DOES (plain English):
-#   When you change your wallpaper, DMS/matugen regenerates the border colors
-#   into  ~/.config/mango/dms/colors.conf . mango does NOT notice that file
-#   change on its own, so this tiny watcher notices it and tells mango to
-#   reload, which re-reads colors.conf and recolors the borders.
+#   DMS/matugen regenerates the palette into ~/.cache/DankMaterialShell/dms-colors.json
+#   every time you change your wallpaper. This watcher notices that file change and
+#   then does three things nothing else does:
+#     1. writes ~/.config/mango/dms/colors.conf     (border colors -- see SELF-HEAL)
+#     2. runs wallpaper-accent-extract.sh           (cava visualiser accent pair)
+#     3. runs sddm-palette-sync.sh                  (login screen palette + wallpaper)
+#   ...and then tells mango to re-read its config so the borders actually recolor.
 #
-# WHY THIS SCRIPT EXISTS (the bug it works around):
-#   DMS's own "reload mango after a color change" hook
-#   (/usr/share/quickshell/dms/matugen/configs/mangowc.toml post_hook, and
-#    /usr/share/quickshell/dms/Services/DwlService.qml) runs
-#       mmsg -d reload_config
-#   That was valid on mango 0.13.x but mango 0.14 REWROTE the mmsg CLI, so now
-#       mmsg -d reload_config   -> {"error":"unknown command"} (and exits 0, so
-#                                  DMS's "|| true" swallows it silently)
-#       mmsg dispatch reload_config  -> {"success":true}   <-- the new form
-#   Result after the 0.13->0.14 update: borders only update on a manual SUPER+r,
-#   not when the wallpaper changes. We can't fix the DMS files update-proof
-#   (they're package-owned, overwritten on every DMS upgrade), so instead we
-#   watch the colors file ourselves and issue the CORRECT reload command.
+# WHY THIS SCRIPT STILL EXISTS  (re-verified 2026-08-05 on mango 0.15.5)
+#   Read this before "simplifying" or deleting it -- its ORIGINAL reason is gone,
+#   but it is still load-bearing for three OTHER reasons.
+#
+#   The original reason (NO LONGER TRUE, kept only so nobody re-derives it):
+#   DMS's reload hook used to run the pre-0.14 `mmsg -d reload_config`, which mango
+#   0.14 removed, so nothing reloaded mango on a wallpaper change and borders only
+#   updated on a manual SUPER+r. THAT IS FIXED UPSTREAM. matugen/configs/mangowc.toml
+#   now runs `mmsg dispatch reload_config`, and DMS separately watches colors.conf
+#   itself (Services/MangoService.qml) and reloads on any change. So the reload call
+#   below is now the third of three redundant reloads. It is deliberately KEPT -- it
+#   is one cheap command and the only reload we control -- but it is no longer why
+#   this file is here.
+#
+#   The three reasons it IS still load-bearing:
+#     a) colors.conf SELF-HEAL. matugen's mangowc template STILL silently fails to
+#        write colors.conf. Verified by stopping this watcher and changing the
+#        wallpaper: dms-colors.json regenerated correctly, colors.conf never moved.
+#        Without the regen below, borders keep the PREVIOUS wallpaper's colors.
+#     b) It is the ONLY caller of sddm-palette-sync.sh. Stop this script and the
+#        login screen silently keeps the old palette and old background.
+#     c) It is the ONLY caller of wallpaper-accent-extract.sh, so the cava
+#        visualiser silently keeps the old accent pair.
+#   Even if (a) were fixed upstream tomorrow, deleting this script would still break
+#   (b) and (c) with no error anywhere. Re-check all three before retiring it.
+#
+# RESTARTING IT DOES NOT FIX ALREADY-STALE COLORS.
+#   It baselines both mtimes at startup and only reacts to the NEXT change, so
+#   anything it missed while it was down stays missed. To force a resync:
+#       touch ~/.cache/DankMaterialShell/dms-colors.json
+#   (border-color-healthcheck.sh will NOT catch this -- it checks that the chain is
+#   wired up, not that the colors are current, and reports OK on stale values.)
 #
 # ===========================================================================
 # EDIT HERE AFTER A MANGO / DMS UPDATE  (the only version-sensitive bits)
@@ -32,6 +55,7 @@
 COLORS_FILE="$HOME/.config/mango/dms/colors.conf"
 #
 # 2) The command that tells the RUNNING mango to re-read its config.
+#    Now redundant (see the header -- upstream reloads too), kept deliberately.
 #    If borders stop auto-updating after a mango update, TEST this by hand:
 #        mmsg dispatch reload_config      # expect {"success":true}
 #    If that prints {"error":"unknown command"}, the CLI changed again --
@@ -59,6 +83,11 @@ while [ ! -f "$COLORS_FILE" ]; do sleep "$POLL_SECONDS"; done
 # theming pass still rewrites dms-colors.json AND the GTK template, but skips
 # mangowc, so COLORS_FILE froze and window borders stuck on an old colour while
 # the bar (which reads DMS Theme directly) kept updating correctly.
+#
+# STILL BROKEN as of 2026-08-05 (mango 0.15.5). Re-tested directly: with this
+# watcher stopped, a wallpaper change regenerated dms-colors.json but left
+# COLORS_FILE untouched at its old values. Re-run that test before assuming an
+# update has fixed it -- upstream fixed the matugen POST-HOOK, not the template.
 #
 # dms-colors.json DOES update reliably on every wallpaper change, so derive
 # COLORS_FILE from it ourselves rather than depending on the template. The role
