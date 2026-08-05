@@ -100,6 +100,14 @@ Within a second your borders, the login screen palette and the visualiser accent
 
 One thing not to lean on here: `border-color-healthcheck.sh` checks that every link in the chain is *wired up*, not that your colours are *current*. It'll report "All links OK" while your borders are still showing last week's wallpaper — because the wiring genuinely is fine, it's the contents that are stale. Use it to find a broken chain, not to confirm your colours are up to date.
 
+## If your borders thin out or flicker (Nvidia)
+
+If your window borders look uneven — thinner down one edge, or flickering as windows move — and you're on the Nvidia proprietary driver, that isn't DankMango. It's a known bug in scenefx, the rendering library mango draws borders with: it asks for `mediump` fragment shader precision, which Nvidia's GLES implementation honours literally, and the resulting rounding error is enough to eat a pixel off a border.
+
+The upstream fix is [wlrfx/scenefx#177](https://github.com/wlrfx/scenefx/pull/177), which adds a flag to force high precision. Until that lands and reaches your distro's scenefx package, the only workaround is building scenefx yourself with that patch and pointing mango at your build.
+
+DankMango deliberately doesn't ship or automate that. It's Nvidia-specific, it means shadowing a packaged system library, and the fix properly belongs upstream rather than in a config repo. If the borders bother you enough to want it, check the PR for its current status and build from there.
+
 ## If the login screen seems wrong
 
 First, the thing worth knowing before you touch anything:
