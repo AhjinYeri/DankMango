@@ -939,6 +939,102 @@ absence means this health check can't test your border colours, not that
 the colours themselves are broken."
 fi
 
+# --- only ONE program may own colors.conf -------------------------------------
+# DankMango writes ~/.config/mango/dms/colors.conf itself, from wallpaper-border-
+# reload.sh, because DMS's own matugen template for mangowc silently stops writing
+# it (see that script's SELF-HEAL block). DMS ships that template as an ON-by-
+# default toggle ("mangowc" in Settings -> Theme -> matugen templates), and it
+# writes THE SAME FILE. We keep it switched off so there is exactly one writer.
+#
+# If it ever flips back on -- a DMS update reintroducing its default, a settings
+# reset, or a stray click -- the two writers fight over one file. They also
+# disagree: our watcher always writes the DARK palette, DMS's template writes
+# whichever of light/dark is active, so in light mode they produce different
+# colours and take turns overwriting each other.
+#
+# The toggle lives in DMS's settings.json. A MISSING key is not safe: DMS falls
+# back to its own default, which is ON -- so absent is treated the same as true.
+if have jq && [ -f "$BAR_SETTINGS" ]; then
+    # "absent" (not false) when the key isn't there, so the default can't hide.
+    mangowc_tpl="$(jq -r 'if has("matugenTemplateMangowc") then (.matugenTemplateMangowc|tostring) else "absent" end' "$BAR_SETTINGS" 2>/dev/null)"
+    # Master switch above it: with all DMS templates off, the mangowc one can't
+    # run either, so an ON mangowc toggle is dormant rather than actively racing.
+    dms_tpls="$(jq -r 'if has("runDmsMatugenTemplates") then (.runDmsMatugenTemplates|tostring) else "absent" end' "$BAR_SETTINGS" 2>/dev/null)"
+    [ "$dms_tpls" = "absent" ] && dms_tpls="true"      # DMS default is on
+
+    case "$mangowc_tpl" in
+    false)
+        pass "DMS's own mangowc colour template is off (colors.conf has a single writer)"
+        ;;
+    true|absent)
+        tpl_state="switched on"
+        [ "$mangowc_tpl" = absent ] && tpl_state="missing from settings.json, so DMS uses its default: on"
+        if [ "$dms_tpls" = false ]; then
+            warn "DMS's mangowc colour template is $tpl_state (dormant: all DMS templates are off)" \
+                 "Harmless right now, but turn 'mangowc' off under Settings -> Theme -> matugen templates before re-enabling DMS templates, or two programs will write $COLORS_FILE."
+        else
+            fail "DMS's mangowc colour template is back on (two programs now write the same file)" \
+                 "DankMango and DMS are both writing $COLORS_FILE — window borders can show stale or flickering colours" \
+                 "$BAR_SETTINGS key matugenTemplateMangowc (currently: $mangowc_tpl), DMS template /usr/share/quickshell/dms/matugen/configs/mangowc.toml, our writer $BORDER_WATCHER" \
+                 "Set matugenTemplateMangowc back to false via DMS Settings -> Theme -> matugen templates -> 'mangowc'. DMS's default is true, so a DMS update or a settings reset can reintroduce it. Then force a resync: touch ~/.cache/DankMaterialShell/dms-colors.json" \
+"Two different programs are now writing the same colour file, and they do
+not agree with each other.
+
+Your window borders take their colour from one small file that is rebuilt
+every time your wallpaper changes. DankMango rebuilds that file itself,
+because DankMaterialShell's built-in version of the same job quietly stops
+working. That built-in version has just been switched back on, so both are
+writing the file now.
+
+What you will actually see: borders that keep the PREVIOUS wallpaper's
+colour, or that change to one colour and then flip to another a moment
+later. In light mode the two disagree the most - DankMango always writes
+the dark colours, the built-in one writes whichever mode you are in.
+Nothing is damaged and nothing is lost. This is purely how it looks.
+
+1. Click the settings (gear) icon on the bar at the top of your screen to
+   open DankMaterialShell's settings window.
+
+2. Go to the \"Theme\" section and scroll down to the list of matugen
+   templates. (\"matugen\" is the tool that picks colours out of your
+   wallpaper; each entry in that list is one program it colours for you.)
+
+3. Find the entry named \"mangowc\" and switch it OFF.
+   (mangowc is the window manager itself. Off here does NOT mean your
+   borders lose their colour - DankMango is already colouring them, and
+   doing it better. Off just stops the second program writing over it.)
+
+4. Check it took. Open a terminal (Super+Return) and type:
+     grep matugenTemplateMangowc $BAR_SETTINGS
+   You want to see the word false at the end of the line. If it still says
+   true, the toggle did not save - try step 3 again.
+
+5. Your colours may still be stale from the fight. Refresh them:
+     touch ~/.cache/DankMaterialShell/dms-colors.json
+   (\"touch\" just marks a file as changed. DankMango's colour watcher is
+   waiting for exactly that and will rebuild your borders within a second.)
+
+6. Re-run this health check to confirm it now passes:
+     $SCRIPTS/post-update-health.sh
+
+Worth knowing for next time: DankMaterialShell ships this toggle switched
+ON by default, so a DMS update or a settings reset can turn it back on
+without you doing anything. That is why this check exists."
+        fi
+        ;;
+    *)
+        warn "couldn't read matugenTemplateMangowc from DMS settings" \
+             "Check $BAR_SETTINGS is valid JSON:  jq . '$BAR_SETTINGS'"
+        ;;
+    esac
+elif [ ! -f "$BAR_SETTINGS" ]; then
+    warn "DMS settings file not found — can't confirm DMS isn't also writing colors.conf" \
+         "Expected at $BAR_SETTINGS"
+else
+    warn "jq not installed — skipped the colors.conf single-writer check" \
+         "Install it:  sudo pacman -S jq"
+fi
+
 section "5. SDDM login theme"
 
 # Which theme SDDM will actually use. sddm.conf is read first, then everything in
