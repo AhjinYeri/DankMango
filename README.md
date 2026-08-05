@@ -60,6 +60,7 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 
 - Wallpaper-driven theming (change your wallpaper, everything recolors — borders, GTK, terminal, the bar)
 - Tap Super to open the launcher, no click needed
+- `Super+/` for a searchable keybinds cheatsheet, built from your actual config
 - Per-monitor layout, switchable from the bar
 - Monitors handled on the fly — unplug one and your layouts survive it, and Steam games open on the display you picked
 - Custom alt-tab switcher, output switcher, and monitor mode plugins
