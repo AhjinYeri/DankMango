@@ -44,6 +44,8 @@ SUPER, s
 SUPER, n
 SUPER, w
 SUPER, p
+SUPER+ALT, r
+SUPER+SHIFT, slash
 
 = Windows
 SUPER, q
@@ -76,8 +78,11 @@ SUPER+SHIFT , 1	SUPER+SHIFT, 1-9
 = Monitors
 SUPER+ALT, Left
 SUPER+ALT, Right
+SUPER+CTRL, Left
+SUPER+CTRL, Right
 
 = Layout and gaps
+SUPER+SHIFT, space
 SUPER+SHIFT, e
 SUPER, x
 SUPER+SHIFT, X

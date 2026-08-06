@@ -47,7 +47,10 @@ MANGO_DIR="${MANGO_DIR:-$HOME/.config/mango}"
 CONFIG="$MANGO_DIR/config.conf"
 DOCS_DIR="$MANGO_DIR/docs"
 KEYS_FILE="$DOCS_DIR/keys.tsv"
-GUIDE_FILE="$DOCS_DIR/GUIDE.md"
+# Named DESKTOP-GUIDE.md, not GUIDE.md, on purpose: the DankMango repo already has
+# a docs/GUIDE.md (the GitHub-facing project guide). Two files with the same name
+# and different audiences is how you end up editing the wrong one.
+GUIDE_FILE="$DOCS_DIR/DESKTOP-GUIDE.md"
 
 # The IPC call that opens DMS's own searchable cheatsheet (the SUPER+/ one).
 # If a DMS update renames this, it is the only line here that needs changing --

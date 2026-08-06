@@ -75,6 +75,17 @@ BORDER_LOCK="/tmp/mango-wallpaper-border-reload.lock"
 
 ALTTAB_SCRIPT="$SCRIPTS/alt-switcher.sh"
 
+# In-session help hub (SUPER+SHIFT+/). The hub reads its shortcut DESCRIPTIONS
+# live from config.conf and stores none itself, so the thing that can rot is
+# keys.tsv listing a key config.conf no longer has. `docs-hub.sh check` is what
+# detects that, and it exits non-zero when it does.
+# NOTE: the guide is DESKTOP-GUIDE.md, not GUIDE.md -- the repo already has a
+# docs/GUIDE.md (the GitHub-facing project guide) and they are different files.
+DOCSHUB_SCRIPT="$SCRIPTS/docs-hub.sh"
+DOCSHUB_DOCS="$HOME/.config/mango/docs"
+DOCSHUB_KEYS="$DOCSHUB_DOCS/keys.tsv"
+DOCSHUB_GUIDE="$DOCSHUB_DOCS/DESKTOP-GUIDE.md"
+
 # Combined-audio-OSD patch: a local patch to DMS's package-owned VolumeOSD.qml that
 # adds a device-name line (so an output switch shows ONE popup: icon+name+slider).
 # Every dms-shell update OVERWRITES that file, wiping the patch -- so we check for the
@@ -82,30 +93,6 @@ ALTTAB_SCRIPT="$SCRIPTS/alt-switcher.sh"
 VOLUME_OSD="/usr/share/quickshell/dms/Modules/OSD/VolumeOSD.qml"
 OSD_PATCH_MARKER='DankMango patch: combined OSD device name'
 OSD_APPLY="$SCRIPTS/apply-combined-osd-patch.sh"
-
-# DankMango's own SDDM login theme.
-#
-# SEVERITY IS GATED ON WHETHER IT IS ACTUALLY LIVE, deliberately. Deploying the
-# theme and SWITCHING the login screen to it are two separate steps (install.sh
-# never flips Current= for you -- that is the one change that can leave you at a
-# broken login screen, so it stays an explicit decision). "Deployed but not
-# current" is therefore a NORMAL state, not a fault, and warns rather than fails.
-# Once it IS current it is serving the real login screen, and the checks below
-# become genuine failures.
-SDDM_THEME_DIR="/usr/share/sddm/themes/dankmango"
-SDDM_THEME_ID="dankmango"
-SDDM_CONF_D="/etc/sddm.conf.d"
-SDDM_SYNC="$SCRIPTS/sddm-palette-sync.sh"
-# The palette sync has no timer, no daemon and no autostart of its own: the
-# border watcher fires it whenever DMS regenerates its palette. That one call IS
-# the wallpaper-change hook, so its absence from that file is exactly what "the
-# login screen has stopped following the wallpaper" looks like from here.
-SDDM_SYNC_HOOK="$BORDER_WATCHER"
-# The user-writable leaves inside the root-owned theme directory. This split is
-# the privilege boundary itself (greeter executes the QML pre-auth as the sddm
-# user, so the DIRECTORY must stay root-owned; only these leaves are yours), so
-# checking it is a security check, not a tidiness one.
-SDDM_USER_LEAVES=(theme.conf.user wallpaper-a.jpg wallpaper-b.jpg)
 
 # Commands mango/DMS updates have renamed before. Test-forms used by the checks:
 RELOAD_CMD=(mmsg dispatch reload_config)   # 0.13 was `mmsg -d reload_config` (now dead)
@@ -939,282 +926,94 @@ absence means this health check can't test your border colours, not that
 the colours themselves are broken."
 fi
 
-# --- only ONE program may own colors.conf -------------------------------------
-# DankMango writes ~/.config/mango/dms/colors.conf itself, from wallpaper-border-
-# reload.sh, because DMS's own matugen template for mangowc silently stops writing
-# it (see that script's SELF-HEAL block). DMS ships that template as an ON-by-
-# default toggle ("mangowc" in Settings -> Theme -> matugen templates), and it
-# writes THE SAME FILE. We keep it switched off so there is exactly one writer.
-#
-# If it ever flips back on -- a DMS update reintroducing its default, a settings
-# reset, or a stray click -- the two writers fight over one file. They also
-# disagree: our watcher always writes the DARK palette, DMS's template writes
-# whichever of light/dark is active, so in light mode they produce different
-# colours and take turns overwriting each other.
-#
-# The toggle lives in DMS's settings.json. A MISSING key is not safe: DMS falls
-# back to its own default, which is ON -- so absent is treated the same as true.
-if have jq && [ -f "$BAR_SETTINGS" ]; then
-    # "absent" (not false) when the key isn't there, so the default can't hide.
-    mangowc_tpl="$(jq -r 'if has("matugenTemplateMangowc") then (.matugenTemplateMangowc|tostring) else "absent" end' "$BAR_SETTINGS" 2>/dev/null)"
-    # Master switch above it: with all DMS templates off, the mangowc one can't
-    # run either, so an ON mangowc toggle is dormant rather than actively racing.
-    dms_tpls="$(jq -r 'if has("runDmsMatugenTemplates") then (.runDmsMatugenTemplates|tostring) else "absent" end' "$BAR_SETTINGS" 2>/dev/null)"
-    [ "$dms_tpls" = "absent" ] && dms_tpls="true"      # DMS default is on
+# =============================================================================
+# 5. IN-SESSION HELP HUB (SUPER+SHIFT+/)
+# =============================================================================
+# The hub shows a curated key table whose DESCRIPTIONS are read live out of
+# config.conf at display time -- it stores none of its own. keys.tsv lists only
+# which keys to show. So the failure mode worth checking is DRIFT: a key gets
+# renamed or removed in config.conf and keys.tsv still asks for it. `docs-hub.sh
+# check` resolves every curated key and exits non-zero if any no longer resolve.
+section "5. In-session help hub"
 
-    case "$mangowc_tpl" in
-    false)
-        pass "DMS's own mangowc colour template is off (colors.conf has a single writer)"
-        ;;
-    true|absent)
-        tpl_state="switched on"
-        [ "$mangowc_tpl" = absent ] && tpl_state="missing from settings.json, so DMS uses its default: on"
-        if [ "$dms_tpls" = false ]; then
-            warn "DMS's mangowc colour template is $tpl_state (dormant: all DMS templates are off)" \
-                 "Harmless right now, but turn 'mangowc' off under Settings -> Theme -> matugen templates before re-enabling DMS templates, or two programs will write $COLORS_FILE."
-        else
-            fail "DMS's mangowc colour template is back on (two programs now write the same file)" \
-                 "DankMango and DMS are both writing $COLORS_FILE — window borders can show stale or flickering colours" \
-                 "$BAR_SETTINGS key matugenTemplateMangowc (currently: $mangowc_tpl), DMS template /usr/share/quickshell/dms/matugen/configs/mangowc.toml, our writer $BORDER_WATCHER" \
-                 "Set matugenTemplateMangowc back to false via DMS Settings -> Theme -> matugen templates -> 'mangowc'. DMS's default is true, so a DMS update or a settings reset can reintroduce it. Then force a resync: touch ~/.cache/DankMaterialShell/dms-colors.json" \
-"Two different programs are now writing the same colour file, and they do
-not agree with each other.
+if execu "$DOCSHUB_SCRIPT"; then
+    pass "docs-hub.sh present & executable"
 
-Your window borders take their colour from one small file that is rebuilt
-every time your wallpaper changes. DankMango rebuilds that file itself,
-because DankMaterialShell's built-in version of the same job quietly stops
-working. That built-in version has just been switched back on, so both are
-writing the file now.
+    if [ -r "$DOCSHUB_KEYS" ]; then
+        pass "curated key table present ($(basename "$DOCSHUB_KEYS"))"
+    else
+        fail "help hub key table" "missing: $(basename "$DOCSHUB_KEYS")" "$DOCSHUB_KEYS" \
+             "Restore it from the DankMango repo (config/mango/docs/), then re-run this check." \
+             "The help hub has lost the list of which shortcuts to show, so
+SUPER+SHIFT+/ will open but the shortcut list will be empty.
 
-What you will actually see: borders that keep the PREVIOUS wallpaper's
-colour, or that change to one colour and then flip to another a moment
-later. In light mode the two disagree the most - DankMango always writes
-the dark colours, the built-in one writes whichever mode you are in.
-Nothing is damaged and nothing is lost. This is purely how it looks.
+1. Open the folder you cloned DankMango into (the one with install.sh), then:
+     ./install.sh
+   (install.sh re-copies every DankMango file into place, including this one.)
 
-1. Click the settings (gear) icon on the bar at the top of your screen to
-   open DankMaterialShell's settings window.
+2. Check it worked:
+     $DOCSHUB_SCRIPT check
+   It should say OK and a number of keys.
 
-2. Go to the \"Theme\" section and scroll down to the list of matugen
-   templates. (\"matugen\" is the tool that picks colours out of your
-   wallpaper; each entry in that list is one program it colours for you.)
+What breaks meanwhile: only the shortcut list inside the hub. Every keyboard
+shortcut itself still works, and SUPER+/ still shows the full list."
+    fi
 
-3. Find the entry named \"mangowc\" and switch it OFF.
-   (mangowc is the window manager itself. Off here does NOT mean your
-   borders lose their colour - DankMango is already colouring them, and
-   doing it better. Off just stops the second program writing over it.)
+    if [ -r "$DOCSHUB_GUIDE" ]; then
+        pass "written guide present ($(basename "$DOCSHUB_GUIDE"))"
+    else
+        warn "help hub guide is missing ($(basename "$DOCSHUB_GUIDE"))" \
+             "Restore with ./install.sh from the DankMango repo. The rest of the hub still works."
+    fi
 
-4. Check it took. Open a terminal (Super+Return) and type:
-     grep matugenTemplateMangowc $BAR_SETTINGS
-   You want to see the word false at the end of the line. If it still says
-   true, the toggle did not save - try step 3 again.
+    # The drift check itself. Capture output so we can quote the offending keys.
+    if DOCSHUB_OUT="$("$DOCSHUB_SCRIPT" check 2>&1)"; then
+        pass "curated keys all resolve against config.conf — ${DOCSHUB_OUT#*-- }"
+    else
+        fail "help hub key table (out of date)" \
+             "keys.tsv asks for shortcuts that no longer exist in config.conf" \
+             "$DOCSHUB_KEYS  and  $MANGO_CFG" \
+             "Run '$DOCSHUB_SCRIPT check' to list them, then fix keys.tsv or re-add the bind." \
+             "Your list of keyboard shortcuts has drifted out of date. The help hub
+(SUPER+SHIFT+/) is asking to display shortcuts that are no longer in
+MangoWM's settings file, so they show up in red as MISSING.
 
-5. Your colours may still be stale from the fight. Refresh them:
-     touch ~/.cache/DankMaterialShell/dms-colors.json
-   (\"touch\" just marks a file as changed. DankMango's colour watcher is
-   waiting for exactly that and will rebuild your borders within a second.)
+Nothing is broken -- this is a bookkeeping mismatch between two files.
 
-6. Re-run this health check to confirm it now passes:
-     $SCRIPTS/post-update-health.sh
+1. See exactly which shortcuts are affected. Type:
+     $DOCSHUB_SCRIPT check
+   It prints one line per shortcut it could not find.
 
-Worth knowing for next time: DankMaterialShell ships this toggle switched
-ON by default, so a DMS update or a settings reset can turn it back on
-without you doing anything. That is why this check exists."
-        fi
-        ;;
-    *)
-        warn "couldn't read matugenTemplateMangowc from DMS settings" \
-             "Check $BAR_SETTINGS is valid JSON:  jq . '$BAR_SETTINGS'"
-        ;;
-    esac
-elif [ ! -f "$BAR_SETTINGS" ]; then
-    warn "DMS settings file not found — can't confirm DMS isn't also writing colors.conf" \
-         "Expected at $BAR_SETTINGS"
+2. Decide which of the two files is wrong:
+
+   * If you MEANT to remove or rename that shortcut, then the hub's list is
+     just stale. Open it:
+       nano $DOCSHUB_KEYS
+     Delete the line for that shortcut (or correct it to the new keys), then
+     save with Ctrl+O, Enter, and exit with Ctrl+X.
+
+   * If the shortcut disappeared by ACCIDENT -- most likely a MangoWM update
+     overwrote your settings file -- put the bind back instead:
+       nano $MANGO_CFG
+     Add it in the keybinds block, remembering the plain-English comment on
+     the line directly ABOVE it (never on the end of the line). Then press
+     SUPER+r to reload.
+
+3. Confirm it is clean:
+     $DOCSHUB_SCRIPT check
+   You want it to say OK.
+
+What breaks meanwhile: nothing except that one row in the help hub, which
+shows as MISSING in red. Every other shortcut still works normally."
+    fi
 else
-    warn "jq not installed — skipped the colors.conf single-writer check" \
-         "Install it:  sudo pacman -S jq"
-fi
+    fail "docs-hub.sh" "missing or not executable — SUPER+SHIFT+/ will do nothing" "$DOCSHUB_SCRIPT" \
+         "Restore it, then: chmod +x '$DOCSHUB_SCRIPT'" \
+         "$(manual_restore_script "$DOCSHUB_SCRIPT")
 
-section "5. SDDM login theme"
-
-# Which theme SDDM will actually use. sddm.conf is read first, then everything in
-# sddm.conf.d alphabetically, and the LAST Current= wins -- so a correct-looking
-# theme.conf can still be overridden by a file sorting after it. Resolve it the
-# same way SDDM does rather than trusting the first match we find.
-sddm_current_theme() {
-    local f v last=""
-    for f in /etc/sddm.conf "$SDDM_CONF_D"/*.conf; do
-        [ -f "$f" ] || continue
-        v="$(sed -n 's/^[[:space:]]*Current[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$f" | tail -n1)"
-        [ -n "$v" ] && last="$v"
-    done
-    printf '%s' "$last"
-}
-
-if [ ! -d "$SDDM_THEME_DIR" ]; then
-    warn "DankMango login theme is not installed ($SDDM_THEME_DIR missing)" \
-         "Nothing is broken — your current login screen is unaffected. To deploy it: cd into your DankMango folder, then  sudo ./system/sddm/themes/dankmango/install.sh"
-else
-    sddm_cur="$(sddm_current_theme)"
-
-    # --- is the deployed copy complete? --------------------------------------
-    if [ -f "$SDDM_THEME_DIR/Main.qml" ] && [ -f "$SDDM_THEME_DIR/metadata.desktop" ]; then
-        pass "login theme installed ($SDDM_THEME_DIR)"
-    else
-        fail "SDDM login theme is incomplete" \
-             "$SDDM_THEME_DIR exists but Main.qml and/or metadata.desktop is missing" \
-             "$SDDM_THEME_DIR — expected Main.qml, metadata.desktop, theme.conf, Components/*.qml" \
-             "Re-run the theme's own installer: sudo ./system/sddm/themes/dankmango/install.sh (idempotent; re-copies every file and re-applies ownership)" \
-"Part of your login screen's files are missing. If this theme is the
-one currently in use, your next login screen could fail to draw.
-
-1. Before anything else, open a spare text console so you always have
-   a way back in if the login screen does break. Hold Ctrl and Alt and
-   press F3. You'll get a plain text login prompt - type your username,
-   press Enter, type your password, press Enter. To come back to your
-   desktop, hold Ctrl and Alt and press F1.
-
-2. Re-install the theme. Go to the folder you cloned DankMango into
-   (if you're not sure, try:  cd ~/DankMango  ) and run:
-     sudo ./system/sddm/themes/dankmango/install.sh
-   (\"sudo\" runs it as administrator - it will ask for your password.)
-   This is safe to run as many times as you like; it just re-copies
-   every file into place and does not change which theme is in use.
-
-3. Check it looks right without logging out:
-     sddm-greeter-qt6 --test-mode --theme $SDDM_THEME_DIR
-   A preview of the login screen opens. Close it when you're happy.
-   (If that command isn't found, skip this step - it's only a preview.)"
-    fi
-
-    # --- is it the theme SDDM will actually use? -----------------------------
-    # A warn, not a fail: deploying deliberately does not switch you over.
-    if [ "$sddm_cur" = "$SDDM_THEME_ID" ]; then
-        pass "SDDM is set to use it (Current=$SDDM_THEME_ID)"
-    elif [ -z "$sddm_cur" ]; then
-        warn "SDDM has no theme set — you're on its built-in default, not DankMango's" \
-             "Switch over with:  sudo sh -c 'printf \"[Theme]\\nCurrent=$SDDM_THEME_ID\\n\" > $SDDM_CONF_D/theme.conf'  — then keep a text console (Ctrl+Alt+F3) open the first time you reboot"
-    else
-        warn "login theme is deployed but NOT in use (SDDM is set to \"$sddm_cur\")" \
-             "That's normal if you haven't switched over yet. To switch:  sudo sh -c 'printf \"[Theme]\\nCurrent=$SDDM_THEME_ID\\n\" > $SDDM_CONF_D/theme.conf'  — keep a text console (Ctrl+Alt+F3) open the first time you reboot"
-    fi
-
-    # --- the palette sync, and the hook that fires it ------------------------
-    if execu "$SDDM_SYNC"; then
-        if [ -f "$SDDM_SYNC_HOOK" ] && grep -q 'sddm-palette-sync.sh' "$SDDM_SYNC_HOOK"; then
-            pass "wallpaper→login-screen palette sync is wired up"
-        else
-            fail "Login screen no longer follows your wallpaper" \
-                 "sddm-palette-sync.sh exists but nothing calls it — the hook in wallpaper-border-reload.sh is gone" \
-                 "$SDDM_SYNC_HOOK — expected a line invoking \$SDDM_PALETTE_SYNC on a dms-colors.json change" \
-                 "wallpaper-border-reload.sh is the ONLY trigger (the sync has no timer or autostart of its own). Restore that file from the repo; re-running the sync by hand fixes the current colours but not the trigger." \
-"Your login screen has stopped re-colouring when you change your
-wallpaper. It will keep showing whatever colours it last picked up.
-Everything else still follows your wallpaper normally.
-
-1. Fix the colours right now, so your login screen matches again:
-     $SDDM_SYNC --verbose
-   (No password needed - this deliberately runs as you.)
-
-2. That fixed today's colours but not the cause: the program that is
-   supposed to run it for you automatically has lost that instruction.
-   Update DankMango to restore the file. Go to your DankMango folder:
-     cd ~/DankMango
-     git pull
-     ./update.sh --dry-run
-   The last command only SHOWS what it would change. Read it, and if
-   it mentions wallpaper-border-reload.sh, run it for real:
-     ./update.sh
-
-3. Restart the restored watcher so it takes effect now:
-     pkill -f wallpaper-border-reload.sh
-     setsid $SDDM_SYNC_HOOK >/dev/null 2>&1 &
-   (\"pkill -f\" stops a running program by name; the second line starts
-   it again in the background.)"
-        fi
-    else
-        fail "Login-screen palette sync is missing" \
-             "sddm-palette-sync.sh is absent or not executable — the login screen can't follow your wallpaper" \
-             "$SDDM_SYNC" \
-             "Restore it, then: chmod +x '$SDDM_SYNC'" \
-             "$(manual_restore_script "$SDDM_SYNC")
-
-What breaks meanwhile: only the login screen's colours and background,
-which will stay on whatever they last synced to. Logging in is
-completely unaffected."
-    fi
-
-    # --- the privilege boundary: root-owned dir, user-owned leaves -----------
-    # Only meaningful once the theme is live; before that it is just files.
-    me="$(id -un)"
-    sddm_dir_owner="$(stat -c %U "$SDDM_THEME_DIR" 2>/dev/null)"
-    if [ "$sddm_dir_owner" = "root" ]; then
-        pass "theme directory is root-owned (greeter runs its QML pre-auth)"
-    else
-        fail "SDDM theme directory is NOT root-owned" \
-             "$SDDM_THEME_DIR is owned by \"$sddm_dir_owner\" — anything running as you could drop code into a pre-authentication execution context" \
-             "$SDDM_THEME_DIR — must be root:root 0755; only theme.conf.user and the wallpaper-?.jpg slots may be user-owned" \
-             "Re-run the theme installer (it sets ownership declaratively): sudo ./system/sddm/themes/dankmango/install.sh. Do NOT 'fix' this by chowning the directory to your user." \
-"This is a security problem rather than a broken feature, so it is
-worth fixing even though your login screen looks fine.
-
-Your login screen's program files are in a folder your own account can
-write to. The login screen runs those files BEFORE anyone has typed a
-password, so anything running as you could change what happens there.
-
-1. Put the ownership back the way it is meant to be. Go to your
-   DankMango folder and re-run the theme installer:
-     cd ~/DankMango
-     sudo ./system/sddm/themes/dankmango/install.sh
-   It sets every file's owner explicitly, so this is the whole fix.
-
-2. Check it worked - this should print \"root\":
-     stat -c %U $SDDM_THEME_DIR
-
-Please do NOT fix this by giving your own account ownership of that
-folder. That is the problem, not the solution."
-    fi
-
-    sddm_bad_leaves=()
-    for leaf in "${SDDM_USER_LEAVES[@]}"; do
-        if [ ! -f "$SDDM_THEME_DIR/$leaf" ]; then
-            sddm_bad_leaves+=("$leaf (missing)")
-        elif [ "$(stat -c %U "$SDDM_THEME_DIR/$leaf" 2>/dev/null)" != "$me" ]; then
-            sddm_bad_leaves+=("$leaf (owned by $(stat -c %U "$SDDM_THEME_DIR/$leaf" 2>/dev/null), not $me)")
-        elif [ ! -w "$SDDM_THEME_DIR/$leaf" ]; then
-            sddm_bad_leaves+=("$leaf (not writable by you)")
-        fi
-    done
-    if [ "${#sddm_bad_leaves[@]}" -eq 0 ]; then
-        pass "palette + wallpaper slots are yours to write (${#SDDM_USER_LEAVES[@]} files)"
-    else
-        fail "Login screen can't be re-coloured without a password" \
-             "these files must be yours but aren't: ${sddm_bad_leaves[*]}" \
-             "$SDDM_THEME_DIR — theme.conf.user and wallpaper-a/b.jpg must be owned by $me, mode 0644, inside the root-owned directory" \
-             "The sync script deliberately refuses to CREATE files here (creating one needs write access to the directory, which must stay root-only). Re-run: sudo ./system/sddm/themes/dankmango/install.sh — it creates the leaves and hands them to you." \
-"Your login screen will keep working, but it can no longer update its
-colours or background when you change your wallpaper.
-
-The reason is deliberate: the folder these files live in is owned by
-the administrator account, and only these few files inside it are
-handed to you. That is what lets your wallpaper reach the login screen
-without giving your account any extra power. Right now that handover
-hasn't happened for at least one file.
-
-1. Re-run the theme installer, which creates those files and hands
-   them to you. Go to your DankMango folder:
-     cd ~/DankMango
-     sudo ./system/sddm/themes/dankmango/install.sh
-   (It will ask for your password. Safe to run repeatedly.)
-
-2. Now push your current wallpaper's colours to the login screen:
-     $SDDM_SYNC --verbose
-
-3. Check the files are yours - each line should show your username:
-     ls -l $SDDM_THEME_DIR/theme.conf.user
-     ls -l $SDDM_THEME_DIR/wallpaper-a.jpg
-     ls -l $SDDM_THEME_DIR/wallpaper-b.jpg"
-    fi
+What breaks meanwhile: pressing SUPER+SHIFT+/ opens a terminal that closes
+again immediately. SUPER+/ still shows the full searchable shortcut list,
+which covers most of what the hub is for."
 fi
 
 # =============================================================================
