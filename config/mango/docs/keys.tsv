@@ -1,0 +1,110 @@
+# keys.tsv -- the curated key table for the docs hub (SUPER+SHIFT+/).
+#
+# WHAT THIS FILE IS
+#   An ordered, human-curated shortlist of the shortcuts worth showing a newcomer,
+#   grouped into sections. It is a list of WHICH keys to show and in WHAT ORDER.
+#   It deliberately does NOT contain the descriptions.
+#
+# WHY NO DESCRIPTIONS HERE
+#   The description for every key is read live out of config.conf at display time
+#   (the comment line directly above that bind -- the same comment the SUPER+/
+#   cheatsheet uses). One source of truth. Edit the comment in config.conf and
+#   this hub changes with it; there is no second copy here to drift out of date.
+#   If a key listed here no longer exists in config.conf, the hub prints it as
+#   MISSING rather than silently dropping it -- that is the point of the check.
+#
+# FORMAT
+#   Section headers:  = Section name
+#   Key rows:         MODS, key          (must match a real bind in config.conf)
+#   Display override: MODS, key <TAB> Label to show instead of the raw key
+#     (used only for collapsed ranges like the workspace 1-9 rows)
+#   Lines starting with # and blank lines are ignored.
+#
+# Matching is on the normalised (mods, key) pair -- whitespace and case of the
+# modifier list are ignored, so "SUPER+SHIFT , 1" here matches "SUPER+SHIFT, 1"
+# in config.conf. The key name itself is case-sensitive, because mango treats
+# "i" and "I" (i.e. SHIFT+i) as different binds.
+
+= Getting around
+SUPER, space
+SUPER+CTRL, Return
+SUPER, Tab
+ALT, Tab
+ALT+SHIFT, Tab
+SUPER+ALT, Tab
+SUPER, slash
+
+= Opening things
+SUPER, Return
+SUPER, e
+SUPER, b
+SUPER, c
+SUPER, m
+SUPER, s
+SUPER, n
+SUPER, w
+SUPER, p
+
+= Windows
+SUPER, q
+SUPER, f
+SUPER+SHIFT, f
+SUPER+ALT, f
+SUPER, v
+SUPER, i
+SUPER+SHIFT, I
+SUPER, o
+SUPER, g
+SUPER, z
+
+= Moving focus between windows
+SUPER, Left
+SUPER, Right
+SUPER, Up
+SUPER, Down
+
+= Rearranging windows
+SUPER+SHIFT, Left
+SUPER+SHIFT, Right
+SUPER+SHIFT, Up
+SUPER+SHIFT, Down
+
+= Workspaces
+SUPER, 1	SUPER, 1-9
+SUPER+SHIFT , 1	SUPER+SHIFT, 1-9
+
+= Monitors
+SUPER+ALT, Left
+SUPER+ALT, Right
+
+= Layout and gaps
+SUPER+SHIFT, e
+SUPER, x
+SUPER+SHIFT, X
+SUPER+SHIFT, Z
+SUPER+SHIFT, R
+
+= Floating windows
+CTRL+SHIFT, Left
+CTRL+SHIFT, Right
+CTRL+SHIFT, Up
+CTRL+SHIFT, Down
+CTRL+ALT, Left
+CTRL+ALT, Right
+CTRL+ALT, Up
+CTRL+ALT, Down
+
+= Sound and screen
+NONE, XF86AudioRaiseVolume
+NONE, XF86AudioLowerVolume
+NONE, XF86AudioMute
+NONE, XF86AudioPlay
+NONE, XF86AudioNext
+NONE, XF86AudioPrev
+NONE, XF86MonBrightnessUp
+NONE, XF86MonBrightnessDown
+
+= Session
+SUPER+ALT, l
+SUPER+SHIFT, q
+SUPER, r
