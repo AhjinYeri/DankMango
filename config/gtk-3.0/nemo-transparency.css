@@ -7,18 +7,26 @@
  *
  * Colors reference matugen variables from dank-colors.css, so the tint still
  * follows your wallpaper. Opacity: window 0.70, headerbar 0.78. Tune to taste.
+ *
+ * Section 2 restores/strengthens the selection highlight, which the frosting in
+ * section 1 would otherwise erase. See the long note above that section.
  */
 
+/* ===========================================================================
+ * 1. Frosting
+ * ======================================================================== */
+
 /* Knock out the opaque fills on the inner containers so the translucent
-   toplevel fill below is what actually shows through to the blur. */
+   toplevel fill below is what actually shows through to the blur.
+   `:not(:selected)` on the view nodes is load-bearing — see section 2. */
 .nemo-window,
 .nemo-window .nemo-window-pane,
 .nemo-window notebook,
 .nemo-window notebook > stack,
-.nemo-window .view,
-.nemo-window .view text,
-.nemo-window treeview.view,
-.nemo-window iconview,
+.nemo-window .view:not(:selected),
+.nemo-window .view text:not(:selected),
+.nemo-window treeview.view:not(:selected),
+.nemo-window iconview:not(:selected),
 .nemo-window scrolledwindow,
 .nemo-window viewport,
 .nemo-window .sidebar,
@@ -36,4 +44,103 @@
 .nemo-window .nemo-pathbar,
 .nemo-window toolbar {
     background-color: alpha(@headerbar_bg_color, 0.78);
+}
+
+/* ===========================================================================
+ * 2. Selection + drag-box contrast (Explorer-style)
+ *
+ * Two things were washing the selection out:
+ *
+ *   a) GTK3 resolves the cascade by provider PRIORITY first and specificity
+ *      only second. Section 1 loads at PRIORITY_USER (800); the adw-gtk3
+ *      theme loads at PRIORITY_THEME (200). So the unqualified
+ *      `.nemo-window .view { background-color: transparent }` above beat the
+ *      theme's `.view:selected` outright, no matter how specific that rule
+ *      was — selected rows and icons rendered with no fill at all. Upstream
+ *      Nemo hit the same trap and works around it the same way (see
+ *      `.view:not(:selected)` in its nemo-style-fallback-mandatory.css).
+ *      Hence the `:not(:selected)` guards in section 1.
+ *
+ *   b) Even with the fill restored, adw-gtk3 draws selection as
+ *      `alpha(@accent_bg_color, 0.25)` with unchanged text color — the
+ *      libadwaita "subtle" look. Layered over a 70%-translucent window on top
+ *      of a blurred wallpaper, 25% is close to invisible. Explorer instead
+ *      uses a near-solid accent fill with inverted text, which is what the
+ *      rules below do.
+ *
+ * Everything here keys off @accent_bg_color / @accent_fg_color, which matugen
+ * regenerates into dank-colors.css on every wallpaper change — so the
+ * highlight keeps following the wallpaper. Nothing is hardcoded.
+ * ======================================================================== */
+
+/* Selected items: near-solid accent fill, inverted label. Covers the icon view
+   (`.nemo-canvas-item`, Nemo's own CSS node for canvas icons), the list view
+   (`treeview.view`) and the generic `.view` / `iconview` nodes. */
+.nemo-window .view:selected,
+.nemo-window .view:selected:focus,
+.nemo-window .view text:selected,
+.nemo-window .view text:selected:focus,
+.nemo-window iconview:selected,
+.nemo-window iconview:selected:focus,
+.nemo-window treeview.view:selected,
+.nemo-window treeview.view:selected:focus,
+.nemo-window .nemo-canvas-item:selected,
+.nemo-window .nemo-canvas-item:selected:focus {
+    background-color: alpha(@accent_bg_color, 0.85);
+    color: @accent_fg_color;
+}
+
+/* Unfocused window: keep the selection clearly readable, just calmer. Without
+   this the theme's :backdrop rules drop it back to a ~25% wash. */
+.nemo-window .view:selected:backdrop,
+.nemo-window .view text:selected:backdrop,
+.nemo-window iconview:selected:backdrop,
+.nemo-window treeview.view:selected:backdrop,
+.nemo-window .nemo-canvas-item:selected:backdrop {
+    background-color: alpha(@accent_bg_color, 0.55);
+    color: @accent_fg_color;
+}
+
+/* Hover affordance on unselected rows/icons — Explorer's light pre-light.
+   Neutral (not accent) so it never reads as "already selected". */
+.nemo-window .view:hover:not(:selected),
+.nemo-window iconview:hover:not(:selected),
+.nemo-window treeview.view:hover:not(:selected),
+.nemo-window .nemo-canvas-item:hover:not(:selected) {
+    background-color: alpha(@window_fg_color, 0.10);
+}
+
+/* Drag-select ("rubberband") box. Nemo builds this in
+   nemo-icon-container.c: it takes the container's style context, adds
+   GTK_STYLE_CLASS_RUBBERBAND, then reads background-color as the box fill and
+   border-color as the outline — both at STATE_NORMAL, so no pseudo-class here.
+   adw-gtk3 ships alpha(@accent_color, 0.2), which disappears against the
+   frosted background; 0.30 plus a solid 1px accent edge gives Explorer's
+   crisp box. */
+.nemo-window .rubberband,
+.nemo-window rubberband,
+.nemo-window .view .rubberband,
+.nemo-window .content-view rubberband,
+.nemo-window .content-view .rubberband,
+.nemo-window treeview.view rubberband {
+    background-color: alpha(@accent_bg_color, 0.30);
+    border: 1px solid @accent_bg_color;
+}
+
+/* Places sidebar: the selected location should read as strongly as a selected
+   file. `.places-treeview` is Nemo's own class on the sidebar tree view. */
+.nemo-window .sidebar .places-treeview:selected,
+.nemo-window treeview.view.places-treeview:selected,
+.nemo-window treeview.view.places-treeview:selected:focus {
+    background-color: alpha(@accent_bg_color, 0.85);
+    color: @accent_fg_color;
+}
+
+.nemo-window treeview.view.places-treeview:selected:backdrop {
+    background-color: alpha(@accent_bg_color, 0.55);
+    color: @accent_fg_color;
+}
+
+.nemo-window treeview.view.places-treeview:hover:not(:selected) {
+    background-color: alpha(@window_fg_color, 0.10);
 }

@@ -188,7 +188,7 @@ else
 fi
 
 # =============================================================================
-# 4. Default applications (file manager, image viewer)
+# 4. Default applications (file manager, image viewer) + Nemo sidebar defaults
 # =============================================================================
 stage "4/18  Setting default applications (Nemo, Loupe, Celluloid)"
 
@@ -248,6 +248,193 @@ if pacman -Qi nemo >/dev/null 2>&1; then
     user_copy "$REPO_DIR/config/applications/copy-as-path.nemo_action" \
               "$HOME/.local/share/nemo/actions/copy-as-path.nemo_action" \
         && ok "Nemo 'Copy as Path' action installed" || true
+fi
+
+# 4c. Quick-Access-style sidebar bookmarks (SEED ONLY -- never overwrites).
+#
+# Out of the box Nemo's sidebar has no bookmarks at all, so Documents/Pictures/
+# Music/Videos/Downloads are only reachable by drilling into Home. Windows puts
+# exactly those under a "Quick Access" group; this seeds the equivalent.
+#
+# Two moving parts, and they are NOT the same mechanism:
+#
+#   1. The bookmark LIST is ~/.config/gtk-3.0/bookmarks -- the shared GTK3
+#      bookmarks file (Nemo reads it via g_get_user_config_dir()/gtk-3.0/bookmarks,
+#      falling back to the legacy ~/.gtk-bookmarks). Format is one bookmark per
+#      line, `URI[ optional label]`, split on the FIRST space. We deliberately
+#      write the URI only: with no label Nemo shows the folder's own display
+#      name, so a localized "Documents" stays localized instead of being pinned
+#      to our English string.
+#
+#   2. The GROUPING is org.nemo.window-state sidebar-bookmark-breakpoint, an
+#      index into that list. Bookmarks BEFORE the index render inline in the
+#      "My Computer" section (SECTION_XDG_BOOKMARKS); bookmarks FROM the index
+#      onward render under the collapsible "Bookmarks" heading (SECTION_BOOKMARKS).
+#      Its default is -1, which Nemo clamps to "all of them inline" -- i.e. no
+#      Bookmarks group at all. 0 puts every bookmark in the group, which is the
+#      Quick Access look. Nemo rewrites this value itself when you drag a
+#      bookmark across the section boundary, so it is user state: we only set it
+#      on the same run in which we seed the list.
+#
+# This is a SEED, not a managed file: an existing non-empty bookmarks file is a
+# hand-tuned list (the user bookmarked things, or reordered ours) and is left
+# completely alone -- same principle as config.local.sh and the DMS state files.
+# That is also why it is generated here rather than shipped in config/ and routed
+# through route_dest: a repo file would be re-synced by update.sh on every run,
+# which is exactly the clobbering we want to avoid.
+NEMO_BOOKMARKS="$HOME/.config/gtk-3.0/bookmarks"
+
+# XDG keys in the order they should appear in the sidebar. DOWNLOAD is singular
+# -- that is the actual xdg-user-dirs key name, `DOWNLOADS` resolves to nothing.
+NEMO_BOOKMARK_DIRS=(DOCUMENTS PICTURES MUSIC VIDEOS DOWNLOAD)
+
+# Percent-encode a filesystem path for use in a file:// URI, leaving '/' and the
+# RFC 3986 unreserved set alone. Nemo hands each line to g_file_new_for_uri(),
+# which does NOT tolerate a raw space -- so a $HOME containing a space (or any
+# non-ASCII byte) would silently produce a dead bookmark without this.
+uri_encode_path() {
+    # LC_ALL=C makes ${#s} / ${s:i:1} step over BYTES rather than characters, so a
+    # multi-byte UTF-8 name encodes to one %XX per byte (what RFC 3986 wants) and
+    # not one %XX per codepoint (which would be wrong and unopenable).
+    local s="$1" out="" i c LC_ALL=C
+    for (( i = 0; i < ${#s}; i++ )); do
+        c="${s:i:1}"
+        case "$c" in
+            [a-zA-Z0-9._~/-]) out+="$c" ;;
+            *) out+="$(printf '%%%02X' "'$c")" ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
+if [ -s "$NEMO_BOOKMARKS" ]; then
+    info "$NEMO_BOOKMARKS already has entries — leaving your bookmarks untouched"
+else
+    bookmark_lines=""
+    bookmark_count=0
+    for key in "${NEMO_BOOKMARK_DIRS[@]}"; do
+        # xdg-user-dir returns $HOME for any key it can't resolve (no
+        # ~/.config/user-dirs.dirs yet, or the key is absent from it), so a bare
+        # "did it print something" check isn't enough — compare against $HOME.
+        dir=""
+        if have xdg-user-dir; then
+            dir="$(xdg-user-dir "$key" 2>/dev/null || true)"
+            [ "$dir" = "$HOME" ] && dir=""
+        fi
+        # Fall back to the conventional English name under $HOME. Capitalise the
+        # key, and special-case DOWNLOAD -> Downloads (dir is plural, key isn't).
+        if [ -z "$dir" ]; then
+            case "$key" in
+                DOWNLOAD) dir="$HOME/Downloads" ;;
+                *) dir="$HOME/$(printf '%s' "${key:0:1}")$(printf '%s' "${key:1}" | tr '[:upper:]' '[:lower:]')" ;;
+            esac
+        fi
+        # Skip what doesn't exist. A bookmark pointing at a missing folder shows
+        # up broken in the sidebar and makes Nemo nag "Do you want to remove any
+        # bookmarks with the non-existing location from your list?" on startup —
+        # a bad first impression on a system with, say, no ~/Music.
+        if [ -d "$dir" ]; then
+            bookmark_lines+="file://$(uri_encode_path "$dir")"$'\n'
+            bookmark_count=$((bookmark_count + 1))
+        else
+            info "no $dir — skipping that bookmark"
+        fi
+    done
+
+    if [ "$bookmark_count" -eq 0 ]; then
+        warn "none of the XDG user folders exist — skipping the sidebar bookmarks seed."
+    else
+        mkdir -p "$(dirname "$NEMO_BOOKMARKS")"
+        printf '%s' "$bookmark_lines" > "$NEMO_BOOKMARKS"
+        ok "seeded $bookmark_count sidebar bookmarks -> $NEMO_BOOKMARKS"
+        have jq && manifest_add_change user-file-installed "$CUR_STAGE" "$NEMO_BOOKMARKS" \
+            "$(jq -nc --arg p "$NEMO_BOOKMARKS" --argjson n "$bookmark_count" \
+                '{path:$p, preexisting:false, scope:"user", seeded:true, count:$n}')" \
+            "rm $NEMO_BOOKMARKS"
+
+        # Only now — on the run that seeded the list — claim the breakpoint.
+        if pacman -Qi nemo >/dev/null 2>&1 && have gsettings; then
+            # (Whether that heading starts expanded is 4d's business, not ours.)
+            if gsettings set org.nemo.window-state sidebar-bookmark-breakpoint 0 2>/dev/null; then
+                ok "sidebar bookmarks grouped under a 'Bookmarks' heading (Quick Access style)"
+                have jq && manifest_add_change gsetting "$CUR_STAGE" \
+                    "org.nemo.window-state/sidebar-bookmark-breakpoint" \
+                    "$(jq -nc '{schema:"org.nemo.window-state", key:"sidebar-bookmark-breakpoint", value:0}')" \
+                    "gsettings reset org.nemo.window-state sidebar-bookmark-breakpoint"
+            else
+                warn "couldn't set sidebar-bookmark-breakpoint — bookmarks will show inline under My Computer."
+            fi
+        fi
+    fi
+fi
+
+# 4d. Sidebar section collapse defaults (PER-KEY SEED -- never clobbers a choice).
+#
+# Nemo's places sidebar has four collapsible sections, each with its own
+# org.nemo.window-state key, and all four default to true (expanded):
+#
+#     my-computer-expanded   Home, Desktop, Recent, File System, ...
+#     bookmarks-expanded     the "Bookmarks" group seeded in 4c
+#     devices-expanded       mounted disks and removable media
+#     network-expanded       network shares
+#
+# All-expanded is a wall of entries. Windows keeps the equivalents of Devices
+# ("This PC") and Network folded away until you ask for them, which is also the
+# honest ordering here: My Computer and Bookmarks hold what actually gets
+# clicked, so those two stay open and the other two start closed.
+#
+# "Don't clobber a user preference" is exact here rather than a heuristic. Nemo
+# writes these keys only from update_expanded_state(), which early-returns while
+# sidebar->updating_sidebar is set -- so the programmatic expand/collapse it runs
+# on every startup and every sidebar refresh writes nothing, and a key acquires a
+# user-level dconf value ONLY when someone clicks a disclosure triangle. That
+# makes an empty `dconf read` a precise "never touched this" signal: we seed it,
+# and anything already carrying a value is a deliberate choice we leave alone --
+# on the first install and on every update after it.
+#
+# Note this is deliberately per-key rather than gated on 4c having seeded the
+# bookmarks file: existing DankMango installs already have that file, and tying
+# the two together would mean they never picked these defaults up at all.
+#
+# Not set here: the "Recent" row. Its only gate anywhere in Nemo is
+# org.cinnamon.desktop.privacy remember-recent-files (NOT the org.gnome one),
+# and that is a system-wide privacy switch -- turning it off stops recent-file
+# tracking for every GTK app's file chooser, not just this sidebar row. Too
+# blunt to flip on someone's behalf for a cosmetic win. To hide the row:
+#     gsettings set org.cinnamon.desktop.privacy remember-recent-files false
+NEMO_SECTION_DEFAULTS=(
+    "my-computer-expanded=true"
+    "bookmarks-expanded=true"
+    "devices-expanded=false"
+    "network-expanded=false"
+)
+
+if pacman -Qi nemo >/dev/null 2>&1 && have gsettings; then
+    if ! have dconf; then
+        # Without dconf there's no way to tell "user chose true" from "schema
+        # default true", and guessing would mean re-collapsing a section every
+        # update for someone who keeps opening it. Doing nothing is correct.
+        info "dconf not available — leaving Nemo's sidebar section states alone"
+    else
+        for entry in "${NEMO_SECTION_DEFAULTS[@]}"; do
+            section_key="${entry%%=*}"
+            section_val="${entry#*=}"
+            if [ -n "$(dconf read "/org/nemo/window-state/$section_key" 2>/dev/null || true)" ]; then
+                info "$section_key already chosen — leaving it as you set it"
+                continue
+            fi
+            if gsettings set org.nemo.window-state "$section_key" "$section_val" 2>/dev/null; then
+                ok "sidebar default: $section_key=$section_val"
+                have jq && manifest_add_change gsetting "$CUR_STAGE" \
+                    "org.nemo.window-state/$section_key" \
+                    "$(jq -nc --arg k "$section_key" --argjson v "$section_val" \
+                        '{schema:"org.nemo.window-state", key:$k, value:$v}')" \
+                    "gsettings reset org.nemo.window-state $section_key"
+            else
+                warn "couldn't set $section_key — that section keeps Nemo's default."
+            fi
+        done
+    fi
 fi
 
 # Image types Loupe takes over. Loupe already declares these in its own .desktop

@@ -582,8 +582,12 @@ done < <(jq -r '(.systemChanges // [])[] | select(.type=="sddm-theme-applied")
                 | [., ($c.detail.previousCurrent // ""), ($c.detail.previousCurrentFile // "")] | @tsv' "$MANIFEST")
 [ "$sddm_n" = 0 ] && info "no SDDM theme changes recorded (the login screen was never switched over)."
 
-# 8c. config-edit / default-app: things with no safe automatic reversal. install.sh
-# recorded a 'reversal' hint for each — surface it verbatim rather than acting.
+# 8c. config-edit / default-app / gsetting: things with no safe automatic reversal.
+# install.sh recorded a 'reversal' hint for each — surface it verbatim rather than
+# acting. gsetting lands here rather than getting auto-reset because dconf keys are
+# live user state: Nemo rewrites sidebar-bookmark-breakpoint itself the moment you
+# drag a bookmark across the section divider, so by uninstall time the value is as
+# likely to be the user's as ours. Printing the reset command is the honest move.
 while IFS=$'\t' read -r type key rev; do
     [ -n "${key:-}" ] || continue
     echo
@@ -594,7 +598,7 @@ while IFS=$'\t' read -r type key rev; do
     else
         MANUAL+=("$key — no reversal recorded; check this by hand")
     fi
-done < <(jq -r '(.systemChanges // [])[] | select(.type=="config-edit" or .type=="default-app")
+done < <(jq -r '(.systemChanges // [])[] | select(.type=="config-edit" or .type=="default-app" or .type=="gsetting")
                 | [.type, (.key // "?"), (.reversal // "")] | @tsv' "$MANIFEST")
 
 # 8d. Forward-compat: anything this script has no handler for. A manifest written by
@@ -607,7 +611,8 @@ while IFS=$'\t' read -r type key rev; do
 done < <(jq -r '(.systemChanges // [])[]
                 | select(.type | IN("system-file-installed","user-file-installed","owned-tree",
                                     "files-generated","files-copied","config-edit","default-app",
-                                    "service-enabled","sddm-theme-applied","patch-applied","session-seed") | not)
+                                    "gsetting","service-enabled","sddm-theme-applied","patch-applied",
+                                    "session-seed") | not)
                 | [.type, (.key // "?"), (.reversal // "")] | @tsv' "$MANIFEST")
 
 # =============================================================================

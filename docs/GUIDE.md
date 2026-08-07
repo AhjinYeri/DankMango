@@ -9,6 +9,8 @@ The stuff that got cut from the main README to keep it from being a wall of text
 - Asks if you want the standard taskbar apps (Spotify, Steam, Discord). Say no and nothing bad happens — it only pins apps that actually got installed, so you won't end up with dead icons either way
 - Sets Nemo as your default file manager, Loupe as your default image viewer, and Celluloid as your default video player
 - Fixes Nemo's icon — Cosmic (the icon theme) draws a filing cabinet for generic file managers instead of a folder, so there's a small override that fixes that
+- Seeds Nemo's sidebar with Documents / Pictures / Music / Videos / Downloads under a "Bookmarks" heading, so you get Windows' Quick Access grouping out of the box. Folders you don't have are skipped, and if you already have bookmarks it leaves them completely alone — this only ever fills in an empty list, including on updates
+- Starts that sidebar with My Computer and Bookmarks open and Devices and Network folded away, so it opens on the things you actually click instead of a wall of entries. Each section is remembered separately, and once you've expanded or collapsed one yourself that choice sticks — updates won't fold it back up
 - Copies the system-level stuff into place (keyd, the SDDM theme)
 - Installs and registers the DMS plugins
 - Sets up your per-monitor tagrules (more on this below) and seeds your taskbar pins + a default wallpaper
