@@ -43,6 +43,9 @@ SUPER, m
 SUPER, s
 SUPER, n
 SUPER, w
+NONE, Print
+SHIFT, Print
+CTRL, Print
 SUPER, p
 SUPER+ALT, r
 SUPER+SHIFT, slash

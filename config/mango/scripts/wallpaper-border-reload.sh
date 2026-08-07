@@ -102,6 +102,75 @@ ACCENT_EXTRACT="$HOME/.config/mango/scripts/wallpaper-accent-extract.sh"
 # user-owned theme.conf.user that the greeter CAN read. No elevation involved --
 # see the script's header for why. Exits quietly if the theme isn't installed.
 SDDM_PALETTE_SYNC="$HOME/.config/mango/scripts/sddm-palette-sync.sh"
+# satty's annotation colour palette (screenshot.sh's editor). Generated inline
+# below rather than as its own script: it is one jq call and has no other
+# caller, unlike the two above.
+SATTY_CONFIG="$HOME/.config/satty/config.toml"
+
+# Regenerate satty's colour palette from the wallpaper.
+#
+# WHY BOTH SCHEMES, not just .colors.dark like everything else here:
+#   Material You's DARK scheme roles are all light, low-chroma tones -- they are
+#   designed as ink ON a dark surface, not as ink on an arbitrary screenshot. On
+#   a pink wallpaper, dark.{primary,error,tertiary,secondary} came out as
+#   #ffb2ba / #ffb4ab / #ffb690 / #f6b8ac: four swatches you cannot tell apart,
+#   which is a useless palette. The LIGHT scheme's equivalents are the saturated
+#   versions (#bd0042 / #ba1a1a / #895031) and read properly as annotation ink.
+#
+#   So the palette pairs them deliberately: the light-scheme tones for marking
+#   up normal (bright) screenshots, plus the dark-scheme accent and a near-white
+#   for marking up screenshots OF DARK UIs, where dark ink would vanish. Order
+#   matters -- satty binds number keys 1-9 to palette slots, so the two you
+#   actually reach for (accent, red) are 1 and 2.
+#
+# This file is written WHOLESALE on every wallpaper change, so it deliberately
+# carries colours and nothing else; screenshot.sh passes behaviour on satty's
+# command line, which takes precedence over the config file anyway.
+regen_satty_palette() {
+    [ -f "$DMS_COLORS_JSON" ] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local palette custom
+    # -> "#rrggbbff" per line, in the slot order described above.
+    palette="$(jq -r '
+        [ .colors.light.primary,          # 1: wallpaper accent, as ink
+          .colors.light.error,            # 2: red, the universal "look here"
+          .colors.dark.primary,           # 3: accent again, for dark screenshots
+          .colors.light.on_background,    # 4: near-black
+          .colors.dark.on_background,     # 5: near-white
+          .colors.light.tertiary          # 6: warm contrast
+        ] | map(select(. != null)) | .[]' "$DMS_COLORS_JSON" 2>/dev/null)"
+    [ -n "$palette" ] || return 1
+
+    # Colour-picker presets: just the accent at both polarities.
+    custom="$(jq -r '[ .colors.light.primary, .colors.dark.primary ]
+                     | map(select(. != null)) | .[]' "$DMS_COLORS_JSON" 2>/dev/null)"
+
+    local new
+    new="$(
+        printf '%s\n' \
+            '# ! Auto-generated file. Do not edit directly.' \
+            '# Regenerated from the wallpaper palette by wallpaper-border-reload.sh.' \
+            '# satty behaviour (tools, save paths, early-exit) is set on the command' \
+            '# line in screenshot.sh, which overrides anything written here.' \
+            '' \
+            '[color-palette]' \
+            'palette = ['
+        printf '%s\n' "$palette" | sed 's/^/    "/; s/$/ff",/'
+        printf '%s\n' \
+            ']' \
+            'custom = ['
+        printf '%s\n' "$custom" | sed 's/^/    "/; s/$/ff",/'
+        printf '%s\n' ']'
+    )"
+
+    # Only touch the file when it would actually change, matching the churn
+    # guard in regen_colors_conf.
+    [ "$new" = "$(cat "$SATTY_CONFIG" 2>/dev/null)" ] && return 1
+    mkdir -p "$(dirname "$SATTY_CONFIG")"
+    printf '%s\n' "$new" > "$SATTY_CONFIG"
+    return 0
+}
 
 regen_colors_conf() {
     [ -f "$DMS_COLORS_JSON" ] || return 1
@@ -143,6 +212,9 @@ while sleep "$POLL_SECONDS"; do
         # actual change) but backgrounded anyway so it can never delay the
         # border reload below.
         [ -x "$SDDM_PALETTE_SYNC" ] && "$SDDM_PALETTE_SYNC" >/dev/null 2>&1 &
+        # And re-tint satty's annotation palette. Pure jq + a small write, so
+        # it runs inline rather than backgrounded like the two above.
+        regen_satty_palette
     fi
 
     # 2. COLORS_FILE changed (by us, or by the template if it ever works again)

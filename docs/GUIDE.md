@@ -11,6 +11,7 @@ The stuff that got cut from the main README to keep it from being a wall of text
 - Fixes Nemo's icon — Cosmic (the icon theme) draws a filing cabinet for generic file managers instead of a folder, so there's a small override that fixes that
 - Seeds Nemo's sidebar with Documents / Pictures / Music / Videos / Downloads under a "Bookmarks" heading, so you get Windows' Quick Access grouping out of the box. Folders you don't have are skipped, and if you already have bookmarks it leaves them completely alone — this only ever fills in an empty list, including on updates
 - Starts that sidebar with My Computer and Bookmarks open and Devices and Network folded away, so it opens on the things you actually click instead of a wall of entries. Each section is remembered separately, and once you've expanded or collapsed one yourself that choice sticks — updates won't fold it back up
+- Wires up the screenshot keys: `Print` snips a region and opens it in satty to mark up (crop, arrow, text, highlight, blur) before saving, `Shift+Print` does the same for the whole monitor your cursor is on, and `Ctrl+Print` grabs a region straight to the clipboard with no editor. `Super+P` still works as an alias for `Print`. Satty's pen colours are regenerated from your wallpaper alongside everything else, so they always match
 - Copies the system-level stuff into place (keyd, the SDDM theme)
 - Installs and registers the DMS plugins
 - Sets up your per-monitor tagrules (more on this below) and seeds your taskbar pins + a default wallpaper

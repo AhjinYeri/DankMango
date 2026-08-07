@@ -833,6 +833,55 @@ else
 fi
 
 # =============================================================================
+# 10b. DMS keybindsFloatingWindow = true  (SUPER+/ cheatsheet readability)
+# =============================================================================
+# The cheatsheet's description column truncates almost every entry, and this is
+# the only lever that exists for it. There is NO DMS setting for column width,
+# description length, or wrapping -- Modals/KeybindsContent.qml hardcodes all
+# three:
+#
+#     numColumns: Math.max(1, Math.min(3, Math.floor(width / 350)))
+#     ...
+#     anchors.leftMargin: 170     // fixed gutter for the key column
+#     elide: Text.ElideRight
+#     wrapMode: Text.NoWrap
+#
+# The overlay is capped at Math.min(screenWidth * 0.92, 1200), so it always
+# lands on 3 columns of ~392px, leaving ~222px per description -- about 35
+# characters at fontSizeSmall. 61% of DankMango's bind descriptions are longer
+# than that, hence "almost every one is cut off".
+#
+# keybindsFloatingWindow swaps that fixed-width overlay for a real window, which
+# a tiling monitor gives the full screen width. At 2500px the same 3 columns are
+# ~825px each, ~655px per description, and nothing truncates. Verified.
+#
+# The trade-off, stated plainly: the cheatsheet becomes a WINDOW rather than an
+# overlay, so it takes a slot in the tiling layout instead of floating above it.
+# On a float-mode monitor it opens at its implicit 1000px, which is only 2
+# columns and still clips the longest descriptions -- a windowrule can't fix
+# that either, since mango discards width/height on open_as_floating windows
+# (see the note by the Rules block in config.conf). Prefer the overlay? One line:
+#     dms ipc call settings set keybindsFloatingWindow false
+stage "10b/18 Checking DMS keybinds cheatsheet width"
+if [ -f "$SETTINGS" ] && grep -q '"keybindsFloatingWindow"[[:space:]]*:[[:space:]]*true' "$SETTINGS"; then
+    ok "keybindsFloatingWindow already true — no change needed"
+elif [ -f "$SETTINGS" ] && have jq; then
+    tmp="$(mktemp)"
+    if jq '.keybindsFloatingWindow = true' "$SETTINGS" > "$tmp" && [ -s "$tmp" ]; then
+        cp -a "$SETTINGS" "$SETTINGS.bak-$STAMP"; mv "$tmp" "$SETTINGS"
+        ok "set keybindsFloatingWindow = true (SUPER+/ descriptions stop truncating)"
+        manifest_add_backup "$SETTINGS" "$SETTINGS.bak-$STAMP" user "$CUR_STAGE"
+        manifest_add_change config-edit "$CUR_STAGE" "settings.json:keybindsFloatingWindow" \
+            "$(jq -nc --arg f "$SETTINGS" '{file:$f, key:"keybindsFloatingWindow", value:true}')" \
+            "restore $SETTINGS from its .bak-*"
+    else
+        rm -f "$tmp"; warn "couldn't edit keybindsFloatingWindow with jq — set it by hand in settings.json."
+    fi
+else
+    warn "settings.json missing or jq unavailable — couldn't verify keybindsFloatingWindow."
+fi
+
+# =============================================================================
 # 11. Alacritty config (CachyOS's default has a known duplicate-key error)
 # =============================================================================
 stage "11/18  Installing Alacritty config"

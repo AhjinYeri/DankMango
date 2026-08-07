@@ -1017,6 +1017,69 @@ which covers most of what the hub is for."
 fi
 
 # =============================================================================
+# 6. SCREENSHOT ANNOTATION (Print / Shift+Print / Ctrl+Print)
+# =============================================================================
+section "6. Screenshot annotation"
+
+# Two things can rot independently here, so they're checked separately:
+#   a) the satty package (an official-repo dependency, so normally an explicit
+#      removal rather than an update casualty). screenshot.sh degrades to a
+#      plain capture without it, so this is a WARN, not a FAIL -- you still get
+#      your screenshot, just no editor.
+#   b) the Print bind in config.conf. This one IS a real break: an update that
+#      restores a stock config.conf silently takes the whole Windows-convention
+#      keybind set with it, and the only symptom is "Print does nothing".
+if have satty; then
+    pass "satty installed ($(satty --version 2>/dev/null | head -1))"
+else
+    warn "satty not installed — Print still captures, but opens no annotation editor" \
+         "Install it: sudo pacman -S satty"
+fi
+
+if grep -qE '^[[:space:]]*bind[[:space:]]*=[[:space:]]*NONE,[[:space:]]*Print,' "$MANGO_CFG" 2>/dev/null; then
+    pass "Print bound to the region-capture + annotate flow"
+else
+    fail "screenshot keybind" \
+         "no 'Print' bind in config.conf — the Print key does nothing" \
+         "$MANGO_CFG" \
+         "Re-add the Screenshots bind block (or re-run install.sh to restore config.conf)." \
+"1. Open your mango config in a text editor. Type:
+     nano $MANGO_CFG
+
+2. Find the line that starts with '# Screenshots'. Underneath it you should
+   have four 'bind =' lines. If they're missing, add these:
+
+     bind = NONE, Print, spawn, ~/.config/mango/scripts/screenshot.sh region
+     bind = SHIFT, Print, spawn, ~/.config/mango/scripts/screenshot.sh fullscreen
+     bind = CTRL, Print, spawn, ~/.config/mango/scripts/screenshot.sh quick
+     bind = SUPER, p, spawn, ~/.config/mango/scripts/screenshot.sh region
+
+3. Save and close (Ctrl+O, Enter, then Ctrl+X).
+
+4. Tell mango to re-read the config so the keys work now rather than at your
+   next login. Type:
+     mmsg dispatch reload_config
+   (Expect it to print {\"success\":true}.)
+
+5. Press Print. You should get a crosshair to drag a region with.
+
+What breaks meanwhile: the Print key does nothing. Super+P still takes a
+screenshot, so you are not locked out of screenshots entirely."
+fi
+
+if execu "$SCRIPTS/screenshot.sh"; then
+    pass "screenshot.sh present and runnable"
+else
+    fail "screenshot.sh" "missing or not executable — every screenshot key does nothing" \
+         "$SCRIPTS/screenshot.sh" \
+         "Restore it, then: chmod +x '$SCRIPTS/screenshot.sh'" \
+         "$(manual_restore_script "$SCRIPTS/screenshot.sh")
+
+What breaks meanwhile: Print, Shift+Print, Ctrl+Print and Super+P all do
+nothing. Nothing else is affected."
+fi
+
+# =============================================================================
 # SUMMARY  --  manual fix steps first, optional Claude Code block second
 # =============================================================================
 n=${#FAILS[@]}

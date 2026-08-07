@@ -493,7 +493,7 @@ manifest_finalize() {
 # still syncs but the login screen keeps a stale/blank backdrop, silently (the script
 # logs and exits 0 by design). It is NOT part of a base CachyOS install -- on this dev
 # box it was only present as a zbar dependency -- so pin it explicitly.
-REPO_PKGS=(nemo nemo-fileroller loupe celluloid matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava imagemagick)
+REPO_PKGS=(nemo nemo-fileroller loupe celluloid matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava imagemagick satty)
 # AUR packages that DankMango needs.
 #
 # sddm-astronaut-theme was REMOVED from this list when DankMango grew its own login

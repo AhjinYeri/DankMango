@@ -187,24 +187,52 @@ pager() {
     if [[ -t 1 ]]; then less -R -X -F; else cat; fi
 }
 
+# Set by hub() while it is driving, so the navigation hint can tell the truth:
+# q returns you to the menu when you arrived from it, but quits outright when
+# you ran `docs-hub.sh keys` / `guide` straight from a terminal.
+IN_HUB=0
+
+# One line of "how do I get out of here", printed at the TOP AND BOTTOM of every
+# paged view. Both ends earn their keep: less opens at the top, but the guide is
+# longer than a screen, so by the time you have read to the end the top hint is
+# long gone -- and the end is exactly where someone stops and wonders what now.
+nav_hint() {
+    if [[ $IN_HUB -eq 1 ]]; then
+        echo "  Press q to go back to the menu."
+    else
+        echo "  Press q to quit."
+    fi
+}
+
 show_keys() {
     { echo
       echo "  KEYBOARD SHORTCUTS"
-      echo "  Descriptions come live from config.conf. Press q to close."
+      echo "  Descriptions come live from config.conf."
+      nav_hint
       render_table
+      echo
+      nav_hint
       echo
     } | pager
 }
 
 show_guide() {
     [[ -r "$GUIDE_FILE" ]] || { echo "docs-hub: $GUIDE_FILE not found" >&2; return 1; }
-    pager < "$GUIDE_FILE"
+    # The guide carries its own title, so this only adds the hint around it.
+    { nav_hint
+      echo
+      cat "$GUIDE_FILE"
+      echo
+      nav_hint
+      echo
+    } | pager
 }
 
 # ---------------------------------------------------------------------------
 # The interactive hub
 # ---------------------------------------------------------------------------
 hub() {
+    IN_HUB=1
     while :; do
         local choice
         if command -v fzf >/dev/null 2>&1; then
@@ -218,7 +246,10 @@ hub() {
                       --header=$'MangoWM help hub\nEnter to choose, Esc to quit' \
                       --no-info 2>/dev/null) || return 0
         else
+            # No fzf, so no header line -- print the same hint by hand, in the
+            # form that actually applies to a numbered `select` menu.
             echo; echo "  MangoWM help hub"
+            echo "  Type a number and press Enter. Pick Quit to leave."
             select choice in "Keyboard shortcuts" "Look up one key" "Read the guide" "Search all shortcuts" "Quit"; do break; done
             [[ -z "${choice:-}" ]] && return 0
         fi
