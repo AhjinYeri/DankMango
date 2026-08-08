@@ -969,12 +969,21 @@ Everything still works normally - this is purely how it looks.
    problem as the \"MangoWM config reload command\" entry in this report.
    Fix that one first, then re-run this check; this usually clears with it.
 
-5. If all three stages pass but the colours still look wrong, restart the
-   watcher that applies them:
-     pkill -f wallpaper-border-reload.sh
-     setsid $BORDER_WATCHER >/dev/null 2>&1 &
-   (\"pkill -f\" stops a running program by name; the second line starts it
-   again in the background, detached from your terminal.)"
+5. If all three stages pass but the colours still look wrong, then nothing
+   is broken - the wiring is fine and the colours are simply out of date.
+   Give the watcher a change to react to:
+     touch ~/.cache/DankMaterialShell/dms-colors.json
+   (That file is the palette everything else is generated from. The watcher
+   checks its timestamp twice a second and redoes its work whenever that
+   timestamp moves; \"touch\" updates the timestamp without altering a byte
+   of the contents. Your borders, the login screen and the visualiser
+   accents should all catch up within about a second.)
+
+   Do not restart the watcher for this - it will not help, and it is the
+   obvious thing to try. It records the current timestamps the moment it
+   starts and then waits for the NEXT change, so restarting it just
+   re-reads the same stale state and does nothing. The \"touch\" above is
+   the thing that actually makes it act."
     fi
     # is the colour watcher running?
     if have fuser && [ -n "$(fuser "$BORDER_LOCK" 2>/dev/null)" ]; then

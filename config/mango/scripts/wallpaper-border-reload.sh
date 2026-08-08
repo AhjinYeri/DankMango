@@ -47,6 +47,20 @@
 #   (border-color-healthcheck.sh will NOT catch this -- it checks that the chain is
 #   wired up, not that the colors are current, and reports OK on stale values.)
 #
+self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
+case "${1:-}" in -h|--help) self_help; exit 0 ;; esac
+# --help prints everything ABOVE these two lines (the only copy of this script's
+# usage), using the same one-line idiom as install.sh/update.sh/uninstall.sh.
+#
+# Two placement decisions, both deliberate:
+#   * ABOVE the EDIT-HERE box and well above the flock. This script is a
+#     long-lived watcher, so without an arm of its own `wallpaper-border-reload.sh
+#     --help` fell straight through and STARTED the watcher on any machine where
+#     it wasn't already running, instead of describing itself.
+#   * This rationale sits BELOW the arm rather than above it. The extractor stops
+#     at the first non-comment line, so anything written above would be printed to
+#     users as if it were usage text; down here it stays a maintainer note.
+
 # ===========================================================================
 # EDIT HERE AFTER A MANGO / DMS UPDATE  (the only version-sensitive bits)
 # ===========================================================================

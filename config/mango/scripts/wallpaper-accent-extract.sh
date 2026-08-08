@@ -24,6 +24,15 @@
 # =============================================================================
 set -uo pipefail
 
+# --help prints this script's own header block (the only copy of its usage).
+# Same one-line idiom as install.sh/update.sh/uninstall.sh, so docs-hub.sh's
+# command menu can shell out to it instead of storing a second description.
+#
+# Above the matugen/jq guards on purpose: those `|| exit 1` lines would make
+# --help exit non-zero (and say nothing) on a machine missing either tool.
+self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
+case "${1:-}" in -h|--help) self_help; exit 0 ;; esac
+
 STATE_JSON="$HOME/.local/state/DankMaterialShell/session.json"
 SETTINGS="$HOME/.config/DankMaterialShell/settings.json"
 OUT_DIR="$HOME/.cache/mango"

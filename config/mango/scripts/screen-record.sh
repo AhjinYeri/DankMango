@@ -32,6 +32,17 @@
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
+# --help prints this script's own header block (the only copy of its usage).
+# Same one-line idiom as install.sh/update.sh/uninstall.sh, so docs-hub.sh's
+# command menu can shell out to it instead of storing a second description.
+#
+# MUST STAY ABOVE THE PIDFILE CHECK BELOW. This script's one keybind toggles
+# recording, so ANY invocation it doesn't recognise starts wf-recorder -- which
+# meant `screen-record.sh --help` silently began recording your screen instead
+# of describing itself. Answering --help here, before the toggle, is the fix.
+self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
+case "${1:-}" in -h|--help) self_help; exit 0 ;; esac
+
 DIR="$HOME/Videos/Recordings"
 PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/mango-screen-record.pid"
 
