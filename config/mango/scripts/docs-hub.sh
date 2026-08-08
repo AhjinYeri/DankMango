@@ -38,7 +38,15 @@
 #   docs-hub.sh            open the interactive hub (this is what the keybind does)
 #   docs-hub.sh keys       print the curated key table and exit
 #   docs-hub.sh guide      print the guide and exit
+#   docs-hub.sh flags      print install/update/uninstall's own --help output
 #   docs-hub.sh check      validate keys.tsv against config.conf; non-zero if stale
+#
+# THE SAME IDEA APPLIES TO `flags`
+#   It stores no flag list either. It shells out to `install.sh --help`,
+#   `update.sh --help` and `uninstall.sh --help` in your clone, each of which
+#   prints its own header comment. A flag added to any of those three shows up
+#   here with no edit to this file. To change what a flag's description says,
+#   edit that script's header -- the text is not in here.
 #
 # ---------------------------------------------------------------------------
 set -uo pipefail
@@ -216,6 +224,90 @@ show_keys() {
     } | pager
 }
 
+# ---------------------------------------------------------------------------
+# find_repo -- locate the DankMango clone (install.sh & friends live there, not here)
+#
+# This script is installed into ~/.config/mango/scripts, which is NOT inside the
+# clone, so the three lifecycle scripts have to be found. In order of trust:
+#   1. $DANKMANGO_REPO, if it points at a real clone (override / testing hook)
+#   2. the install manifest's .dankmango.repoDir -- written by install.sh and
+#      refreshed on every install/update run, so it survives the folder being moved
+#   3. the handful of places people actually clone things into
+#   4. a depth-limited search of $HOME, skipping dotfile dirs (last resort; a v1-era
+#      manifest predates repoDir, so this is the path those installs take)
+# A candidate only counts if all three scripts are in it -- a stray empty folder
+# called "DankMango" must not win over the real clone further down the list.
+# ---------------------------------------------------------------------------
+find_repo() {
+    local m c
+    _is_repo() { [[ -f "$1/install.sh" && -f "$1/update.sh" && -f "$1/uninstall.sh" ]]; }
+
+    if [[ -n "${DANKMANGO_REPO:-}" ]] && _is_repo "$DANKMANGO_REPO"; then
+        printf '%s\n' "$DANKMANGO_REPO"; return 0
+    fi
+    m="${XDG_STATE_HOME:-$HOME/.local/state}/dankmango/manifest.json"
+    if [[ -r "$m" ]] && command -v jq >/dev/null 2>&1; then
+        c="$(jq -r '.dankmango.repoDir // empty' "$m" 2>/dev/null)"
+        if [[ -n "$c" ]] && _is_repo "$c"; then printf '%s\n' "$c"; return 0; fi
+    fi
+    for c in "$HOME/DankMango" "$HOME/Projects/DankMango" "$HOME/projects/DankMango" \
+             "$HOME/git/DankMango" "$HOME/src/DankMango" "$HOME/Documents/DankMango" \
+             "$HOME/Downloads/DankMango"; do
+        if _is_repo "$c"; then printf '%s\n' "$c"; return 0; fi
+    done
+    while IFS= read -r c; do
+        c="$(dirname "$c")"
+        if _is_repo "$c"; then printf '%s\n' "$c"; return 0; fi
+    done < <(find "$HOME" -maxdepth 4 -name '.*' -prune -o -name 'install.sh' -print 2>/dev/null)
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# show_flags -- the command-line flags of install/update/uninstall
+#
+# A thin wrapper on purpose: every word below the headings comes from the three
+# scripts' own --help. Each is run with bash (not executed) so a lost exec bit
+# doesn't break the view, and each prints its header before touching anything
+# else -- no manifest, no network, no sudo -- so this is safe to open any time.
+# ---------------------------------------------------------------------------
+show_flags() {
+    local repo s
+    if ! repo="$(find_repo)"; then
+        { echo
+          echo "  COMMAND-LINE FLAGS"
+          echo
+          echo "  Couldn't find your DankMango folder (the one you cloned, with"
+          echo "  install.sh in it), so there is nothing to read the flags out of."
+          echo
+          echo "  Nothing is broken -- this view just needs to know where that"
+          echo "  folder is. Either open a terminal in it and run:"
+          echo "      ./install.sh --help"
+          echo "      ./update.sh --help"
+          echo "      ./uninstall.sh --help"
+          echo "  or tell this hub where it lives, once:"
+          echo "      echo 'export DANKMANGO_REPO=/path/to/DankMango' >> ~/.zprofile"
+          echo "  then log out and back in."
+          echo
+          nav_hint
+          echo
+        } | pager
+        return 1
+    fi
+    { nav_hint
+      echo
+      echo "  COMMAND-LINE FLAGS"
+      echo "  Read live from the scripts in $repo."
+      echo "  These are things you type in a terminal, not keyboard shortcuts."
+      for s in install.sh update.sh uninstall.sh; do
+          printf '\n\033[1;36m  ==== %s ====\033[0m\n\n' "$s"
+          bash "$repo/$s" --help 2>&1 | sed 's/^/  /'
+      done
+      echo
+      nav_hint
+      echo
+    } | pager
+}
+
 show_guide() {
     [[ -r "$GUIDE_FILE" ]] || { echo "docs-hub: $GUIDE_FILE not found" >&2; return 1; }
     # The guide carries its own title, so this only adds the hint around it.
@@ -240,6 +332,7 @@ hub() {
                 "Keyboard shortcuts        the curated list, grouped by what you are doing" \
                 "Look up one key           type to filter every shortcut" \
                 "Read the guide            how this desktop works, in plain English" \
+                "Command-line flags        what install / update / uninstall can be told to do" \
                 "Search all shortcuts      open the full DMS cheatsheet (same as SUPER+/)" \
                 "Quit" \
                 | fzf --prompt='help > ' --height=100% --reverse \
@@ -250,7 +343,7 @@ hub() {
             # form that actually applies to a numbered `select` menu.
             echo; echo "  MangoWM help hub"
             echo "  Type a number and press Enter. Pick Quit to leave."
-            select choice in "Keyboard shortcuts" "Look up one key" "Read the guide" "Search all shortcuts" "Quit"; do break; done
+            select choice in "Keyboard shortcuts" "Look up one key" "Read the guide" "Command-line flags" "Search all shortcuts" "Quit"; do break; done
             [[ -z "${choice:-}" ]] && return 0
         fi
 
@@ -258,6 +351,7 @@ hub() {
             Keyboard*) show_keys ;;
             Look*)     lookup ;;
             Read*)     show_guide ;;
+            Command*)  show_flags ;;
             Search*)   "${CHEATSHEET_CMD[@]}" >/dev/null 2>&1 \
                          || echo "docs-hub: could not reach DMS (is the shell running?)" >&2
                        return 0 ;;
@@ -281,6 +375,7 @@ case "${1:-hub}" in
     hub|"")  hub ;;
     keys)    show_keys ;;
     guide)   show_guide ;;
+    flags)   show_flags ;;
     check)   do_check ;;
-    *)       die "usage: docs-hub.sh [hub|keys|guide|check]" ;;
+    *)       die "usage: docs-hub.sh [hub|keys|guide|flags|check]" ;;
 esac

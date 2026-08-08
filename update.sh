@@ -38,7 +38,10 @@ while [ $# -gt 0 ]; do
         --dry-run)  DRY_RUN=1; shift ;;
         --manifest) MANIFEST="${2:-}"; [ -n "$MANIFEST" ] || die "--manifest needs a path"
                     MANIFEST_DIR="$(dirname "$MANIFEST")"; shift 2 ;;
-        -h|--help)  sed -n '3,34p' "$0"; exit 0 ;;
+        # Prints the header block above (the only copy of the flag list). Was a
+        # hardcoded `sed -n '3,34p'`, which silently started leaking source code
+        # into the help as the header grew; this stops at the first non-comment line.
+        -h|--help)  awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; exit 0 ;;
         *)          die "unknown argument: $1  (try --help)" ;;
     esac
 done

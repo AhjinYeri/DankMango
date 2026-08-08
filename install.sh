@@ -16,12 +16,47 @@
 #
 #  Nothing here is hardcoded to a particular machine.
 #
-#  Usage:   cd DankMango && bash install.sh
+#  Usage:
+#     bash install.sh                          full install; asks before anything big
+#     bash install.sh --reselect-main-display  re-run ONLY the "which monitor is your
+#                                              main display" picker, then exit. Changes
+#                                              one preference; installs nothing.
+#     bash install.sh --help                   this text
+#
+#  Environment switches (advanced — both default to off):
+#     DANKMANGO_SDDM_SET_CURRENT=1   also make DankMango's login theme the ACTIVE one.
+#                                    Off by default because a bad login theme is only
+#                                    discovered at the next reboot, at a login screen,
+#                                    with no session to fix it from. Keep a TTY open.
+#     DANKMANGO_SDDM_THEME_DIR=DIR   install/read the login theme somewhere other than
+#                                    /usr/share/sddm/themes (a testing hook).
+#
+#  The other two lifecycle scripts document their own flags the same way:
+#     bash update.sh --help          what an update applies, --dry-run, --manifest
+#     bash uninstall.sh --help       how a rollback works, --dry-run, --manifest
 # =============================================================================
 
 # NOTE: deliberately NOT `set -e`. We want every stage to run and report, even
 # if an earlier one had a problem. -u catches typos; pipefail surfaces failures.
 set -uo pipefail
+
+# ---- --help ------------------------------------------------------------------
+# The flag list lives in the header comment above and NOWHERE ELSE — this prints
+# that block, so there is no second copy to drift. The same idiom is in update.sh
+# and uninstall.sh (each printing its own header), and docs-hub.sh's "Command-line
+# flags" entry just shells out to all three rather than restating any of it.
+#
+# Extraction is "every comment line from line 3 until the first non-comment line",
+# not a hardcoded sed range: the ranges this replaces had both already rotted as
+# the headers grew — one leaked source code into the help, the other cut its last
+# line off. Deliberately placed ABOVE the lib/common.sh source so that `--help`
+# still answers on a checkout where the library is missing or broken.
+self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
+case "${1:-}" in
+    -h|--help) self_help; exit 0 ;;
+    ""|--reselect-main-display) ;;   # the one real flag, handled below
+    *) printf 'install.sh: unknown argument: %s  (try --help)\n' "$1" >&2; exit 1 ;;
+esac
 
 # Resolve the repo root from this script's own location (works from anywhere).
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

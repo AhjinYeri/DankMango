@@ -86,13 +86,15 @@ DOCSHUB_DOCS="$HOME/.config/mango/docs"
 DOCSHUB_KEYS="$DOCSHUB_DOCS/keys.tsv"
 DOCSHUB_GUIDE="$DOCSHUB_DOCS/DESKTOP-GUIDE.md"
 
-# Combined-audio-OSD patch: a local patch to DMS's package-owned VolumeOSD.qml that
-# adds a device-name line (so an output switch shows ONE popup: icon+name+slider).
-# Every dms-shell update OVERWRITES that file, wiping the patch -- so we check for the
-# marker and, if gone, point at the idempotent re-apply script.
-VOLUME_OSD="/usr/share/quickshell/dms/Modules/OSD/VolumeOSD.qml"
-OSD_PATCH_MARKER='DankMango patch: combined OSD device name'
-OSD_APPLY="$SCRIPTS/apply-combined-osd-patch.sh"
+# Package-owned-file patches (the combined audio OSD one, and any added later).
+# This script deliberately knows NOTHING about individual patches any more -- no
+# target paths, no marker strings, no per-patch re-apply script names. It asks the
+# dispatcher, which owns the registry, and renders whatever comes back:
+#     apply-patches.sh status --porcelain
+#       -> id \t state \t title \t target \t package \t blurb \t verify \t restart
+# So a patch added to the registry is checked here automatically, and the one
+# command below is what users are told to run regardless of which patch went stale.
+PATCH_DISPATCH="$SCRIPTS/apply-patches.sh"
 
 # Commands mango/DMS updates have renamed before. Test-forms used by the checks:
 RELOAD_CMD=(mmsg dispatch reload_config)   # 0.13 was `mmsg -d reload_config` (now dead)
@@ -112,6 +114,16 @@ OFFERS=()                       # each entry: label US command-string (safe re-a
 section() { printf '\n%s— %s —%s\n' "$c_dim" "$1" "$c_off"; }
 pass()    { printf '  %s[PASS]%s %s\n' "$c_grn" "$c_off" "$1"; }
 warn()    { printf '  %s[WARN]%s %s\n         %s\n' "$c_yel" "$c_off" "$1" "$2"; }
+# wrap WIDTH INDENT TEXT -- fold a string that came from a registry into the
+# hand-wrapped prose around it. Everything else in this script is wrapped to ~72
+# columns by hand; a patch's blurb/verify text arrives as one long line and would
+# otherwise run off the terminal. Continuation lines get INDENT spaces so they sit
+# under the start of the sentence rather than under a step number.
+wrap() { printf '%s' "$3" | fold -s -w "$1" | awk -v i="$2" 'NR==1{print;next}{printf "%*s%s\n", i, "", $0}'; }
+# note -- neither pass nor fail: a thing that is deliberately switched off. Used for
+# opt-in patches the user declined, which are NOT problems and must not be counted
+# as failures (the old code reported one as FAIL on every single run).
+note()    { printf '  %s[ -- ]%s %s\n' "$c_dim" "$c_off" "$1"; }
 # fail COMPONENT SYMPTOM WHERE-TO-LOOK KNOWN-FIX MANUAL-STEPS
 #   MANUAL-STEPS is the plain-English, numbered, no-AI-needed fix shown to the
 #   user as the PRIMARY output. Keep it literal: exact commands, one line of
@@ -602,72 +614,116 @@ This is unusual - it normally means an update removed an audio package.
    then reboot with:
      reboot"
 
-# 2b. combined-audio-OSD patch on DMS's package-owned VolumeOSD.qml (dms updates wipe it)
-if [ ! -f "$VOLUME_OSD" ]; then
-    fail "combined audio OSD patch" "VolumeOSD.qml not found where expected -- DMS may have moved/renamed it" \
-         "expected $VOLUME_OSD; find it: pacman -Ql dms-shell | grep VolumeOSD.qml" \
-         "Update VOLUME_OSD in this script's EDIT HERE block to the new path, then re-run $OSD_APPLY (edit its TARGET to match too)." \
-"A DMS update moved the file DankMango patches to show the device name in
-the volume popup. Nothing is broken as such - volume control and audio
-switching both work fine. You just won't see the device name in the popup.
+# 2b. package-owned-file patches -- driven entirely by apply-patches.sh's registry.
+# Nothing below names a patch: the id, title, target, owning package, what it does
+# and how to test it all arrive on the porcelain line, so adding a patch to the
+# registry makes it checked (and explained) here with no edit to this script.
+if [ ! -x "$PATCH_DISPATCH" ] && [ ! -f "$PATCH_DISPATCH" ]; then
+    fail "patch dispatcher" "apply-patches.sh is missing -- can't check the patches DankMango applies to other packages' files" \
+         "$PATCH_DISPATCH (shipped in config/mango/scripts/)" \
+         "Re-run install.sh (or update.sh) from the DankMango folder to install it." \
+"DankMango makes a couple of small edits to files that belong to OTHER programs,
+and the script that checks and repairs them isn't installed here. That check is
+simply not running - it does not mean anything is broken.
 
-1. Find out where the file went. Type:
-     pacman -Ql dms-shell | grep VolumeOSD.qml
-   (\"pacman -Ql\" lists every file that a package put on your system, and
-   \"grep\" filters that long list down to lines containing the text you
-   asked for. The \"|\" pipes the first command's output into the second.)
+1. Go to the folder you cloned DankMango into (the one containing install.sh)
+   and bring it up to date:
+     git pull
+     ./update.sh
+   (\"git pull\" downloads the newest DankMango; update.sh installs what changed.)
 
-2. If that printed a path, DMS just moved the file. Note the path, then:
-     nano $SCRIPTS/post-update-health.sh
-   Press Ctrl+W, type VOLUME_OSD, press Enter, and change the path on that
-   line to the one you found. Ctrl+O then Enter to save, Ctrl+X to quit.
-
-3. Do the same in the patch script:
-     nano $OSD_APPLY
-   searching (Ctrl+W) for TARGET and updating that path too.
-
-4. Now apply the patch at its new home:
-     $OSD_APPLY
-   then:
-     dms restart
-
-5. If step 1 printed NOTHING, DMS removed this file entirely and the patch
-   no longer has anywhere to go. There is no fix to type - the feature is
-   gone until DankMango is updated for the new DMS. Please report it at
-   https://github.com/AhjinYeri/DankMango/issues so it can be updated.
-   Everything else on your system is unaffected."
-elif grep -qF "$OSD_PATCH_MARKER" "$VOLUME_OSD"; then
-    pass "combined audio OSD patch present (output switch shows one popup: icon + device name + slider)"
+2. Re-run this health check:
+     $SCRIPTS/post-update-health.sh"
 else
-    fail "combined audio OSD patch" \
-         "VolumeOSD.qml lost the DankMango patch -- an output switch shows the volume OSD with NO device name (and may stack a 2nd popup)" \
-         "$VOLUME_OSD (marker '$OSD_PATCH_MARKER'); re-applied by $OSD_APPLY" \
-         "A dms-shell update overwrote this package-owned file. Re-apply the patch (idempotent, backs up first, needs sudo):  $OSD_APPLY   then 'dms restart'." \
-"This is expected after a DMS update and is a one-command fix. DankMango
-adds the device name to the volume popup by editing a file that DMS itself
-owns - so every DMS update overwrites it and wipes the change.
+    while IFS=$'\t' read -r p_id p_state p_title p_target p_pkg p_blurb p_verify p_restart; do
+        [ -n "${p_id:-}" ] || continue
+        case "$p_state" in
+        ok)
+            pass "$p_title applied and current"
+            ;;
+        not-applied)
+            # An opt-in patch the user said no to at install. NOT a failure -- the old
+            # code reported this as one on every run, then told you to ignore it.
+            note "$p_title not applied here (optional; take it with: $PATCH_DISPATCH $p_id)"
+            ;;
+        stale)
+            fail "$p_title" \
+                 "the $p_pkg package overwrote the file this patches, so the change is gone" \
+                 "$p_target; state from: $PATCH_DISPATCH status" \
+                 "One command, idempotent, backs up first, needs sudo:  $PATCH_DISPATCH   then '$p_restart'." \
+"This is expected after a $p_pkg update and is a one-command fix.
+$(wrap 72 0 "DankMango $p_blurb. It does that by editing a file $p_pkg itself owns, so every $p_pkg update overwrites the file and wipes the change.")
 
-1. Re-apply the patch. Open a terminal (Super+Return) and type:
-     $OSD_APPLY
-   (It makes a backup copy first, and it is safe to run as many times as
-   you like - running it twice does not apply the change twice.)
+1. Re-apply it. Open a terminal (Super+Return) and type:
+     $PATCH_DISPATCH
+   (That one command checks every patch DankMango applies and re-applies only
+   the ones that have been wiped - you don't need to know their names. It backs
+   each file up first and is safe to run as many times as you like.)
 
 2. It will ask for your password, because the file it edits belongs to the
    system rather than to you. Type your password and press Enter - nothing
    appears on screen as you type it, which is normal.
 
-3. Restart the shell so the new popup is used:
-     dms restart
-   (\"the shell\" means the bar, launcher and popups. This does not log you
-   out or close your open windows.)
+3. Restart the shell so the repaired file is used:
+     $p_restart
+   (\"the shell\" means the bar, launcher and popups. This does not log you out
+   or close your open windows.)
 
-4. Test it: switch between speakers and headphones using the audio button
-   on the bar. You should get ONE popup showing the device name, its icon
-   and the volume slider together.
+4. Test it: $(wrap 60 12 "$p_verify").
 
-If you would rather not have this patch at all, it is entirely optional -
-just ignore this warning. You'll get the plain volume popup with no device
-name, and nothing else changes."
+If you would rather not have this patch at all, it is entirely optional - just
+ignore this warning and nothing else changes."
+            ;;
+        target-missing)
+            fail "$p_title" \
+                 "the file it patches is gone -- $p_pkg may have moved or removed it" \
+                 "expected $p_target; find it: pacman -Ql $p_pkg | grep $(basename "$p_target")" \
+                 "Update p_target[$p_id] in $PATCH_DISPATCH (and TARGET in the patch's own apply script) to the new path, then run $PATCH_DISPATCH." \
+"$(wrap 72 0 "A $p_pkg update moved or deleted the file DankMango patches. Nothing is broken as such - that program works fine, you just lose what the patch added: $p_blurb.")
+
+1. Find out where the file went. Type:
+     pacman -Ql $p_pkg | grep $(basename "$p_target")
+   (\"pacman -Ql\" lists every file a package put on your system, and \"grep\"
+   filters that long list down to lines containing the text you asked for.)
+
+2. If that printed a path, the file just moved. Point the patch at its new home:
+     nano $PATCH_DISPATCH
+   Press Ctrl+W, type p_target, press Enter, and change the path on the line
+   for $p_id to the one you found. Ctrl+O then Enter to save, Ctrl+X to quit.
+   Do the same for TARGET inside the patch's own apply script in $SCRIPTS.
+
+3. Apply it at its new home:
+     $PATCH_DISPATCH
+   then:
+     $p_restart
+
+4. If step 1 printed NOTHING, $p_pkg removed the file entirely and the patch has
+   nowhere left to go. There is no fix to type - the feature is gone until
+   DankMango is updated for the new $p_pkg. Please report it at
+   https://github.com/AhjinYeri/DankMango/issues so it can be updated.
+   Everything else on your system is unaffected."
+            ;;
+        script-missing)
+            fail "$p_title" \
+                 "the script that applies this patch isn't installed" \
+                 "$SCRIPTS (expected the apply script named in $PATCH_DISPATCH)" \
+                 "Re-run install.sh from the DankMango folder to restore the scripts directory." \
+"The file that knows how to apply this patch is missing from your scripts folder,
+so it cannot be repaired until that file is back.
+
+1. Go to the folder you cloned DankMango into (the one with install.sh in it):
+     ./install.sh
+   (install.sh re-copies every DankMango file into place. It backs up anything
+   it overwrites and it is safe to re-run.)
+
+2. Then re-apply the patches:
+     $PATCH_DISPATCH
+
+3. Re-run this health check to confirm:
+     $SCRIPTS/post-update-health.sh"
+            ;;
+        esac
+    done < <("$PATCH_DISPATCH" status --porcelain 2>/dev/null)
 fi
 
 # =============================================================================

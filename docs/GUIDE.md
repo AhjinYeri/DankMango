@@ -18,7 +18,7 @@ The stuff that got cut from the main README to keep it from being a wall of text
 - Asks which monitor is your main display — the one Steam games should open on. Skipping is fine, and you can set or change it any time later with `./install.sh --reselect-main-display`
 - Asks about pinning your power profile to performance (desktop only — it'll skip this on a laptop)
 - Asks about autostarting easyeffects
-- Asks about the combined audio OSD patch — this one's a bit different since it edits a file DMS itself owns, not something DankMango installed. It's opt-in for that reason, and it heals itself automatically if a DMS update wipes it. You can apply it later by hand too: `~/.config/mango/scripts/apply-combined-osd-patch.sh`
+- Asks about the combined audio OSD patch — this one's a bit different since it edits a file DMS itself owns, not something DankMango installed. It's opt-in for that reason. If you said no and change your mind, `~/.config/mango/scripts/apply-patches.sh combined-audio-osd` applies it; see [Patches](#patches-the-bits-that-edit-other-programs-files) for what happens to it after a DMS update
 - Restarts DMS so all of it takes effect
 
 ## Per-monitor layout
@@ -211,6 +211,8 @@ git pull
 ./update.sh
 ```
 
+Each of those three scripts documents its own flags — `./install.sh --help`, `./update.sh --help`, `./uninstall.sh --help`. You don't have to be in the folder to read them: the in-session help hub (`SUPER+SHIFT+/`) has a **Command-line flags** entry that prints all three, straight from the scripts themselves.
+
 `update.sh` only touches what's actually changed since you last updated — it's not re-running the whole installer. It works this out from the commit recorded in your install manifest, compares it to the repo's current state, and from there:
 
 - installs any new packages
@@ -280,7 +282,34 @@ Then run `./update.sh` from the new folder and delete `DankMango-old` once you'r
 
 After an update, run `~/.config/mango/scripts/post-update-health.sh`. It checks everything DankMango customises that a MangoWM or DMS update can quietly break — per-monitor tagrules, the monitor watcher (both that it's running and that it's still wired to start at login), the generated main-display game rules, the bar plugins, the combined audio OSD patch, the border colour chain, and the SDDM login theme (that it's installed, whether it's actually the one in use, and that its wallpaper sync is still wired up) — and prints a PASS or FAIL line for each, plus which versions changed since you last ran it.
 
-If anything fails you get a numbered list of problems, and each one comes with a plain-English walkthrough: the exact commands to type, what each does, and why you're running it. It assumes no prior Linux knowledge, and following the steps as written is the entire fix — there's no AI tooling involved. A ready-made Claude Code prompt gets printed underneath as well for anyone who happens to use it, but it's strictly optional and safe to ignore. A few failures are expected and take a single command (the audio OSD patch gets wiped by every DMS update and just needs re-applying); one or two genuinely can't be fixed by hand, and those say so plainly instead of sending you round in circles.
+If anything fails you get a numbered list of problems, and each one comes with a plain-English walkthrough: the exact commands to type, what each does, and why you're running it. It assumes no prior Linux knowledge, and following the steps as written is the entire fix — there's no AI tooling involved. A ready-made Claude Code prompt gets printed underneath as well for anyone who happens to use it, but it's strictly optional and safe to ignore. A few failures are expected and take a single command (a patch wiped by a DMS update just needs re-applying — see [Patches](#patches-the-bits-that-edit-other-programs-files) below); one or two genuinely can't be fixed by hand, and those say so plainly instead of sending you round in circles.
+
+## Patches: the bits that edit other programs' files
+
+Most of DankMango is its own files, which nothing else touches. A couple of features aren't: they're small edits to files that belong to somebody *else's* package. The combined audio OSD is the one that ships today — it adds the device name to the volume popup by editing a file the `dms-shell` package owns.
+
+Files like that get replaced wholesale whenever their package updates, which silently reverts the edit. That's expected, it's not damage, and there's one command that fixes all of it:
+
+```bash
+~/.config/mango/scripts/apply-patches.sh
+```
+
+It checks every patch DankMango knows about and re-applies **only** the ones that have actually been wiped. You don't need to know their names or which one broke. It's safe to run any time — it backs each file up first, does nothing when there's nothing to do, and running it twice doesn't apply anything twice. It asks for your password, because the files it repairs belong to the system rather than to you. Afterwards, `dms restart` to pick the change up.
+
+To see what state things are in without changing anything:
+
+```bash
+~/.config/mango/scripts/apply-patches.sh status
+```
+
+Each patch reads as one of:
+
+- **ok** — applied and current
+- **STALE** — you have this patch, and a package update wiped it. A bare `apply-patches.sh` repairs it
+- **`--`** — not applied here. These are opt-in, so this just means you said no (or were never asked). A bare run will *never* apply one of these behind your back; name it explicitly to opt in: `apply-patches.sh combined-audio-osd`
+- **BROKEN** — the package moved or deleted the file the patch targets, so it has nowhere to go. This one needs a human; the health check prints the walkthrough
+
+`--force` re-applies even when the marker is already there, which is only useful for overwriting a file you think has gone bad.
 
 ## Uninstalling
 

@@ -93,7 +93,11 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run)  DRY_RUN=1; shift ;;
         --manifest) MANIFEST="${2:-}"; [ -n "$MANIFEST" ] || die "--manifest needs a path"; shift 2 ;;
-        -h|--help)  sed -n '3,36p' "$0"; exit 0 ;;
+        # Header block above = the only copy of the flag list. Same idiom as
+        # install.sh/update.sh (inlined rather than shared: uninstall.sh deliberately
+        # does not source lib/common.sh). Replaces a hardcoded `sed -n '3,36p'` that
+        # had drifted a line short and cut the header's closing rule off.
+        -h|--help)  awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; exit 0 ;;
         *)          die "unknown argument: $1  (try --help)" ;;
     esac
 done
