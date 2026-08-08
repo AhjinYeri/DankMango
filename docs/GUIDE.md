@@ -220,6 +220,62 @@ git pull
 
 It won't overwrite something you've hand-edited since installing without checking with you first. And if it can't work out the delta safely — say your last update got interrupted, or your git history's been rebased, or you've got uncommitted changes sitting around — it'll just tell you and point you at `install.sh` instead of guessing.
 
+## If `git pull` says your branch has diverged
+
+You run `git pull` and instead of an update you get a wall of text mentioning `pull.rebase`, `--ff-only`, or `Need to specify how to reconcile divergent branches`. `update.sh` catches the same situation and prints a plain-English version of everything below, so you don't have to come here — but this is the write-up if you hit it outside of running the updater.
+
+**What it means.** Your DankMango folder has changes GitHub doesn't have, and GitHub has changes your folder doesn't. Git calls that a *diverged branch*: the same project moved on in two directions at once, so git refuses to guess which side wins and asks you to pick a merge strategy instead. You don't need to pick one.
+
+Nothing is broken and nothing is lost. Your desktop keeps running exactly as it is — this is only about the folder you cloned into.
+
+**The fix.** That folder is only ever meant to be a copy of DankMango, so the answer is to throw your side away and take GitHub's. The command for that is `git reset --hard`, which **cannot be undone** — it permanently deletes anything in that folder that isn't on GitHub. So check what's in there first. That check is not optional.
+
+1. In a terminal, go to the folder and ask git what's sitting in it:
+
+   ```bash
+   cd ~/DankMango        # wherever you cloned it
+   git status
+   ```
+
+2. Read the reply.
+
+   - `nothing to commit, working tree clean` means you have nothing to lose — go to step 3.
+   - Anything listed under **Changes not staged for commit**, **Changes to be committed**, or **Untracked files** is *yours*, and step 4 will delete it. Stop and copy it somewhere outside the folder first (`cp ~/DankMango/the-file ~/Desktop/`), then carry on.
+
+   This only concerns the clone. Your live settings live in `~/.config/mango` and `~/.config/DankMaterialShell`, and none of these steps touch them.
+
+3. Only if you've deliberately made your own commits in that folder — you'd know, you'd have typed `git commit` yourself — park them under a name first so they survive:
+
+   ```bash
+   git branch my-dankmango-changes
+   ```
+
+4. Now take GitHub's version:
+
+   ```bash
+   git fetch origin
+   git reset --hard origin/main
+   ```
+
+   `fetch` downloads the newest version without applying it; `reset --hard` then makes your folder identical to it, discarding the local side you checked in steps 2 and 3.
+
+5. Update as normal:
+
+   ```bash
+   ./update.sh --dry-run
+   ./update.sh
+   ```
+
+If any of that goes sideways, a clean re-clone is always safe — nothing about your installed desktop lives in this folder:
+
+```bash
+cd ~                              # one level above the clone
+mv DankMango DankMango-old
+git clone https://github.com/AhjinYeri/DankMango.git
+```
+
+Then run `./update.sh` from the new folder and delete `DankMango-old` once you're happy.
+
 ## What to do when the health check fails
 
 After an update, run `~/.config/mango/scripts/post-update-health.sh`. It checks everything DankMango customises that a MangoWM or DMS update can quietly break — per-monitor tagrules, the monitor watcher (both that it's running and that it's still wired to start at login), the generated main-display game rules, the bar plugins, the combined audio OSD patch, the border colour chain, and the SDDM login theme (that it's installed, whether it's actually the one in use, and that its wallpaper sync is still wired up) — and prints a PASS or FAIL line for each, plus which versions changed since you last ran it.

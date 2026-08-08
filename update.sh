@@ -24,7 +24,8 @@
 #
 #  When it can't safely compute the delta (interrupted last run, rebased/force-
 #  pushed history, a dirty repo tree) it says so and tells you to re-run install.sh
-#  rather than guessing.
+#  rather than guessing. A clone that has diverged from GitHub (the state a failed
+#  `git pull` leaves behind) gets its own plain-English walkthrough instead.
 # =============================================================================
 
 set -uo pipefail
@@ -227,6 +228,148 @@ migrate_strip-dead-floatsize-execonce() {
 }
 
 # =============================================================================
+# Diverged-branch guard
+# =============================================================================
+# The one git state that hands a beginner nothing but jargon. `git pull` fetches
+# fine, then refuses to merge and prints its wall of pull.rebase / --ff-only hints,
+# so the user arrives here with origin/main already downloaded and both sides
+# holding commits the other doesn't have. Left alone, update.sh says one of two
+# unhelpful things: "already up to date" (HEAD never moved, so the delta is empty),
+# or the lastAppliedCommit fallback blaming a force-push and sending them to
+# install.sh — which does not fix a diverged clone.
+#
+# Deliberately narrow. It fires ONLY when the branch is both AHEAD of and BEHIND
+# its upstream. Ahead-only (local commits, nothing new on GitHub), behind-only (an
+# ordinary pending update), detached HEAD, no upstream configured, no remote at
+# all — every one of those keeps the existing behaviour untouched. Nothing here
+# fetches: it reads the remote-tracking refs already on disk, so the updater stays
+# offline-safe and gains no network step. Every git call is silenced, because the
+# whole point is that our explanation replaces git's hint-spam rather than joining it.
+git_divergence() {  # -> "AHEAD BEHIND UPSTREAM" when diverged; non-zero otherwise
+    local up counts ahead behind
+    git -C "$REPO_DIR" symbolic-ref -q HEAD >/dev/null 2>&1 || return 1   # detached HEAD
+    up="$(git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)" || return 1
+    [ -n "$up" ] || return 1
+    counts="$(git -C "$REPO_DIR" rev-list --left-right --count "HEAD...$up" 2>/dev/null)" || return 1
+    ahead="${counts%%[[:space:]]*}"; behind="${counts##*[[:space:]]}"
+    case "$ahead$behind" in *[!0-9]*|'') return 1 ;; esac
+    [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ] || return 1
+    printf '%s %s %s\n' "$ahead" "$behind" "$up"
+}
+
+# Same contract as post-update-health.sh's failure entries: a complete walkthrough a
+# total beginner can follow start to finish, with the optional Claude Code prompt
+# clearly secondary. Prints and exits — there is no safe delta to compute from here.
+explain_diverged_branch() {  # explain_diverged_branch AHEAD BEHIND UPSTREAM
+    local ahead="$1" behind="$2" up="$3" remote branch parent
+    remote="${up%%/*}"
+    branch="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+    parent="$(dirname "$REPO_DIR")"
+    echo
+    printf '%s===================================================================%s\n' "$c_red" "$c_off"
+    printf ' %sSTOP — your DankMango folder and GitHub have gone out of step%s\n' "$c_red" "$c_off"
+    printf '%s===================================================================%s\n' "$c_red" "$c_off"
+    cat <<EOF
+
+WHAT HAS HAPPENED
+
+  Your copy of DankMango has $ahead change(s) that GitHub doesn't have, and
+  GitHub has $behind change(s) that your copy doesn't. Git calls this a
+  "diverged branch": the same project moved on in two directions at once,
+  so git stops rather than guess which side wins.
+
+  If you just ran "git pull" and got a block of text mentioning pull.rebase,
+  --ff-only, or "Need to specify how to reconcile divergent branches" — that
+  was this exact problem, described in git's own language. It was asking you
+  to choose a merge strategy. That isn't a decision you need to make here.
+
+  Nothing is broken and nothing has been lost. Your desktop keeps running
+  exactly as it is. This is only about the folder you cloned into:
+    $REPO_DIR
+
+HOW TO FIX IT YOURSELF
+
+  That folder is only ever meant to be a copy of DankMango, so the fix is to
+  throw your side away and take GitHub's. The command for that is
+  "git reset --hard", and it cannot be undone: it permanently deletes any
+  changes in that folder that aren't on GitHub. So you check what's in there
+  FIRST. Steps 1 and 2 are that check, and they are not optional.
+
+  1. Open a terminal (Super+Return — "Super" is the key with the Windows
+     logo on it) and go to the folder:
+       cd $REPO_DIR
+
+  2. Ask git whether anything of your own is sitting in there:
+       git status
+
+     Read the reply before going any further:
+
+     * If it says "nothing to commit, working tree clean", there is nothing
+       of yours to lose. Go to step 3.
+
+     * If it lists files under "Changes not staged for commit", "Changes to
+       be committed", or "Untracked files", those are YOUR edits and step 4
+       WILL DELETE THEM. Do not run step 4 yet. Copy anything you want to
+       keep to somewhere outside the folder first, for example:
+         cp $REPO_DIR/the-file-you-edited ~/Desktop/
+       Then carry on.
+
+     * This only concerns the clone. Your live settings live elsewhere (in
+       ~/.config/mango and ~/.config/DankMaterialShell) and nothing in these
+       steps touches them.
+
+  3. Only if you have deliberately made your own commits in this folder —
+     you would know, because you'd have typed "git commit" yourself — save
+     them under a name so they survive:
+       git branch my-dankmango-changes
+     That leaves a bookmark pointing at your version of the history, so it
+     still exists after step 4. Skip this if you've never committed here.
+
+  4. Now download GitHub's latest and make your folder match it exactly:
+       git fetch $remote
+       git reset --hard $up
+
+     ("fetch" downloads the newest version without applying it. "reset
+     --hard" then makes your folder identical to it, discarding the local
+     side you just checked in steps 2 and 3.)
+
+  5. Carry on with the update the normal way:
+       ./update.sh --dry-run
+       ./update.sh
+
+  If any of that goes wrong, downloading a clean copy is always safe —
+  nothing about your installed desktop lives in this folder:
+    cd $parent
+    mv $(basename "$REPO_DIR") $(basename "$REPO_DIR")-old
+    git clone https://github.com/AhjinYeri/DankMango.git
+  Then run ./update.sh from the new folder, and delete the -old one once
+  you're happy.
+
+EOF
+    printf '%s═══════════════════════════════════════════════════════════════%s\n' "$c_dim" "$c_off"
+    printf ' %sPrefer to use Claude Code instead?%s\n' "$c_dim" "$c_off"
+    printf '%s═══════════════════════════════════════════════════════════════%s\n' "$c_dim" "$c_off"
+    cat <<EOF
+ This part is only useful if you already have Claude Code installed. If you
+ don't, ignore it — the steps above are the complete fix and need no AI
+ tooling at all. Otherwise, paste this block in.
+
+============ COPY EVERYTHING BELOW TO CLAUDE CODE =============
+My DankMango git clone at $REPO_DIR has a diverged branch: local "$branch" is
+$ahead commit(s) ahead of and $behind behind "$up", so "git pull" fails and
+./update.sh stops before it can work out what to update.
+
+I want the clone to match $up exactly. Before changing anything, please run
+"git status" and "git log --oneline $up..HEAD", tell me whether anything in
+there is mine and worth keeping, and back it up if so. Only then bring the
+clone in line with $up. Tell me what you're going to run before you run it,
+and don't discard anything without confirming with me first.
+==============================================================
+EOF
+    echo
+}
+
+# =============================================================================
 # 1. Read the manifest and work out the delta
 # =============================================================================
 stage "1/6  Working out what changed"
@@ -239,6 +382,16 @@ STATUS="$(jq -r '.dankmango.status // "unknown"' "$MANIFEST")"
 LAST="$(jq -r '.dankmango.lastAppliedCommit // ""' "$MANIFEST")"
 HEAD="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo "")"
 [ -n "$HEAD" ] || die "couldn't read repo HEAD — is $REPO_DIR a git checkout?"
+
+# Before any delta maths: is this clone even in step with GitHub? A diverged branch has
+# to be answered here, in plain English, or every later message is misleading. Checked
+# in --dry-run too — the state is just as broken, and this reports rather than changes.
+if DIVERGED="$(git_divergence)"; then
+    read -r D_AHEAD D_BEHIND D_UP <<<"$DIVERGED"
+    warn "your clone and GitHub have diverged ($D_AHEAD local change(s), $D_BEHIND on GitHub) — read the box below."
+    explain_diverged_branch "$D_AHEAD" "$D_BEHIND" "$D_UP"
+    exit 1
+fi
 
 # The fallbacks: anything we can't compute a trustworthy delta from -> re-run install.sh.
 fallback() { warn "$1"; echo; die "Can't safely compute the update delta — just re-run install.sh for this update."; }
