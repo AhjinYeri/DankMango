@@ -28,6 +28,16 @@
 #  This script is the ONLY thing that tells mango to change focus.
 # =============================================================================
 
+# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
+# It lives here, not in the hub, so there is no second copy to drift.
+# SUMMARY: step through windows (this is what Alt+Tab runs)
+
+# --help prints this script's own header block (the only copy of its usage).
+# Same one-line idiom as install.sh/update.sh/uninstall.sh, so docs-hub.sh's
+# command menu can shell out to it instead of storing a second description.
+self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
+case "${1:-}" in -h|--help) self_help; exit 0 ;; esac
+
 dir="${1:-next}"
 case "$dir" in
     next|prev) ;;

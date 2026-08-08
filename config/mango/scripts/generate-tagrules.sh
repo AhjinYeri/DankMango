@@ -25,6 +25,10 @@
 # =============================================================================
 set -uo pipefail
 
+# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
+# It lives here, not in the hub, so there is no second copy to drift.
+# SUMMARY: regenerate the per-monitor tagrules from live outputs
+
 # ---- ########## EDIT HERE AFTER A MANGO UPDATE ########## -------------------
 # The query that lists connected output NAMES -- the SAME call the Window Mode
 # plugin and post-update-health.sh use. If output detection breaks after a mango
@@ -46,6 +50,12 @@ command -v jq   >/dev/null 2>&1 || die "jq not found -- install jq (it's in the 
 # selector, lib/common.sh) can ask "what monitors are there?" without duplicating
 # the query above -- keeping the EDIT-HERE box the single place a mango rename has
 # to be fixed. Exits 1 with no output if nothing is connected / mango isn't up.
+# --help prints this script's own header block (the only copy of its usage).
+# Same one-line idiom as install.sh/update.sh/uninstall.sh, so docs-hub.sh's
+# command menu can shell out to it instead of storing a second description.
+self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
+case "${1:-}" in -h|--help) self_help; exit 0 ;; esac
+
 if [ "${1:-}" = "--list-outputs" ]; then
   names="$(outputs_names | sed '/^[[:space:]]*$/d' | sort -u)"
   [ -n "$names" ] || exit 1

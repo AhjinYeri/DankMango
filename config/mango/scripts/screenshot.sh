@@ -48,6 +48,16 @@
 #
 set -uo pipefail
 
+# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
+# It lives here, not in the hub, so there is no second copy to drift.
+# SUMMARY: take a screenshot: region, fullscreen or quick
+
+# --help prints this script's own header block (the only copy of its usage).
+# Same one-line idiom as install.sh/update.sh/uninstall.sh, so docs-hub.sh's
+# command menu can shell out to it instead of storing a second description.
+self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
+case "${1:-}" in -h|--help) self_help; exit 0 ;; esac
+
 MODE="${1:-region}"
 
 DIR="$HOME/Pictures/Screenshots"

@@ -38,19 +38,28 @@
 #   docs-hub.sh            open the interactive hub (this is what the keybind does)
 #   docs-hub.sh keys       print the curated key table and exit
 #   docs-hub.sh guide      print the guide and exit
-#   docs-hub.sh flags      print install/update/uninstall's own --help output
+#   docs-hub.sh flags      list every DankMango command and what it is for
+#   docs-hub.sh flags NAME show one command's full --help (e.g. update.sh)
 #   docs-hub.sh check      validate keys.tsv against config.conf; non-zero if stale
 #
 # THE SAME IDEA APPLIES TO `flags`
-#   It stores no flag list either. It shells out to `install.sh --help`,
-#   `update.sh --help` and `uninstall.sh --help` in your clone, each of which
-#   prints its own header comment. A flag added to any of those three shows up
-#   here with no edit to this file. To change what a flag's description says,
-#   edit that script's header -- the text is not in here.
+#   It stores no descriptions either. The COMMANDS list below says WHICH commands
+#   to show and in what order; each one-liner is read live from that script's own
+#   `# SUMMARY:` header line, and the detail view is that script's own `--help`.
+#   A flag added to any listed script shows up here with no edit to this file.
+#   To change what a command says here, edit that script's header comment.
 #
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
+# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
+# It lives here, not in the hub, so there is no second copy to drift.
+# SUMMARY: this help hub: keys, guide, flags, check
+
+# Where the installed helper scripts live. Resolved from this script's own
+# location rather than assumed, so the command menu still finds its siblings if
+# the whole scripts dir is moved or run from a checkout.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANGO_DIR="${MANGO_DIR:-$HOME/.config/mango}"
 CONFIG="$MANGO_DIR/config.conf"
 DOCS_DIR="$MANGO_DIR/docs"
@@ -188,6 +197,28 @@ do_check() {
     local n
     n=$(grep -acE '^[[:space:]]*[^#=[:space:]]' "$KEYS_FILE")
     echo "docs-hub: OK -- $n curated keys, all resolve against config.conf"
+
+    # The command menu goes stale the same way the key table does: a script gets
+    # renamed or loses its "# SUMMARY:" line and the menu quietly shows MISSING.
+    # Report it here too, so post-update-health.sh catches it. A missing REPO
+    # script is NOT counted -- not having the clone on this machine is normal and
+    # is explained in the view itself, not a defect in the list.
+    local bad=0 e p name
+    for e in "${COMMANDS[@]}"; do
+        case "$e" in "="*) continue ;; repo:*) continue ;; esac
+        name="$(basename "${e#*:}")"
+        p="$(cmd_path "$e")" || continue
+        if [ ! -f "$p" ]; then
+            echo "docs-hub: command MISSING -- $name is listed but not installed" >&2; bad=1
+        elif [ -z "$(cmd_summary "$p")" ]; then
+            echo "docs-hub: command MISSING -- $name has no '# SUMMARY:' line" >&2; bad=1
+        fi
+    done
+    if [ "$bad" -eq 1 ]; then
+        echo "docs-hub: the command menu is STALE (see above)" >&2
+        return 1
+    fi
+    echo "docs-hub: OK -- ${#COMMANDS[@]} command-menu entries all resolve"
     return 0
 }
 
@@ -263,49 +294,147 @@ find_repo() {
 }
 
 # ---------------------------------------------------------------------------
-# show_flags -- the command-line flags of install/update/uninstall
+# COMMANDS -- the terminal side of DankMango
 #
-# A thin wrapper on purpose: every word below the headings comes from the three
-# scripts' own --help. Each is run with bash (not executed) so a lost exec bit
-# doesn't break the view, and each prints its header before touching anything
-# else -- no manifest, no network, no sudo -- so this is safe to open any time.
+# Same progressive disclosure as the rest of the hub: a short menu first (one
+# line per command), the full --help only for the one you pick. The previous
+# version concatenated three --help outputs into a ~114-line wall, which buried
+# the thing you were looking for and got worse with every command added.
+#
+# WHERE THE TEXT COMES FROM -- THE SAME RULE AS THE KEY TABLE
+#   This list stores WHICH commands to show and in what order. It stores none of
+#   their descriptions. The one-liner beside each name is read live from that
+#   script's own `# SUMMARY:` header line, and the detail view is that script's
+#   own `--help`. To change what a command says here, edit that script's header.
+#   A command whose SUMMARY has gone missing renders as MISSING rather than
+#   silently blank -- the same way keys.tsv reports a bind that no longer exists.
+#
+# Entries are "=Section" or a script path relative to REPO (lifecycle scripts)
+# or to this script's own directory (everything installed under ~/.config).
 # ---------------------------------------------------------------------------
-show_flags() {
-    local repo s
-    if ! repo="$(find_repo)"; then
-        { echo
-          echo "  COMMAND-LINE FLAGS"
+COMMANDS=(
+    "=Setting up and updating   (run these from your DankMango folder)"
+    "repo:install.sh"
+    "repo:update.sh"
+    "repo:uninstall.sh"
+    "=Checking and fixing   (run these from anywhere)"
+    "here:post-update-health.sh"
+    "here:apply-patches.sh"
+    "here:border-color-healthcheck.sh"
+    "=Desktop tools   (mostly run for you by keybinds and watchers)"
+    "here:monitor-watcher.sh"
+    "here:set-monitor-layout.sh"
+    "here:generate-tagrules.sh"
+    "here:sddm-palette-sync.sh"
+    "here:screenshot.sh"
+    "here:alt-switcher.sh"
+    "here:docs-hub.sh"
+)
+
+# cmd_path ENTRY -> absolute path, or non-zero if we can't resolve it.
+# Only the repo: ones can fail (the clone may be missing); here: ones sit beside
+# this script, which is by definition installed if this script is running.
+cmd_path() {
+    local e="$1"
+    case "$e" in
+        here:*) printf '%s/%s\n' "$SCRIPT_DIR" "${e#here:}" ;;
+        repo:*) local r; r="$(find_repo)" || return 1
+                printf '%s/%s\n' "$r" "${e#repo:}" ;;
+    esac
+}
+
+# cmd_summary PATH -> the script's own one-line SUMMARY, or "" if it has none.
+# Deliberately anchored to a line starting "# SUMMARY: " so the explanatory
+# comment above it (which also contains the word SUMMARY) can never match.
+cmd_summary() {
+    [ -r "$1" ] || return 1
+    sed -n 's/^# SUMMARY: //p' "$1" | head -1
+}
+
+# The menu body, shared by the fzf and no-fzf paths. One line per command:
+#   name  <spaces>  its own SUMMARY
+render_commands() {
+    local e p name sum
+    for e in "${COMMANDS[@]}"; do
+        case "$e" in
+            "="*) printf '\n  \033[1;36m%s\033[0m\n' "${e#=}" ; continue ;;
+        esac
+        name="$(basename "${e#*:}")"
+        if ! p="$(cmd_path "$e")" || [ ! -f "$p" ]; then
+            printf '    \033[1;31m%-28s MISSING -- not installed here\033[0m\n' "$name"
+            continue
+        fi
+        sum="$(cmd_summary "$p")"
+        if [ -z "$sum" ]; then
+            printf '    \033[1;31m%-28s MISSING -- no "# SUMMARY:" line in %s\033[0m\n' "$name" "$p"
+        else
+            printf '    \033[1;37m%-28s\033[0m %s\n' "$name" "$sum"
+        fi
+    done
+}
+
+# show_one NAME -- the full --help for a single command.
+#
+# Run with `bash` rather than executed, so a lost exec bit doesn't break the
+# view. Every script listed above answers --help before it does anything else --
+# no manifest, no network, no sudo, and (for the two health checks) without
+# running the check -- so opening this can never have a side effect.
+show_one() {
+    local want="$1" e p
+    for e in "${COMMANDS[@]}"; do
+        case "$e" in "="*) continue ;; esac
+        [ "$(basename "${e#*:}")" = "$want" ] || continue
+        p="$(cmd_path "$e")" && [ -f "$p" ] || { echo "docs-hub: $want is not installed here" >&2; return 1; }
+        { nav_hint
+          printf '\n\033[1;36m  %s\033[0m\n' "$want"
           echo
-          echo "  Couldn't find your DankMango folder (the one you cloned, with"
-          echo "  install.sh in it), so there is nothing to read the flags out of."
-          echo
-          echo "  Nothing is broken -- this view just needs to know where that"
-          echo "  folder is. Either open a terminal in it and run:"
-          echo "      ./install.sh --help"
-          echo "      ./update.sh --help"
-          echo "      ./uninstall.sh --help"
-          echo "  or tell this hub where it lives, once:"
-          echo "      echo 'export DANKMANGO_REPO=/path/to/DankMango' >> ~/.zprofile"
-          echo "  then log out and back in."
+          bash "$p" --help 2>&1 | sed 's/^/  /'
           echo
           nav_hint
           echo
         } | pager
-        return 1
-    fi
-    { nav_hint
-      echo
-      echo "  COMMAND-LINE FLAGS"
-      echo "  Read live from the scripts in $repo."
-      echo "  These are things you type in a terminal, not keyboard shortcuts."
-      for s in install.sh update.sh uninstall.sh; do
-          printf '\n\033[1;36m  ==== %s ====\033[0m\n\n' "$s"
-          bash "$repo/$s" --help 2>&1 | sed 's/^/  /'
-      done
-      echo
-      nav_hint
-      echo
-    } | pager
+        return 0
+    done
+    echo "docs-hub: no such command: $want" >&2
+    return 1
+}
+
+# The command menu itself. fzf gives type-to-filter and a second level; without
+# it, `select` does the same job with numbers.
+show_flags() {
+    local repo_missing=0 choice name
+    find_repo >/dev/null 2>&1 || repo_missing=1
+    while :; do
+        if command -v fzf >/dev/null 2>&1 && [[ -t 0 ]]; then
+            choice=$(render_commands \
+                | sed -e 's/\x1b\[[0-9;]*m//g' \
+                | grep -aE '^    \S' \
+                | fzf --prompt='command > ' --height=100% --reverse \
+                      --header=$'DankMango commands\nEnter for the full --help, Esc to go back' \
+                      --no-info 2>/dev/null) || return 0
+            [ -n "$choice" ] || return 0
+            name="${choice%% *}"
+            show_one "$name"
+        else
+            { echo
+              echo "  DANKMANGO COMMANDS"
+              echo "  Things you type in a terminal. Descriptions come from each script."
+              [ "$repo_missing" = 1 ] && {
+                  echo
+                  echo "  NOTE: your DankMango folder (the cloned one, with install.sh in"
+                  echo "  it) wasn't found, so install/update/uninstall show as MISSING."
+                  echo "  Point the hub at it once with:"
+                  echo "      echo 'export DANKMANGO_REPO=/path/to/DankMango' >> ~/.zprofile"
+              }
+              render_commands
+              echo
+              echo "  Run any of them with --help in a terminal for the full details,"
+              echo "  e.g.  post-update-health.sh --help"
+              echo
+            } | pager
+            return 0
+        fi
+    done
 }
 
 show_guide() {
@@ -332,7 +461,7 @@ hub() {
                 "Keyboard shortcuts        the curated list, grouped by what you are doing" \
                 "Look up one key           type to filter every shortcut" \
                 "Read the guide            how this desktop works, in plain English" \
-                "Command-line flags        what install / update / uninstall can be told to do" \
+                "Commands you can type     every DankMango command, and what its options do" \
                 "Search all shortcuts      open the full DMS cheatsheet (same as SUPER+/)" \
                 "Quit" \
                 | fzf --prompt='help > ' --height=100% --reverse \
@@ -343,7 +472,7 @@ hub() {
             # form that actually applies to a numbered `select` menu.
             echo; echo "  MangoWM help hub"
             echo "  Type a number and press Enter. Pick Quit to leave."
-            select choice in "Keyboard shortcuts" "Look up one key" "Read the guide" "Command-line flags" "Search all shortcuts" "Quit"; do break; done
+            select choice in "Keyboard shortcuts" "Look up one key" "Read the guide" "Commands you can type" "Search all shortcuts" "Quit"; do break; done
             [[ -z "${choice:-}" ]] && return 0
         fi
 
@@ -351,7 +480,7 @@ hub() {
             Keyboard*) show_keys ;;
             Look*)     lookup ;;
             Read*)     show_guide ;;
-            Command*)  show_flags ;;
+            Commands*) show_flags ;;
             Search*)   "${CHEATSHEET_CMD[@]}" >/dev/null 2>&1 \
                          || echo "docs-hub: could not reach DMS (is the shell running?)" >&2
                        return 0 ;;
@@ -371,11 +500,17 @@ lookup() {
             --no-info >/dev/null 2>&1
 }
 
+# --help prints the header block above -- same idiom as every other DankMango
+# script, so the command menu can shell out to this one too.
+self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
+
 case "${1:-hub}" in
+    -h|--help) self_help ;;
     hub|"")  hub ;;
     keys)    show_keys ;;
     guide)   show_guide ;;
-    flags)   show_flags ;;
+    flags|commands)
+             if [ -n "${2:-}" ]; then show_one "$2"; else show_flags; fi ;;
     check)   do_check ;;
-    *)       die "usage: docs-hub.sh [hub|keys|guide|flags|check]" ;;
+    *)       die "usage: docs-hub.sh [hub|keys|guide|flags [NAME]|check]" ;;
 esac

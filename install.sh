@@ -40,6 +40,10 @@
 # if an earlier one had a problem. -u catches typos; pipefail surfaces failures.
 set -uo pipefail
 
+# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
+# It lives here, not in the hub, so there is no second copy to drift.
+# SUMMARY: install or re-install DankMango on this machine
+
 # ---- --help ------------------------------------------------------------------
 # The flag list lives in the header comment above and NOWHERE ELSE — this prints
 # that block, so there is no second copy to drift. The same idiom is in update.sh

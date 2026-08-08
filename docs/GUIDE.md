@@ -211,7 +211,7 @@ git pull
 ./update.sh
 ```
 
-Each of those three scripts documents its own flags — `./install.sh --help`, `./update.sh --help`, `./uninstall.sh --help`. You don't have to be in the folder to read them: the in-session help hub (`SUPER+SHIFT+/`) has a **Command-line flags** entry that prints all three, straight from the scripts themselves.
+Every DankMango script documents its own flags — `./install.sh --help`, `./update.sh --help`, `./uninstall.sh --help`, and the same for the helper scripts in `~/.config/mango/scripts/`. You don't have to hunt for them: the in-session help hub (`SUPER+SHIFT+/`) has a **Commands you can type** entry listing every one with a one-line description, and picking one shows its full `--help`. Same thing from a terminal with `~/.config/mango/scripts/docs-hub.sh flags`, or `docs-hub.sh flags update.sh` to jump straight to one.
 
 `update.sh` only touches what's actually changed since you last updated — it's not re-running the whole installer. It works this out from the commit recorded in your install manifest, compares it to the repo's current state, and from there:
 

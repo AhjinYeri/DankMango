@@ -29,6 +29,11 @@
 # =============================================================================
 
 set -uo pipefail
+
+# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
+# It lives here, not in the hub, so there is no second copy to drift.
+# SUMMARY: apply only what changed since your last update
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$REPO_DIR/lib/common.sh"   # pretty output, sys_copy/user_copy, manifest_*, arrays, route_dest, file_hash
 

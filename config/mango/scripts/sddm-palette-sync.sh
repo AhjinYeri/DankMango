@@ -83,6 +83,10 @@
 
 set -uo pipefail
 
+# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
+# It lives here, not in the hub, so there is no second copy to drift.
+# SUMMARY: push your wallpaper colours to the login screen
+
 DMS_COLORS_JSON="${DMS_COLORS_JSON:-$HOME/.cache/DankMaterialShell/dms-colors.json}"
 DMS_SESSION_JSON="${DMS_SESSION_JSON:-$HOME/.local/state/DankMaterialShell/session.json}"
 THEME_DIR="${DANKMANGO_SDDM_THEME_DIR:-/usr/share/sddm/themes/dankmango}"
@@ -95,6 +99,12 @@ MAX_DIM="${DANKMANGO_SDDM_WALLPAPER_MAX:-2560}"
 
 VERBOSE=0
 DRY_RUN=0
+# --help prints this script's own header block (the only copy of its usage).
+# Same one-line idiom as install.sh/update.sh/uninstall.sh, so docs-hub.sh's
+# command menu can shell out to it instead of storing a second description.
+self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
+case "${1:-}" in -h|--help) self_help; exit 0 ;; esac
+
 for arg in "$@"; do
     case "$arg" in
         --verbose) VERBOSE=1 ;;

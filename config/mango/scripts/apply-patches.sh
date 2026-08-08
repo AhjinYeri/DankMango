@@ -54,6 +54,10 @@
 # =============================================================================
 set -uo pipefail
 
+# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
+# It lives here, not in the hub, so there is no second copy to drift.
+# SUMMARY: re-apply DankMango patches a package update wiped
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Overridable for the same reason as DANKMANGO_PATCH_ROOT below: the "has this
 # machine ever opted in?" test reads this directory, so it has to be steerable to

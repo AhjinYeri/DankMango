@@ -41,6 +41,10 @@
 # what it couldn't do beats one that dies silently at step 3.
 set -uo pipefail
 
+# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
+# It lives here, not in the hub, so there is no second copy to drift.
+# SUMMARY: roll the whole install back, using the manifest
+
 STAMP="$(date +%Y%m%d-%H%M%S)"
 WARNINGS=0
 DRY_RUN=0
