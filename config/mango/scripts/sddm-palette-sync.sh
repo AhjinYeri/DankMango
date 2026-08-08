@@ -83,9 +83,12 @@
 
 set -uo pipefail
 
-# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
-# It lives here, not in the hub, so there is no second copy to drift.
-# SUMMARY: push your wallpaper colours to the login screen
+# CMD lines are what docs-hub.sh's command list shows: a real, runnable command
+# and a short description, separated by " :: ". They live here, next to the code
+# that implements them, so the hub stores no copy of its own. Add a line when you
+# add a flag worth showing; the fuller explanation stays in the Usage block above.
+# CMD: ~/.config/mango/scripts/sddm-palette-sync.sh :: push your current wallpaper colours to the login screen
+# CMD: ~/.config/mango/scripts/sddm-palette-sync.sh --dry-run :: show what it would write, without writing it
 
 DMS_COLORS_JSON="${DMS_COLORS_JSON:-$HOME/.cache/DankMaterialShell/dms-colors.json}"
 DMS_SESSION_JSON="${DMS_SESSION_JSON:-$HOME/.local/state/DankMaterialShell/session.json}"

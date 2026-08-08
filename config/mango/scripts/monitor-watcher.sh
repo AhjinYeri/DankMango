@@ -76,9 +76,12 @@
 #
 set -uo pipefail
 
-# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
-# It lives here, not in the hub, so there is no second copy to drift.
-# SUMMARY: the background monitor watcher (layouts, main display)
+# CMD lines are what docs-hub.sh's command list shows: a real, runnable command
+# and a short description, separated by " :: ". They live here, next to the code
+# that implements them, so the hub stores no copy of its own. Add a line when you
+# add a flag worth showing; the fuller explanation stays in the Usage block above.
+# CMD: ~/.config/mango/scripts/monitor-watcher.sh --status :: print what the monitor watcher currently sees
+# CMD: ~/.config/mango/scripts/monitor-watcher.sh --once :: do one tagrule + main-display pass, then exit
 
 # #############################################################################
 # ########## EDIT HERE AFTER A MANGO UPDATE ###################################

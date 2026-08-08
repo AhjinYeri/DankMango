@@ -28,9 +28,11 @@
 #  This script is the ONLY thing that tells mango to change focus.
 # =============================================================================
 
-# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
-# It lives here, not in the hub, so there is no second copy to drift.
-# SUMMARY: step through windows (this is what Alt+Tab runs)
+# CMD lines are what docs-hub.sh's command list shows: a real, runnable command
+# and a short description, separated by " :: ". They live here, next to the code
+# that implements them, so the hub stores no copy of its own. Add a line when you
+# add a flag worth showing; the fuller explanation stays in the Usage block above.
+# CMD: ~/.config/mango/scripts/alt-switcher.sh next :: step forward through windows   [Alt+Tab]
 
 # --help prints this script's own header block (the only copy of its usage).
 # Same one-line idiom as install.sh/update.sh/uninstall.sh, so docs-hub.sh's

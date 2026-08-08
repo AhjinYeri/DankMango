@@ -54,9 +54,12 @@
 # =============================================================================
 set -uo pipefail
 
-# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
-# It lives here, not in the hub, so there is no second copy to drift.
-# SUMMARY: re-apply DankMango patches a package update wiped
+# CMD lines are what docs-hub.sh's command list shows: a real, runnable command
+# and a short description, separated by " :: ". They live here, next to the code
+# that implements them, so the hub stores no copy of its own. Add a line when you
+# add a flag worth showing; the fuller explanation stays in the Usage block above.
+# CMD: ~/.config/mango/scripts/apply-patches.sh :: re-apply DankMango patches that a package update wiped
+# CMD: ~/.config/mango/scripts/apply-patches.sh status :: show what state each patch is in; changes nothing
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Overridable for the same reason as DANKMANGO_PATCH_ROOT below: the "has this

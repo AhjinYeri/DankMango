@@ -40,9 +40,12 @@
 # if an earlier one had a problem. -u catches typos; pipefail surfaces failures.
 set -uo pipefail
 
-# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
-# It lives here, not in the hub, so there is no second copy to drift.
-# SUMMARY: install or re-install DankMango on this machine
+# CMD lines are what docs-hub.sh's command list shows: a real, runnable command
+# and a short description, separated by " :: ". They live here, next to the code
+# that implements them, so the hub stores no copy of its own. Add a line when you
+# add a flag worth showing; the fuller explanation stays in the Usage block above.
+# CMD: bash install.sh :: install or re-install DankMango (safe to re-run; backs up as it goes)
+# CMD: bash install.sh --reselect-main-display :: re-pick which monitor games open on; changes one preference only
 
 # ---- --help ------------------------------------------------------------------
 # The flag list lives in the header comment above and NOWHERE ELSE — this prints

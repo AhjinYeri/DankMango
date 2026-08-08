@@ -42,9 +42,11 @@
 # ones fail. `-u` catches typos, pipefail surfaces failures inside pipes.
 set -uo pipefail
 
-# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
-# It lives here, not in the hub, so there is no second copy to drift.
-# SUMMARY: check everything a mango or DMS update can quietly break
+# CMD lines are what docs-hub.sh's command list shows: a real, runnable command
+# and a short description, separated by " :: ". They live here, next to the code
+# that implements them, so the hub stores no copy of its own. Add a line when you
+# add a flag worth showing; the fuller explanation stays in the Usage block above.
+# CMD: ~/.config/mango/scripts/post-update-health.sh :: check everything a mango or DMS update can quietly break
 
 # --help prints the header block above. This script takes no options, but it
 # needs a real --help arm all the same: docs-hub.sh's command menu shells out

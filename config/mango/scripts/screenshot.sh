@@ -48,9 +48,12 @@
 #
 set -uo pipefail
 
-# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
-# It lives here, not in the hub, so there is no second copy to drift.
-# SUMMARY: take a screenshot: region, fullscreen or quick
+# CMD lines are what docs-hub.sh's command list shows: a real, runnable command
+# and a short description, separated by " :: ". They live here, next to the code
+# that implements them, so the hub stores no copy of its own. Add a line when you
+# add a flag worth showing; the fuller explanation stays in the Usage block above.
+# CMD: ~/.config/mango/scripts/screenshot.sh region :: drag out a region and annotate it before saving   [Print]
+# CMD: ~/.config/mango/scripts/screenshot.sh quick :: drag out a region straight to clipboard + file   [Ctrl+Print]
 
 # --help prints this script's own header block (the only copy of its usage).
 # Same one-line idiom as install.sh/update.sh/uninstall.sh, so docs-hub.sh's

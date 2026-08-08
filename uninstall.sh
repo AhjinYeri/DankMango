@@ -41,9 +41,12 @@
 # what it couldn't do beats one that dies silently at step 3.
 set -uo pipefail
 
-# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
-# It lives here, not in the hub, so there is no second copy to drift.
-# SUMMARY: roll the whole install back, using the manifest
+# CMD lines are what docs-hub.sh's command list shows: a real, runnable command
+# and a short description, separated by " :: ". They live here, next to the code
+# that implements them, so the hub stores no copy of its own. Add a line when you
+# add a flag worth showing; the fuller explanation stays in the Usage block above.
+# CMD: bash uninstall.sh --dry-run :: show the full rollback plan; touches nothing
+# CMD: bash uninstall.sh :: roll the install back (nothing is deleted - it moves to a rescue folder)
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 WARNINGS=0

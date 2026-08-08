@@ -15,9 +15,11 @@
 #   3 RELOAD    a watcher reloads mango (mmsg dispatch reload_config) on change
 #
 # --- the version-sensitive bits this checks (keep in sync with the watcher) ---
-# SUMMARY is the ONE-LINE description docs-hub.sh shows in its command menu.
-# It lives here, not in the hub, so there is no second copy to drift.
-# SUMMARY: check the wallpaper-to-window-border colour chain
+# CMD lines are what docs-hub.sh's command list shows: a real, runnable command
+# and a short description, separated by " :: ". They live here, next to the code
+# that implements them, so the hub stores no copy of its own. Add a line when you
+# add a flag worth showing; the fuller explanation stays in the Usage block above.
+# CMD: ~/.config/mango/scripts/border-color-healthcheck.sh :: check the wallpaper -> window-border colour chain
 
 # --help prints the header block above. This script takes no options, but it
 # needs a real --help arm all the same: docs-hub.sh's command menu shells out
