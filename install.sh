@@ -8,7 +8,7 @@
 #  configs, the three DMS plugins, GTK/terminal theming, and a couple of
 #  opt-in tweaks (power profile, easyeffects autostart).
 #
-#  It is meant to be SAFE TO RE-RUN:
+#  It's meant to be SAFE TO RE-RUN:
 #    * package installs use --needed (already-installed packages are skipped)
 #    * every file it overwrites is backed up to <file>.bak-<timestamp> first
 #    * every "copy from the repo" step is guarded: if the repo doesn't ship a
@@ -49,7 +49,7 @@ set -uo pipefail
 
 # ---- --help ------------------------------------------------------------------
 # The flag list lives in the header comment above and NOWHERE ELSE — this prints
-# that block, so there is no second copy to drift. The same idiom is in update.sh
+# that block, so there's no second copy to drift. The same idiom is in update.sh
 # and uninstall.sh (each printing its own header), and docs-hub.sh's "Command-line
 # flags" entry just shells out to all three rather than restating any of it.
 #
@@ -298,7 +298,7 @@ fi
 # Music/Videos/Downloads are only reachable by drilling into Home. Windows puts
 # exactly those under a "Quick Access" group; this seeds the equivalent.
 #
-# Two moving parts, and they are NOT the same mechanism:
+# Two moving parts, and they're NOT the same mechanism:
 #
 #   1. The bookmark LIST is ~/.config/gtk-3.0/bookmarks -- the shared GTK3
 #      bookmarks file (Nemo reads it via g_get_user_config_dir()/gtk-3.0/bookmarks,
@@ -321,7 +321,7 @@ fi
 # This is a SEED, not a managed file: an existing non-empty bookmarks file is a
 # hand-tuned list (the user bookmarked things, or reordered ours) and is left
 # completely alone -- same principle as config.local.sh and the DMS state files.
-# That is also why it is generated here rather than shipped in config/ and routed
+# That's also why it's generated here rather than shipped in config/ and routed
 # through route_dest: a repo file would be re-synced by update.sh on every run,
 # which is exactly the clobbering we want to avoid.
 NEMO_BOOKMARKS="$HOME/.config/gtk-3.0/bookmarks"
@@ -647,7 +647,7 @@ fi
 
 # 5c. SDDM drop-in config(s) that are plain static copies (e.g. numlock.conf):
 #     system/sddm/sddm.conf.d/*.conf -> /etc/sddm.conf.d/
-#     NOTE: theme.conf is intentionally NOT shipped here. It is written (or not)
+#     NOTE: theme.conf is intentionally NOT shipped here. It's written (or not)
 #     by the gated cutover in 5b, because it has to record the PREVIOUS Current=
 #     value in the manifest — a static copy can't do that.
 shopt -s nullglob
@@ -1203,8 +1203,8 @@ fi
 # KNOWN ORDERING LIMITATION — read this before assuming a fresh install is covered:
 # Zen creates its profile directory on FIRST LAUNCH, not at package install. On a
 # fresh machine this stage therefore runs before any profile exists, finds nothing
-# to write to, and says so. There is no clean way around it from inside the
-# installer: we are not going to launch a browser on the user's behalf mid-install,
+# to write to, and says so. There's no clean way around it from inside the
+# installer: we're not going to launch a browser on your behalf mid-install,
 # and fabricating a profile directory by hand risks colliding with the one Zen
 # generates itself. So on a fresh install this stage WARNS and defers; the user
 # launches Zen once and re-runs install.sh (or update.sh, which carries the same

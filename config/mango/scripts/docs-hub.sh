@@ -6,10 +6,10 @@
 #
 # WHAT IT IS FOR
 #   SUPER+/ already opens DMS's searchable keybind cheatsheet, which is great when
-#   you know roughly what you are looking for. This hub is the other half: the
-#   thing you open when you do NOT know what to look for yet. It offers a short,
-#   grouped, curated key table, a written guide to how this desktop works, and a
-#   way to jump into the DMS cheatsheet for the exhaustive list.
+#   you roughly know what you're after. This hub is the other half: the thing you
+#   open when you don't know what to look for yet. It gives you a short, grouped,
+#   curated key table, a written guide to how this desktop works, and a way into
+#   the DMS cheatsheet for the exhaustive list.
 #
 # THE ONE IDEA THAT MATTERS: THERE IS NO SECOND COPY OF THE DESCRIPTIONS
 #   Every shortcut description shown here is read live out of config.conf -- the
@@ -18,12 +18,12 @@
 #   WHICH keys to show and in what order.
 #
 #   So: to change what this hub says about a shortcut, edit the comment above that
-#   bind in config.conf. Do not look for the text in here -- it is not here.
+#   bind in config.conf. Don't go looking for the text in here -- it isn't here.
 #
 #   The lookup is an exact match on the (modifiers, key) pair, not a substring
 #   search, so "SUPER, i" can never accidentally match "SUPER+SHIFT, I". If a key
-#   in keys.tsv has no matching bind in config.conf any more, it is rendered as
-#   MISSING instead of being silently dropped -- that is deliberate, it is how you
+#   in keys.tsv no longer has a matching bind in config.conf, it renders as
+#   MISSING rather than being silently dropped -- that's deliberate, it's how you
 #   find out the table has gone stale. `docs-hub.sh check` exits non-zero if any
 #   key is MISSING, which is what post-update-health.sh should call.
 #
@@ -43,11 +43,11 @@
 #   docs-hub.sh check      validate keys.tsv against config.conf; non-zero if stale
 #
 # THE SAME IDEA APPLIES TO `flags`
-#   It stores no command lines and no descriptions. The COMMANDS list below says
-#   WHICH scripts to show and in what order; every command line and its blurb is
-#   read live from that script's own `# CMD: <command> :: <description>` header
-#   lines. A flag added to any listed script shows up here with no edit to this
-#   file. To change what a command says, edit that script -- not this one.
+#   It stores no command lines and no descriptions either. The COMMANDS list below
+#   says WHICH scripts to show and in what order; every command line and its blurb
+#   is read live from that script's own `# CMD: <command> :: <description>` header
+#   lines. Add a flag to any listed script and it shows up here with no edit to
+#   this file. To change what a command says, edit that script -- not this one.
 #
 # ---------------------------------------------------------------------------
 set -uo pipefail
@@ -251,8 +251,8 @@ IN_HUB=0
 
 # One line of "how do I get out of here", printed at the TOP AND BOTTOM of every
 # paged view. Both ends earn their keep: less opens at the top, but the guide is
-# longer than a screen, so by the time you have read to the end the top hint is
-# long gone -- and the end is exactly where someone stops and wonders what now.
+# longer than a screen, so by the time you've read to the end the top hint is long
+# gone -- and the end is exactly where someone stops and wonders what now.
 nav_hint() {
     if [[ $IN_HUB -eq 1 ]]; then
         echo "  Press q to go back to the menu."
@@ -316,9 +316,9 @@ find_repo() {
 #
 # A FLAT, COPY-PASTEABLE REFERENCE, NOT A MENU
 #   Every entry is a real command line you can select and paste into a terminal
-#   as-is, with its description under it. There is nothing to drill into: the
-#   thing you came for is on screen. (`docs-hub.sh flags NAME` still opens one
-#   script's full --help when you want the long version.)
+#   as-is, with its description under it. There's nothing to drill into -- the
+#   thing you came for is already on screen. (`docs-hub.sh flags NAME` still opens
+#   one script's full --help when you want the long version.)
 #
 # WHERE THE TEXT COMES FROM -- THE SAME RULE AS THE KEY TABLE
 #   This list stores WHICH scripts to show and in what order. It stores no
@@ -491,7 +491,7 @@ hub() {
         local choice
         if command -v fzf >/dev/null 2>&1; then
             choice=$(printf '%s\n' \
-                "Keyboard shortcuts        the curated list, grouped by what you are doing" \
+                "Keyboard shortcuts        the curated list, grouped by what you're doing" \
                 "Look up one key           type to filter every shortcut" \
                 "Read the guide            how this desktop works, in plain English" \
                 "Commands you can type     every DankMango command, and what its options do" \

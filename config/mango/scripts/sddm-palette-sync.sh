@@ -8,11 +8,11 @@
 #
 # THE PROBLEM THIS SOLVES (the privilege boundary):
 #   Everything else in DankMango re-tints by reading matugen output out of
-#   ~/.cache/DankMaterialShell/dms-colors.json. The login screen CANNOT do that:
+#   ~/.cache/DankMaterialShell/dms-colors.json. The login screen CAN'T do that:
 #   SDDM's greeter runs as the system user `sddm` (uid 960, home /var/lib/sddm)
-#   BEFORE any user session exists. /home/chris is 0700, so the greeter cannot
-#   even traverse into it, let alone read the palette or the wallpaper. It is a
-#   real boundary, not a convention.
+#   BEFORE any user session exists. Your home directory is 0700, so the greeter
+#   can't even traverse into it, let alone read the palette or the wallpaper.
+#   That's a real boundary, not a convention.
 #
 #   The common internet "fix" is `chmod 755 /home/$USER`. DO NOT DO THAT. It
 #   exposes the entire home directory to every local account permanently, in
@@ -43,13 +43,13 @@
 #   execution context. User-writable leaf FILES are a much smaller thing.
 #
 # WHY TWO WALLPAPER SLOTS (double buffering):
-#   A ~3 MB image copy is not near-instantaneous, and we cannot do the usual
+#   A ~3 MB image copy isn't near-instantaneous, and we can't do the usual
 #   write-temp-then-rename atomic swap -- rename() needs write access to the
 #   DIRECTORY, and keeping that root-owned is the whole security property above.
 #   So a greeter starting mid-copy could read a truncated image. Instead we
-#   always write the slot that is NOT currently in use, and only once it is
-#   complete do we flip the `WallpaperPath` pointer inside theme.conf.user.
-#   That reduces the torn-read window to the ~500-byte config write, which is
+#   always write the slot that ISN'T currently in use, and only flip the
+#   `WallpaperPath` pointer inside theme.conf.user once that write is complete.
+#   That shrinks the torn-read window to the ~500-byte config write, which is
 #   the same small race already accepted for the palette.
 #
 # SECURITY NOTE ON CARRYING AN IMAGE (read this before extending further):
@@ -59,21 +59,21 @@
 #   plugins and image decoders are historically a rich source of memory-safety
 #   bugs. Re-encoding here (below) fixes the corrupt/oversized case but NOT a
 #   deliberately hostile one: Qt detects format from CONTENT, not extension, so
-#   a malicious file simply written directly into a slot still reaches a
-#   decoder. The exposure is bounded -- an attacker must already have code
-#   execution as you, and the sddm uid is lateral movement rather than a path to
-#   root -- but it is a real increase over the palette-only design.
+#   a malicious file written straight into a slot still reaches a decoder. The
+#   exposure is bounded -- an attacker has to already have code execution as you,
+#   and the sddm uid is lateral movement rather than a path to root -- but it's a
+#   real increase over the palette-only design.
 #   Disk-space abuse is NOT a new capability: /usr and /home are the same
-#   filesystem here, and the slot filenames are fixed, so this adds no ability
-#   that writing into $HOME did not already provide.
+#   filesystem here, and the slot filenames are fixed, so this adds nothing that
+#   writing into $HOME didn't already allow.
 #
 # WHEN IT RUNS:
 #   Called by wallpaper-border-reload.sh whenever DMS regenerates the palette,
 #   i.e. on wallpaper change. The greeter re-reads theme.conf.user every time it
 #   starts, so the next login screen matches the current wallpaper.
 #
-# SAFE TO RUN ANY TIME: idempotent, writes only on actual change, and exits
-# quietly (status 0) if the theme is not installed or not writable yet.
+# SAFE TO RUN ANY TIME: idempotent, writes only on an actual change, and exits
+# quietly (status 0) if the theme isn't installed or isn't writable yet.
 #
 # Usage:  sddm-palette-sync.sh [--verbose] [--dry-run]
 #
@@ -119,7 +119,7 @@ done
 log() { [ "$VERBOSE" -eq 1 ] && echo "$*" >&2; return 0; }
 
 # --- single instance -------------------------------------------------------
-# WHY THIS IS HERE (it is not boilerplate -- the failure was reproduced):
+# WHY THIS IS HERE (not boilerplate -- the failure was reproduced):
 #   wallpaper-border-reload.sh fires this script in the BACKGROUND on every
 #   palette change. Change wallpapers twice inside one re-encode (~0.27s here,
 #   against a 0.5s watcher poll) and two copies run concurrently. Both then read
@@ -134,19 +134,19 @@ log() { [ "$VERBOSE" -eq 1 ] && echo "$*" >&2; return 0; }
 #       silently fell back to its default dimming
 #     - the config ended up recording instance B's FINGERPRINT next to instance
 #       A's IMAGE
-#   That last one is the nasty part: it is sticky, not transient. The fingerprint
+#   That last one is the nasty part: it's sticky, not transient. The fingerprint
 #   short-circuit below sees a match on every later run and skips re-encoding, so
-#   the login screen keeps showing the wrong wallpaper until the user picks some
-#   third one.
+#   the login screen keeps showing the wrong wallpaper until you pick some third
+#   one.
 #
 # WAIT, don't skip. The other watchers in this project use `flock -n ... || exit`
-# because a second *watcher* is simply redundant. That is the wrong behaviour
-# here: this script is a one-shot triggered by an edge that has already been
-# consumed, so an instance that exits early drops that change on the floor and
-# the login screen keeps the previous wallpaper. Instead we wait, matching the
-# `flock -w` idiom monitor-watcher.sh already uses for its inner lock. Queued
-# runs are cheap -- whichever one goes first applies the newest state, and the
-# rest fall straight through the fingerprint check as no-ops.
+# because a second *watcher* is just redundant. That's the wrong behaviour here:
+# this script is a one-shot triggered by an edge that's already been consumed, so
+# an instance that exits early drops that change on the floor and the login
+# screen keeps the previous wallpaper. So we wait instead, matching the `flock -w`
+# idiom monitor-watcher.sh already uses for its inner lock. Queued runs are cheap
+# -- whichever goes first applies the newest state, and the rest fall straight
+# through the fingerprint check as no-ops.
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/dankmango-sddm-palette-sync.lock"
 LOCK_WAIT="${DANKMANGO_SDDM_SYNC_LOCK_WAIT:-15}"
 
@@ -180,14 +180,14 @@ fi
 
 # --- colours ---------------------------------------------------------------
 # Material 3 roles as matugen emits them (snake_case in dms-colors.json; note
-# it is on_surface, NOT onSurface -- camelCase silently yields null).
+# it's on_surface, NOT onSurface -- camelCase silently yields null).
 # Keep this list in sync with the keys Components/Palette.qml actually reads.
 read_role() {
     jq -r --arg r "$1" '.colors.dark[$r] // empty' "$DMS_COLORS_JSON" 2>/dev/null
 }
 
-# Reject anything that is not a literal #rrggbb. This is the validation layer:
-# a truncated (torn-read), corrupt or hostile palette file must degrade to the
+# Reject anything that isn't a literal #rrggbb. This is the validation layer:
+# a truncated (torn-read), corrupt or hostile palette file has to degrade to the
 # theme's built-in defaults, never render an unreadable or blank login screen.
 valid_hex() { [[ "$1" =~ ^#[0-9a-fA-F]{6}$ ]]; }
 
@@ -238,7 +238,7 @@ if [ -n "$WALLPAPER_SRC" ] && [ -f "$WALLPAPER_SRC" ] && command -v magick >/dev
     fp="$(stat -c '%n:%Y:%s' "$WALLPAPER_SRC" 2>/dev/null)"
     fp="$(printf '%s@%s' "$fp" "$MAX_DIM" | md5sum | cut -d' ' -f1)"
 
-    # Flip to whichever slot is not currently in use.
+    # Flip to whichever slot isn't currently in use.
     case "$prev_slot" in
         *wallpaper-a.jpg) slot="wallpaper-b.jpg" ;;
         *)                slot="wallpaper-a.jpg" ;;
@@ -275,7 +275,7 @@ if [ -n "$WALLPAPER_SRC" ] && [ -f "$WALLPAPER_SRC" ] && command -v magick >/dev
     # The backdrop dim is derived from how bright the wallpaper actually is,
     # rather than being one compromise constant. A dark wallpaper needs almost
     # no dimming; a bright one needs a lot for the card text to stay readable.
-    # Measured on the DOWNSCALED copy so it reflects what is actually shown.
+    # Measured on the DOWNSCALED copy so it reflects what's actually shown.
     lum_src="$slot_path"
     [ -n "$lum_src" ] && [ -s "$lum_src" ] || lum_src="$WALLPAPER_SRC"
     lum="$(magick "$lum_src" -colorspace Gray -resize 1x1! -format '%[fx:mean]' info: 2>/dev/null)"
@@ -283,7 +283,7 @@ if [ -n "$WALLPAPER_SRC" ] && [ -f "$WALLPAPER_SRC" ] && command -v magick >/dev
         # Range deliberately GENTLE. An earlier pass used 0.28..0.72, which kept
         # text perfectly legible but crushed a bright wallpaper into flat grey --
         # defeating the point of syncing the image at all. The login card
-        # supplies its own contrast (it is a dark translucent surface), so the
+        # supplies its own contrast (it's a dark translucent surface), so the
         # only element sitting on the raw backdrop is the clock, and that gets a
         # drop shadow in Components/Clock.qml instead. So the scrim only has to
         # take the edge off, not carry legibility on its own.
@@ -321,12 +321,12 @@ if [ -f "$TARGET" ] && [ "$(cat "$TARGET" 2>/dev/null)" = "$new_content" ]; then
     exit 0
 fi
 
-# In-place rewrite. We deliberately CANNOT do the usual write-temp-then-rename
+# In-place rewrite. We deliberately CAN'T do the usual write-temp-then-rename
 # atomic swap: rename() needs write permission on the DIRECTORY, and keeping the
 # directory root-owned is the whole security property above. The exposure is a
 # sub-millisecond torn read against a file the greeter opens once at startup,
 # and the validation above plus the QML-side fallbacks make a torn read degrade
-# to defaults. The wallpaper image avoids this race entirely via the two slots.
+# to defaults. The wallpaper image dodges this race entirely via the two slots.
 if printf '%s' "$new_content" > "$TARGET" 2>/dev/null; then
     log "wrote $TARGET"
 else

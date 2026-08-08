@@ -16,7 +16,7 @@
 #
 # WHY THIS SCRIPT STILL EXISTS  (re-verified 2026-08-05 on mango 0.15.5)
 #   Read this before "simplifying" or deleting it -- its ORIGINAL reason is gone,
-#   but it is still load-bearing for three OTHER reasons.
+#   but it's still load-bearing for three OTHER reasons.
 #
 #   The original reason (NO LONGER TRUE, kept only so nobody re-derives it):
 #   DMS's reload hook used to run the pre-0.14 `mmsg -d reload_config`, which mango
@@ -24,23 +24,23 @@
 #   updated on a manual SUPER+r. THAT IS FIXED UPSTREAM. matugen/configs/mangowc.toml
 #   now runs `mmsg dispatch reload_config`, and DMS separately watches colors.conf
 #   itself (Services/MangoService.qml) and reloads on any change. So the reload call
-#   below is now the third of three redundant reloads. It is deliberately KEPT -- it
-#   is one cheap command and the only reload we control -- but it is no longer why
-#   this file is here.
+#   below is the third of three redundant reloads. Deliberately KEPT -- it's one
+#   cheap command and the only reload we control -- but it's no longer why this
+#   file is here.
 #
 #   The three reasons it IS still load-bearing:
 #     a) colors.conf SELF-HEAL. matugen's mangowc template STILL silently fails to
 #        write colors.conf. Verified by stopping this watcher and changing the
 #        wallpaper: dms-colors.json regenerated correctly, colors.conf never moved.
 #        Without the regen below, borders keep the PREVIOUS wallpaper's colors.
-#     b) It is the ONLY caller of sddm-palette-sync.sh. Stop this script and the
+#     b) It's the ONLY caller of sddm-palette-sync.sh. Stop this script and the
 #        login screen silently keeps the old palette and old background.
-#     c) It is the ONLY caller of wallpaper-accent-extract.sh, so the cava
+#     c) It's the ONLY caller of wallpaper-accent-extract.sh, so the cava
 #        visualiser silently keeps the old accent pair.
-#   Even if (a) were fixed upstream tomorrow, deleting this script would still break
+#   Even if (a) got fixed upstream tomorrow, deleting this script would still break
 #   (b) and (c) with no error anywhere. Re-check all three before retiring it.
 #
-# RESTARTING IT DOES NOT FIX ALREADY-STALE COLORS.
+# RESTARTING IT DOESN'T FIX ALREADY-STALE COLORS.
 #   It baselines both mtimes at startup and only reacts to the NEXT change, so
 #   anything it missed while it was down stays missed. To force a resync:
 #       touch ~/.cache/DankMaterialShell/dms-colors.json
@@ -103,17 +103,17 @@ ACCENT_EXTRACT="$HOME/.config/mango/scripts/wallpaper-accent-extract.sh"
 # see the script's header for why. Exits quietly if the theme isn't installed.
 SDDM_PALETTE_SYNC="$HOME/.config/mango/scripts/sddm-palette-sync.sh"
 # satty's annotation colour palette (screenshot.sh's editor). Generated inline
-# below rather than as its own script: it is one jq call and has no other
-# caller, unlike the two above.
+# below rather than as its own script: it's one jq call with no other caller,
+# unlike the two above.
 SATTY_CONFIG="$HOME/.config/satty/config.toml"
 
 # Regenerate satty's colour palette from the wallpaper.
 #
 # WHY BOTH SCHEMES, not just .colors.dark like everything else here:
-#   Material You's DARK scheme roles are all light, low-chroma tones -- they are
+#   Material You's DARK scheme roles are all light, low-chroma tones -- they're
 #   designed as ink ON a dark surface, not as ink on an arbitrary screenshot. On
 #   a pink wallpaper, dark.{primary,error,tertiary,secondary} came out as
-#   #ffb2ba / #ffb4ab / #ffb690 / #f6b8ac: four swatches you cannot tell apart,
+#   #ffb2ba / #ffb4ab / #ffb690 / #f6b8ac: four swatches you can't tell apart,
 #   which is a useless palette. The LIGHT scheme's equivalents are the saturated
 #   versions (#bd0042 / #ba1a1a / #895031) and read properly as annotation ink.
 #

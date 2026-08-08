@@ -11,7 +11,7 @@ DankMango is a personal desktop configuration built on top of the work of others
 
 ## Tools & packages
 
-DankMango's install script sets up several third-party tools it doesn't author, including but not limited to:
+DankMango's install script sets up a number of third-party tools it didn't write, including:
 
 - **Nemo** file manager
 - **Zen Browser**
@@ -29,9 +29,9 @@ Full package lists are the `REPO_PKGS` / `AUR_PKGS` / `STANDARD_APPS` arrays in 
 
 DankMango's SDDM theme (`system/sddm/themes/dankmango/`) is written from scratch for this project — the QML, the layout, and the palette wiring are all original.
 
-It has deliberately **no font or icon-set dependency**. No font family is named anywhere in the theme; it renders in whatever the system default is. The power and chevron icons are drawn as Canvas paths rather than set as glyphs, specifically so the login screen can't render a tofu box on a machine whose font fallback differs — see the header comments in `Components/PowerIcon.qml` and `Components/Chevron.qml`.
+It deliberately has **no font or icon-set dependency**. No font family is named anywhere in the theme; it renders in whatever the system default is. The power and chevron icons are drawn as Canvas paths rather than set as glyphs, specifically so the login screen can't render a tofu box on a machine whose font fallback differs — see the header comments in `Components/PowerIcon.qml` and `Components/Chevron.qml`.
 
-The background it shows is **your own current wallpaper**, copied across the privilege boundary by `sddm-palette-sync.sh` — it ships no wallpaper of its own. The bundled wallpapers are credited in [`wallpapers/CREDITS.md`](wallpapers/CREDITS.md). Its colors are Material 3 roles produced by matugen (credited above); no other design source is drawn from.
+The background it shows is **your own current wallpaper**, copied across the privilege boundary by `sddm-palette-sync.sh` — the theme ships no wallpaper of its own. The bundled wallpapers are credited in [`wallpapers/CREDITS.md`](wallpapers/CREDITS.md). Its colors are Material 3 roles produced by matugen (credited above); nothing else is drawn from.
 
 ## Legacy assets
 
@@ -41,7 +41,7 @@ Superseded, but still in the repository:
 
 ## AI assistance disclosure
 
-Parts of this repository's code — plugin implementations and install script logic in particular — were built with AI assistance (Claude). The architecture, design decisions, testing, and debugging are my own work; I'm noting the AI involvement for transparency, not to diminish the effort that went into building and validating this setup.
+Parts of this repository's code — plugin implementations and install script logic in particular — were built with AI assistance (Claude). The architecture, design decisions, testing and debugging are my own work. I'm noting the AI involvement because it's the honest thing to do, not to talk down the effort that went into building and validating this.
 
 ## License
 

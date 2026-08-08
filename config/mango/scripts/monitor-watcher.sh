@@ -29,12 +29,12 @@
 #      set-monitor-layout.sh.
 #
 #      That alone only protects monitors that stay PLUGGED IN across the regen. An
-#      unplugged monitor drops out of tagrules.conf entirely, so there is nothing
+#      unplugged monitor drops out of tagrules.conf entirely, so there's nothing
 #      left to capture and it used to come back on tile. Hence the persistent
 #      LAYOUT MEMORY (see LAYOUT_MEMORY below): every layout change is recorded
-#      against the monitor's name, and a monitor we have seen before comes back on
+#      against the monitor's name, and a monitor we've seen before comes back on
 #      its own layout when you replug it. A monitor with no memory entry is
-#      genuinely new and still gets tile, which is the intended default for a
+#      genuinely new and still gets tile, which is the right default for a
 #      monitor nobody has configured yet.
 #
 #  (b) MAIN DISPLAY -- never automatic, always asks.
@@ -45,10 +45,10 @@
 #      notification with buttons and let you decide. Replug the real one and
 #      everything goes back to normal with no further prompting.
 #
-#      If .userPrefs.mainDisplay is absent or unreadable this whole half is
+#      If .userPrefs.mainDisplay is absent or unreadable this whole half goes
 #      inert: one line in the log, then silence. No notification, no fallback,
-#      no error. That is the CORRECT permanent behaviour for anyone who never
-#      picked a main display -- it is not a stub, do not "fix" it later.
+#      no error. That's the CORRECT permanent behaviour for anyone who never
+#      picked a main display -- it isn't a stub, don't "fix" it later.
 #
 # -----------------------------------------------------------------------------
 #  WHERE THINGS ARE
@@ -61,10 +61,10 @@
 #                   (persistent on purpose -- see the LAYOUT_MEMORY comment)
 #
 #  THE EFFECTIVE-MAIN-DISPLAY SEAM: the manifest holds what you CHOSE; that
-#  runtime file holds what is actually usable RIGHT NOW (they differ only while
+#  runtime file holds what's actually usable RIGHT NOW (they only differ while
 #  your chosen monitor is unplugged). Anything that needs "the main display" --
 #  e.g. future Steam spawn logic -- should read that file and fall back to its
-#  own default if it is missing. That keeps the "never silently reassign" rule
+#  own default if it's missing. That keeps the "never silently reassign" rule
 #  intact: the stand-in lives in runtime state, never in your stored preference.
 #
 #  USAGE:
@@ -96,9 +96,9 @@ GEN_TAGRULES="$SCRIPT_DIR/generate-tagrules.sh"       # writes the file above
 SET_LAYOUT="$SCRIPT_DIR/set-monitor-layout.sh"        # re-applies a captured layout
 MANIFEST="${XDG_STATE_HOME:-$HOME/.local/state}/dankmango/manifest.json"
 
-# Persistent "which layout was this monitor last on" memory, so a monitor that is
+# Persistent "which layout was this monitor last on" memory, so a monitor that's
 # UNPLUGGED and later replugged comes back on its own layout instead of the tile
-# default. (While unplugged it has no tagrules at all, so tagrules.conf cannot be
+# default. (While unplugged it has no tagrules at all, so tagrules.conf can't be
 # the memory -- the monitor has vanished from it.)
 #
 # This is STATE, not runtime: $XDG_RUNTIME_DIR is a tmpfs wiped at every reboot,
@@ -107,11 +107,11 @@ MANIFEST="${XDG_STATE_HOME:-$HOME/.local/state}/dankmango/manifest.json"
 # $XDG_STATE_HOME/dankmango holds the install manifest, $XDG_STATE_HOME/mango-health
 # holds the health check's last-run versions.
 # The GENERATED windowrules that send Steam games to the main display. mango's
-# config is static -- a windowrule cannot read a file at runtime -- so the rule has
+# config is static -- a windowrule can't read a file at runtime -- so the rule has
 # to be WRITTEN OUT with the monitor name baked in whenever the effective main
 # display changes, exactly like dms/tagrules.conf. config.conf picks it up with
-# `source-optional`, so a machine that never chose a main display simply has no
-# file and no rules (source-optional does not error on a missing file -- verified).
+# `source-optional`, so a machine that never chose a main display just has no file
+# and no rules (source-optional doesn't error on a missing file -- verified).
 #
 # NOT dms/windowrules.conf: that one belongs to DMS's Settings -> Window Rules tab
 # (Modules/Settings/WindowRulesTab.qml writes it) and would be overwritten.
@@ -148,7 +148,7 @@ LAYOUT_MEMORY_LOCK="$MEMORY_DIR/layout-memory.lock"
 # active:false. So presence == "the name is in the array". Never filter on
 # .active here.
 #
-# NO SETTLE DELAY IS NEEDED HERE, and that was MEASURED, not assumed -- do not add
+# NO SETTLE DELAY IS NEEDED HERE, and that was MEASURED, not assumed -- don't add
 # a speculative `sleep` if something looks flaky. Probed on 2026-07-31 (mango 0.14,
 # DP-1 2560x1440 + DP-2 1920x1080) by querying immediately on the watch event and
 # again at +50/100/250/500/1000ms:
@@ -169,7 +169,7 @@ mango_reload_config() { mmsg dispatch reload_config >/dev/null 2>&1 || true; }
 # `notify-send -A key=Label` round-trips the clicked key back to us on stdout.
 # `dms ipc call toast ...` is NOT usable here -- toasts are text-only.
 # APP_NAME is what DMS matches its per-app notification rules against, so keep it
-# stable and recognisable (it is how you'd mute this script deliberately).
+# stable and recognisable (it's how you'd mute this script deliberately).
 APP_NAME="DankMango"
 NOTIFY_CMD=(notify-send)
 
@@ -341,9 +341,9 @@ regenerate_tagrules() {
     [ -n "$mon" ] || continue
     lay="${saved[$mon]:-}"
     if [ -z "$lay" ]; then
-      # No tagrule for this monitor a moment ago. Two very different cases:
-      # it is RECONNECTING (we have seen it before and remember its layout), or it
-      # is GENUINELY NEW (nothing remembered) and keeps the tile default by design.
+      # No tagrule for this monitor a moment ago. Two very different cases: it's
+      # RECONNECTING (we've seen it before and remember its layout), or it's
+      # GENUINELY NEW (nothing remembered) and keeps the tile default by design.
       lay="$(memory_get "$mon")"
       if [ -n "$lay" ]; then
         log "(a) $mon reconnected -- restoring its remembered layout '$lay'"
@@ -377,8 +377,9 @@ regenerate_tagrules() {
 
 # ---- (b) main display: stored preference vs. what's actually plugged in ------
 
-# Empty output = "nothing stored" AND "couldn't read it" alike; the caller treats
-# both the same way (skip the branch silently), so they need not be told apart.
+# Empty output means "nothing stored" and "couldn't read it" alike; the caller
+# treats both the same way (skip the branch silently), so there's no need to tell
+# them apart.
 stored_main_display() {
   [ -r "$MANIFEST" ] || return 0
   have jq || return 0
@@ -416,7 +417,7 @@ write_main_rules() {
   {
     echo "# ==========================================================================="
     echo "# mainmonitor.conf  --  AUTO-GENERATED by scripts/monitor-watcher.sh."
-    echo "# DO NOT hand-edit: it is rewritten whenever the main display changes."
+    echo "# DO NOT hand-edit: it gets rewritten whenever the main display changes."
     echo "# Sourced by config.conf:  source-optional=~/.config/mango/dms/mainmonitor.conf"
     echo "#"
     if [ -n "$name" ]; then
@@ -437,7 +438,7 @@ write_main_rules() {
   if cmp -s "$tmp" "$MAIN_RULES" 2>/dev/null; then
     rm -f "$tmp"; return 0                      # already correct, nothing to do
   fi
-  # Validate before installing, same guard set-monitor-layout.sh uses: a bad
+  # Validate before installing, the same guard set-monitor-layout.sh uses: a bad
   # fragment must never reach the live config.
   if ! mango -c "$tmp" -p >/dev/null 2>&1; then
     rm -f "$tmp"
@@ -507,11 +508,11 @@ on_action_setmain() {
 }
 
 # Only one drift question is useful at a time, and a stale one is worse than none
-# -- once you replug the real monitor, "Main display disconnected" must stop being
-# clickable. We WITHDRAW it server-side (CloseNotification) rather than killing our
-# waiter: closing makes notify-send return empty, so the waiter retires itself and
-# the popup leaves the screen. Killing the waiter alone would leave a live-looking
-# notification whose buttons do nothing.
+# -- once you replug the real monitor, "Main display disconnected" has to stop
+# being clickable. We WITHDRAW it server-side (CloseNotification) rather than
+# killing our waiter: closing makes notify-send return empty, so the waiter
+# retires itself and the popup leaves the screen. Killing the waiter alone would
+# leave a live-looking notification whose buttons do nothing.
 DRIFT_ID_FILE="$STATE_DIR/drift-notification-id"
 retire_drift_notification() {
   local id
@@ -557,8 +558,8 @@ handle_main_display() {
   main="$(stored_main_display)"
   if [ -z "$main" ]; then
     # Also drop any stale effective-main file (e.g. the preference was removed):
-    # with nothing stored we must assert nothing, so consumers fall back to their
-    # own default rather than reading a value nobody chose.
+    # with nothing stored we assert nothing, so consumers fall back to their own
+    # default rather than reading a value nobody chose.
     rm -f "$EFFECTIVE_MAIN" 2>/dev/null
     write_main_rules ""
     log_once nomain "(b) no .userPrefs.mainDisplay in the manifest -- main-display branch inactive (choose one with ./install.sh --reselect-main-display)"
@@ -572,7 +573,7 @@ handle_main_display() {
     [ -n "$standin" ] || { log "(b) stored main '$main' is gone and NO monitors are connected -- nothing to stand in"; return 0; }
     write_effective_main "$standin"
     # Point the game rules at the stand-in too: the whole reason for a stand-in is
-    # that things depending on the main display must keep working while it is gone.
+    # that things depending on the main display keep working while it's gone.
     write_main_rules "$standin"
     notify_main_display_gone "$main" "$standin"
     return 0
@@ -615,7 +616,7 @@ case "${1:-}" in
   --remember)
     # Called by set-monitor-layout.sh after every successful layout change, so the
     # memory tracks what you actually chose. Deliberately silent and cheap: it runs
-    # on the user's click path, and must never delay or fail a layout change.
+    # on your click path, and must never delay or fail a layout change.
     [ $# -eq 3 ] || { echo "monitor-watcher: usage: $0 --remember <MON> <layout>" >&2; exit 2; }
     is_valid_layout "$3" || { echo "monitor-watcher: refusing to remember invalid layout '$3'" >&2; exit 2; }
     memory_set "$2" "$3" || exit 1
@@ -682,7 +683,7 @@ flock -n 9 || exit 0
 # `mmsg watch all-monitors` emits a FULL snapshot on ANY monitor change -- focus
 # moves and window-count changes included, which are far more frequent than
 # hotplugs. jq reduces each snapshot to just the sorted monitor-name list, and we
-# act only when that fingerprint actually differs. That is what keeps this a
+# act only when that fingerprint actually differs. That's what keeps this a
 # hotplug watcher rather than a busy loop.
 exec 3< <(mango_watch_monitors_json | jq -rc --unbuffered '[.monitors[].name] | sort | join(",")')
 

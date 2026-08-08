@@ -95,7 +95,7 @@ MIGRATIONS=(
 # customised through ~/.config/sddm-astronaut-japanese/apply.sh. v2 ships DankMango's
 # own theme instead, which is what makes the login screen able to follow the wallpaper.
 #
-# THIS MIGRATION DELIBERATELY DOES NOT FLIP Current=. That is not timidity, it is the
+# THIS MIGRATION DELIBERATELY DOES NOT FLIP Current=. That's not timidity, it's the
 # one irreversible-ish failure mode in the project: a bad Current= is discovered at the
 # next reboot, at a login screen, with no session to fix it from. install.sh gates the
 # same step behind DANKMANGO_SDDM_SET_CURRENT for identical reasons. An updater that
@@ -164,7 +164,7 @@ migrate_sddm-dankmango-theme() {
 # on disk, because nothing ever wrote the userChrome.css that imports it. This applies
 # the bridge to the existing profile. Marker-guarded and idempotent: an existing
 # userChrome.css keeps everything outside the managed block. If Zen has never been
-# launched there is no profile to write to yet — the migration reports that and returns
+# launched there's no profile to write to yet — the migration reports that and returns
 # non-zero so it is NOT recorded as applied, and a later update.sh retries it.
 migrate_zen-userchrome-bridge() {
     zen_apply_theming
@@ -247,7 +247,7 @@ migrate_strip-dead-floatsize-execonce() {
 # holding commits the other doesn't have. Left alone, update.sh says one of two
 # unhelpful things: "already up to date" (HEAD never moved, so the delta is empty),
 # or the lastAppliedCommit fallback blaming a force-push and sending them to
-# install.sh — which does not fix a diverged clone.
+# install.sh — which doesn't fix a diverged clone.
 #
 # Deliberately narrow. It fires ONLY when the branch is both AHEAD of and BEHIND
 # its upstream. Ahead-only (local commits, nothing new on GitHub), behind-only (an
@@ -270,7 +270,7 @@ git_divergence() {  # -> "AHEAD BEHIND UPSTREAM" when diverged; non-zero otherwi
 
 # Same contract as post-update-health.sh's failure entries: a complete walkthrough a
 # total beginner can follow start to finish, with the optional Claude Code prompt
-# clearly secondary. Prints and exits — there is no safe delta to compute from here.
+# clearly secondary. Prints and exits — there's no safe delta to compute from here.
 explain_diverged_branch() {  # explain_diverged_branch AHEAD BEHIND UPSTREAM
     local ahead="$1" behind="$2" up="$3" remote branch parent
     remote="${up%%/*}"

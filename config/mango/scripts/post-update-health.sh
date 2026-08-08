@@ -237,9 +237,9 @@ cat <<EOF
 6. Re-run this health check to confirm it now passes:
      $SCRIPTS/post-update-health.sh
 
-If this feels like too much, it is genuinely a code change rather than a
-setting - it is reasonable to open an issue at
-https://github.com/AhjinYeri/DankMango/issues and wait for a repo update.
+If this feels like too much, that's fair - it's a code change, not a
+setting. Open an issue at https://github.com/AhjinYeri/DankMango/issues
+and wait for a repo update instead.
 EOF
 }
 
@@ -300,14 +300,14 @@ else
          "$BORDER_WATCHER (RELOAD_CMD) and RELOAD_CMD in this script" \
          "mango renamed the reload verb before (0.13 'mmsg -d reload_config' -> 0.14 'mmsg dispatch reload_config'). Run 'mmsg --help', find the new reload verb, update it in those files. It returns exit 0 even when wrong, so it fails SILENTLY." \
 "WORKAROUND FIRST (works right now, no editing):
-  Press Super+r whenever a setting doesn't seem to apply. That is the
+  Press Super+r whenever a setting doesn't seem to apply. That's the
   keyboard shortcut for \"reload settings\", and it goes straight to
-  MangoWM without using the broken command. ("Super" is the key with
+  MangoWM without touching the broken command. ("Super" is the key with
   the Windows logo.) Everything keeps working - it just needs that
   keypress instead of happening on its own.
 
 PROPER FIX (a MangoWM update renamed the command, so 2 files need the
-new name). Do the workaround above first, then when you have 10 minutes:
+new name). Do the workaround above first, then when you've got 10 minutes:
 
 1. See what the reload command is called now:
      mmsg --help
@@ -329,11 +329,11 @@ new name). Do the workaround above first, then when you have 10 minutes:
      nano $SCRIPTS/post-update-health.sh
    searching for RELOAD_CMD.
 
-6. Check it worked:
+5. Check it worked:
      $SCRIPTS/post-update-health.sh
 
-If you'd rather not edit files, keep using Super+r and open an issue at
-https://github.com/AhjinYeri/DankMango/issues - this needs a repo fix."
+If you'd rather not edit files at all, keep using Super+r and open an issue
+at https://github.com/AhjinYeri/DankMango/issues - this needs a repo fix."
 fi
 
 # 1b. tagrules (per-monitor mode storage) present. They now live in the auto-
@@ -346,11 +346,11 @@ else
     fail "Per-monitor tagrules" "no tagrules in dms/tagrules.conf — per-monitor layout is not active" \
          "$TAGRULES_FILE (auto-generated; sourced by config.conf)" \
          "Re-generate them: $TAGRULES_GEN  (detects your monitors via 'mmsg get all-monitors' and writes the file, then Super+r). Fresh installs run this automatically; if it's empty, mango probably wasn't running when it ran — re-run it now." \
-"This one is a single command. MangoWM needs to be told the names of your
+"This one is a single command. MangoWM has to be told the names of your
 actual monitors before per-monitor layout can work, and that list is
 missing or empty.
 
-1. Make sure you are logged in to the MangoWM desktop right now (not a
+1. Make sure you're logged in to the MangoWM desktop right now (not a
    different desktop, not a text-only console). The next command asks
    MangoWM which screens are plugged in, so MangoWM has to be running.
 
@@ -366,12 +366,12 @@ missing or empty.
 4. Confirm it actually wrote something:
      cat $TAGRULES_FILE
    (\"cat\" prints a file's contents to the screen.) You should see one
-   or more lines beginning with \"tagrule =\". If the file is empty or
+   or more lines beginning with \"tagrule =\". If the file's empty or
    still missing, MangoWM wasn't running in step 1 - log in properly and
    redo step 2.
 
-5. Your monitors all start in tile mode. Use the Monitor Mode button on
-   the bar to pick a different layout per monitor - you never need to edit
+5. Your monitors all start on the tile layout. Use the Monitor Mode button
+   on the bar to pick a different one per monitor - you never need to edit
    this file by hand.
 
 Note: the monitor watcher normally re-runs this for you whenever you plug
@@ -400,7 +400,7 @@ else
          "missing or not executable — monitors you plug in get no tagrules until you re-run the generator by hand" \
          "$MONITOR_WATCHER (autostarted from $MANGO_CFG exec-once)" \
          "Restore it from the repo (config/mango/scripts/monitor-watcher.sh), then: chmod +x '$MONITOR_WATCHER'. Check it with '$MONITOR_WATCHER --status'; its log is /tmp/mango-monitor-watcher.log." \
-"What this does: when you plug in or unplug a monitor, it re-writes the
+"What this does: when you plug in or unplug a monitor, it rewrites the
 per-monitor rules automatically and puts back the layout each screen had.
 Without it, a newly plugged-in monitor has no rules until you re-run the
 generator yourself - and doing that by hand resets every screen to tile.
@@ -408,8 +408,9 @@ generator yourself - and doing that by hand resets every screen to tile.
 1. Check whether the file is there at all:
      ls -l $MONITOR_WATCHER
    (\"ls -l\" lists a file and its permissions.) If it says \"No such file
-   or directory\", copy it back from your DankMango folder:
-     cp ~/Projects/DankMango/config/mango/scripts/monitor-watcher.sh $SCRIPTS/
+   or directory\", copy it back from the folder you cloned DankMango into
+   (the one with install.sh in it):
+     cp config/mango/scripts/monitor-watcher.sh $SCRIPTS/
 
 2. Mark it runnable (files copied around sometimes lose this):
      chmod +x $MONITOR_WATCHER
@@ -418,11 +419,11 @@ generator yourself - and doing that by hand resets every screen to tile.
      setsid $MONITOR_WATCHER >/dev/null 2>&1 & disown
    (\"setsid\" lets it keep running after you close the terminal.)
 
-4. Confirm it is up:
+4. Confirm it's up:
      $MONITOR_WATCHER --status
    The last line should say \"watcher : RUNNING\".
 
-In the meantime, nothing is lost - after plugging in a monitor just run
+Nothing is lost in the meantime - after plugging in a monitor just run
 $TAGRULES_GEN and press Super+r, then set that screen's layout from the
 Monitor Mode button on the bar."
 fi
@@ -444,13 +445,13 @@ if [ -n "$MAIN_STORED" ]; then
              "you chose $MAIN_STORED as your main display, but the rules file that sends Steam games there does not exist — games will open on whichever screen the mouse is on" \
              "$MAINRULES_FILE (generated by $MONITOR_WATCHER, sourced by $MANGO_CFG)" \
              "Regenerate it: '$MONITOR_WATCHER --once'. If it stays missing, check write permissions on ~/.config/mango/dms/ and the watcher's log at /tmp/mango-monitor-watcher.log." \
-"What is missing: you picked a main display ($MAIN_STORED), and DankMango is
+"What's missing: you picked a main display ($MAIN_STORED), and DankMango is
 supposed to keep a small settings file that tells MangoWM to open Steam
-games on that screen. That file is not there right now, so games open
+games on that screen. That file isn't there right now, so games open
 wherever your mouse pointer happens to be instead.
 
-Nothing is broken or lost - the file is generated, so it can simply be
-made again.
+Nothing is broken or lost - the file is generated, so it can just be made
+again.
 
 1. Open a terminal (press Super+Return - \"Super\" is the key with the
    Windows logo on it).
@@ -461,7 +462,7 @@ made again.
    a monitor in. \"--once\" tells it to do its job a single time now and
    then stop, instead of running in the background.)
 
-3. Check the file exists now:
+3. Check the file's there now:
      cat $MAINRULES_FILE
    (\"cat\" prints a file's contents to the screen.) You should see a
    couple of lines starting with \"windowrule\". A \"windowrule\" is just
@@ -477,8 +478,8 @@ made again.
      $MONITOR_WATCHER --status
    \"stored main\" and \"effective main\" should both say $MAIN_STORED.
 
-If step 2 prints an error about permission, your settings folder is not
-writable. Fix it with:
+If step 2 prints a permission error, your settings folder isn't writable.
+Fix it with:
      chmod u+rwx ~/.config/mango/dms
 then redo step 2."
     elif ! mango -c "$MAINRULES_FILE" -p >/dev/null 2>&1; then
@@ -486,40 +487,39 @@ then redo step 2."
              "$MAINRULES_FILE exists but MangoWM rejects it as invalid — every rule in it is being ignored, so Steam games open on the wrong screen" \
              "$MAINRULES_FILE (generated by $MONITOR_WATCHER; validate by hand with 'mango -c $MAINRULES_FILE -p')" \
              "Almost always a hand-edit or a mango syntax change. Regenerate: '$MONITOR_WATCHER --once'. If the fresh file also fails validation, mango has renamed a windowrule option — compare against 'mmsg --help' and fix STEAM_GAME_MATCHERS in $MONITOR_WATCHER." \
-"What is wrong: the settings file that sends Steam games to your main
-screen ($MAIN_STORED) exists, but MangoWM cannot understand it, so it
+"What's wrong: the settings file that sends Steam games to your main
+screen ($MAIN_STORED) exists, but MangoWM can't understand it, so it
 ignores the whole thing. Games open on whichever screen your mouse is on.
 
-This file is generated automatically and is not meant to be edited by
-hand, so the safe fix is to throw it away and let it be made again.
+This file is generated automatically and isn't meant to be hand-edited,
+so the safe fix is to throw it away and let it be made again.
 
 1. Open a terminal (press Super+Return - \"Super\" is the key with the
    Windows logo on it).
 
-2. Look at what is in there now, so you can see it change:
+2. Look at what's in there now, so you can see it change:
      cat $MAINRULES_FILE
    (\"cat\" prints a file's contents to the screen.)
 
 3. Rebuild it from scratch:
      rm $MAINRULES_FILE
      $MONITOR_WATCHER --once
-   (\"rm\" removes the file. This is safe: it is generated, not something
-   you wrote. The second command makes a fresh, correct one.)
+   (\"rm\" removes the file. That's safe here: it's generated, not
+   something you wrote. The second command makes a fresh, correct one.)
 
 4. Check the new file is valid. Type this exactly:
      mango -c $MAINRULES_FILE -p
    (\"mango -c <file> -p\" means \"read this settings file and just check
-   it for mistakes\".) If it prints nothing, the file is fine - no news
-   is good news here.
+   it for mistakes\".) If it prints nothing, the file's fine - no news is
+   good news here.
 
 5. Load it:
      Press Super+r
 
-If step 4 still complains after a fresh file, this is not something you
-can fix by editing - a MangoWM update has renamed something DankMango
-uses. Open an issue at
-https://github.com/AhjinYeri/DankMango/issues and paste what step 4
-printed. Your games will keep working in the meantime, they will just
+If step 4 still complains after a fresh file, that's not something you can
+fix by editing - a MangoWM update has renamed something DankMango uses.
+Open an issue at https://github.com/AhjinYeri/DankMango/issues and paste
+what step 4 printed. Your games keep working in the meantime, they'll just
 open on the wrong screen."
     else
         pass "main-display game rules present & valid (Steam games -> $MAIN_STORED)"
@@ -533,15 +533,15 @@ elif [ -f "$MAINRULES_FILE" ] && grep -qE '^[[:space:]]*windowrule[[:space:]]*='
          "no main display is chosen any more, but $MAINRULES_FILE still contains active rules from a previous choice — Steam games are being sent to a screen you did not pick" \
          "$MAINRULES_FILE (should be header-only when .userPrefs.mainDisplay is unset in $DANKMANGO_MANIFEST)" \
          "Clear it: '$MONITOR_WATCHER --once' rewrites it header-only when nothing is stored. To choose a display instead, run './install.sh --reselect-main-display' from your DankMango folder." \
-"What is wrong: DankMango can send Steam games to a screen you nominate as
-your \"main display\". You do not currently have one chosen - but the
+"What's wrong: DankMango can send Steam games to a screen you nominate as
+your \"main display\". You don't currently have one chosen - but the
 settings file that does the sending still has old instructions in it from
-a previous choice. So games are being pushed to a screen you did not pick,
-and possibly one that is not even plugged in.
+a previous choice. So games are being pushed to a screen you didn't pick,
+and possibly one that isn't even plugged in.
 
-You have two ways out. Pick whichever you actually want.
+Two ways out. Pick whichever you actually want.
 
-OPTION A - you do not want this feature. Clear the leftovers:
+OPTION A - you don't want this feature. Clear the leftovers:
 
 1. Open a terminal (press Super+Return - \"Super\" is the key with the
    Windows logo on it).
@@ -606,14 +606,14 @@ long way round through your normal audio settings."
 have wpctl || have pactl && pass "audio backend present (wpctl/pactl)" \
     || fail "audio backend" "neither wpctl nor pactl found" "PATH / packages" "Install wireplumber (wpctl) or libpulse (pactl)." \
 "The system tool DankMango uses to change audio devices isn't installed.
-This is unusual - it normally means an update removed an audio package.
+That's unusual - it normally means an update removed an audio package.
 
 1. Install it. Open a terminal (Super+Return) and type:
      sudo pacman -S wireplumber
    (\"pacman\" is the program that installs software on CachyOS/Arch - each
    piece of software is called a \"package\". \"sudo\" means run this as
-   administrator, so it will ask for your password. Nothing appears on
-   screen while you type the password - that is normal, just type it and
+   administrator, so it'll ask for your password. Nothing appears on
+   screen while you type the password - that's normal, just type it and
    press Enter.)
 
 2. When it asks to confirm, press Enter to accept.
@@ -636,8 +636,8 @@ if [ ! -x "$PATCH_DISPATCH" ] && [ ! -f "$PATCH_DISPATCH" ]; then
          "$PATCH_DISPATCH (shipped in config/mango/scripts/)" \
          "Re-run install.sh (or update.sh) from the DankMango folder to install it." \
 "DankMango makes a couple of small edits to files that belong to OTHER programs,
-and the script that checks and repairs them isn't installed here. That check is
-simply not running - it does not mean anything is broken.
+and the script that checks and repairs them isn't installed here. So that check
+just isn't running - it doesn't mean anything is broken.
 
 1. Go to the folder you cloned DankMango into (the one containing install.sh)
    and bring it up to date:
@@ -673,19 +673,19 @@ $(wrap 72 0 "DankMango $p_blurb. It does that by editing a file $p_pkg itself ow
    the ones that have been wiped - you don't need to know their names. It backs
    each file up first and is safe to run as many times as you like.)
 
-2. It will ask for your password, because the file it edits belongs to the
-   system rather than to you. Type your password and press Enter - nothing
-   appears on screen as you type it, which is normal.
+2. It'll ask for your password, because the file it edits belongs to the system
+   rather than to you. Type your password and press Enter - nothing appears on
+   screen as you type it, which is normal.
 
-3. Restart the shell so the repaired file is used:
+3. Restart the shell so the repaired file gets used:
      $p_restart
-   (\"the shell\" means the bar, launcher and popups. This does not log you out
+   (\"the shell\" means the bar, launcher and popups. This doesn't log you out
    or close your open windows.)
 
 4. Test it: $(wrap 60 12 "$p_verify").
 
-If you would rather not have this patch at all, it is entirely optional - just
-ignore this warning and nothing else changes."
+If you'd rather not have this patch at all, it's entirely optional - ignore this
+warning and nothing else changes."
             ;;
         target-missing)
             fail "$p_title" \
@@ -711,10 +711,10 @@ ignore this warning and nothing else changes."
      $p_restart
 
 4. If step 1 printed NOTHING, $p_pkg removed the file entirely and the patch has
-   nowhere left to go. There is no fix to type - the feature is gone until
-   DankMango is updated for the new $p_pkg. Please report it at
-   https://github.com/AhjinYeri/DankMango/issues so it can be updated.
-   Everything else on your system is unaffected."
+   nowhere left to go. There's no fix to type here - the feature is gone until
+   DankMango is updated for the new $p_pkg. Report it at
+   https://github.com/AhjinYeri/DankMango/issues so it can be. Everything else
+   on your system is unaffected."
             ;;
         script-missing)
             fail "$p_title" \
@@ -722,12 +722,12 @@ ignore this warning and nothing else changes."
                  "$SCRIPTS (expected the apply script named in $PATCH_DISPATCH)" \
                  "Re-run install.sh from the DankMango folder to restore the scripts directory." \
 "The file that knows how to apply this patch is missing from your scripts folder,
-so it cannot be repaired until that file is back.
+so the patch can't be repaired until that file is back.
 
 1. Go to the folder you cloned DankMango into (the one with install.sh in it):
      ./install.sh
    (install.sh re-copies every DankMango file into place. It backs up anything
-   it overwrites and it is safe to re-run.)
+   it overwrites and it's safe to re-run.)
 
 2. Then re-apply the patches:
      $PATCH_DISPATCH
@@ -800,9 +800,8 @@ if [ -n "$QS_LOG" ] && grep -q 'another handler is registered for target altswit
 bar and launcher. Avoid Alt+Tab until it's sorted - click windows or use
 Super plus a number key to switch instead.
 
-Be honest with yourself about this one: it is a bug in the plugin's own
-code, not a setting you got wrong. There is nothing sensible to hand-edit.
-Your two real options:
+Straight up: this one's a bug in the plugin's own code, not a setting you
+got wrong. There's nothing sensible to hand-edit. Two real options:
 
 OPTION A - get the fixed version from the repo (try this first).
 1. Open the folder you cloned DankMango into (the one with install.sh in
@@ -840,14 +839,14 @@ if [ -n "$QS_PID" ]; then
              "AltSwitcherBar.qml + ~/.cache/quickshell/crashes/ (newest report.txt)" \
              "Same class as the duplicate-handler crash. Verify the isPrimaryInstance Loader gate; read the newest crash report.txt stacktrace." \
 "This check pressed Alt+Tab for you, and it crashed your bar and launcher.
-They will have restarted themselves, so your desktop is usable - but
-Alt+Tab will crash them again every time until this is fixed.
+They'll have restarted themselves, so your desktop is usable - but Alt+Tab
+will crash them again every time until this is fixed.
 
 DO THIS FIRST: don't use Alt+Tab. Switch windows by clicking them, or by
 holding Super and pressing a number key.
 
 Like the duplicate-handler problem, this is a fault in the plugin's code
-rather than a setting, so there is no config to correct by hand.
+rather than a setting, so there's no config to correct by hand.
 
 1. Get the newest DankMango files. In the folder you cloned DankMango into
    (the one containing install.sh), type:
@@ -877,8 +876,8 @@ rather than a setting, so there is no config to correct by hand.
 else
     fail "quickshell not running" "qs process not found — the DMS shell is down" "run 'dms run' output / journal" \
          "Start it: 'dms run &' (or relog). If it won't stay up, check the newest ~/.cache/quickshell/crashes/*/report.txt." \
-"Your bar, launcher and popups aren't running at all. (Collectively they
-are called \"the shell\" - the program that draws them is quickshell.) Your
+"Your bar, launcher and popups aren't running at all. (Collectively they're
+called \"the shell\" - the program that draws them is quickshell.) Your
 windows and keyboard shortcuts still work, which is why you can read this.
 
 1. Try starting it. Open a terminal (Super+Return) and type:
@@ -894,7 +893,7 @@ windows and keyboard shortcuts still work, which is why you can read this.
 4. If it still won't start, a full restart is the next thing to try:
      reboot
 
-5. If it is still down after that, look at why it crashed:
+5. If it's still down after that, look at why it crashed:
      ls -t ~/.cache/quickshell/crashes/
    (\"ls -t\" lists files newest-first, so the first entry is the most
    recent crash.) Then read that report:
@@ -946,9 +945,9 @@ Everything still works normally - this is purely how it looks.
    Read which line says FAIL, then follow the matching step below.
 
 2. IF IT SAYS THE COLOURS FILE IS MISSING OR EMPTY - the colours are
-   generated from your wallpaper, so re-generate them by simply setting
-   your wallpaper again from the DankMaterialShell settings (gear icon on
-   the bar). Then press Super+r. Check something was written with:
+   generated from your wallpaper, so regenerate them by setting your
+   wallpaper again from the DankMaterialShell settings (gear icon on the
+   bar). Then press Super+r. Check something was written with:
      cat $COLORS_FILE
    (\"cat\" prints a file's contents. You want to see lines mentioning
    bordercolor / focuscolor and a colour code like #a1b2c3.)
@@ -966,9 +965,9 @@ Everything still works normally - this is purely how it looks.
    Do the same for any focuscolor line. Save with Ctrl+O then Enter, quit
    with Ctrl+X, then press Super+r.
 
-4. IF IT SAYS THE RELOAD COMMAND FAILED - that is the same underlying
+4. IF IT SAYS THE RELOAD COMMAND FAILED - that's the same underlying
    problem as the \"MangoWM config reload command\" entry in this report.
-   Fix that one first, then re-run this check; this will usually clear.
+   Fix that one first, then re-run this check; this usually clears with it.
 
 5. If all three stages pass but the colours still look wrong, restart the
    watcher that applies them:
@@ -1051,12 +1050,12 @@ Nothing is broken -- this is a bookkeeping mismatch between two files.
 
 1. See exactly which shortcuts are affected. Type:
      $DOCSHUB_SCRIPT check
-   It prints one line per shortcut it could not find.
+   It prints one line per shortcut it couldn't find.
 
 2. Decide which of the two files is wrong:
 
-   * If you MEANT to remove or rename that shortcut, then the hub's list is
-     just stale. Open it:
+   * If you MEANT to remove or rename that shortcut, the hub's list is just
+     stale. Open it:
        nano $DOCSHUB_KEYS
      Delete the line for that shortcut (or correct it to the new keys), then
      save with Ctrl+O, Enter, and exit with Ctrl+X.
@@ -1068,7 +1067,7 @@ Nothing is broken -- this is a bookkeeping mismatch between two files.
      the line directly ABOVE it (never on the end of the line). Then press
      SUPER+r to reload.
 
-3. Confirm it is clean:
+3. Confirm it's clean:
      $DOCSHUB_SCRIPT check
    You want it to say OK.
 
@@ -1133,7 +1132,7 @@ else
 5. Press Print. You should get a crosshair to drag a region with.
 
 What breaks meanwhile: the Print key does nothing. Super+P still takes a
-screenshot, so you are not locked out of screenshots entirely."
+screenshot, so you're not locked out of screenshots entirely."
 fi
 
 if execu "$SCRIPTS/screenshot.sh"; then
@@ -1169,10 +1168,10 @@ else
   * Type each command exactly as shown, then press Enter. Commands are
     case-sensitive: Nano and nano are not the same thing.
   * A command starting with "sudo" runs as administrator and will ask for
-    your password. Nothing appears on screen while you type it - that is
+    your password. Nothing appears on screen while you type it - that's
     normal, just type it and press Enter.
-  * Nothing below deletes anything. If a step doesn't work, you can stop
-    and nothing will be worse than it is now.
+  * Nothing below deletes anything. If a step doesn't work you can stop
+    there, and nothing will be worse than it is now.
   * You do NOT need Claude Code or any AI tool. These steps are complete
     on their own.
 EOF
@@ -1185,7 +1184,7 @@ EOF
         printf '\n%s───────────────────────────────────────────────────────────────%s\n' "$c_dim" "$c_off"
         printf ' %sPROBLEM %d of %d — %s%s\n' "$c_red" "$i" "$n" "$comp" "$c_off"
         printf '%s───────────────────────────────────────────────────────────────%s\n' "$c_dim" "$c_off"
-        printf '\n  %sWhat is wrong%s\n' "$c_yel" "$c_off"
+        printf '\n  %sWhat'"'"'s wrong%s\n' "$c_yel" "$c_off"
         indent4 "$sym"
         printf '\n  %sHow to fix it yourself%s\n' "$c_grn" "$c_off"
         indent4 "$manual"

@@ -10,9 +10,8 @@
 #  below marked "########## EDIT HERE AFTER A MANGO UPDATE ##########". Read its
 #  plain-English comments and fix the commands to match the new version.
 #
-#  This is the LAYOUT sibling of set-monitor-mode.sh (which does tile/float).
-#  Layout is INDEPENDENT of float mode: this script only rewrites the
-#  "layout_name:" field and never touches "open_as_floating".
+#  It touches exactly one thing: the "layout_name:" field on a monitor's tag
+#  rules. Nothing else in those rules is rewritten.
 #
 #  >>> MOST LIKELY CULPRIT: the config-RELOAD command. <<<
 #  If you pick a layout and ALREADY-OPEN windows don't rearrange, the reload
@@ -37,7 +36,7 @@
 #    set-monitor-layout.sh DP-1 monocle
 #    set-monitor-layout.sh DP-1:tile DP-2:scroller
 #
-#  Valid layouts (the 6 curated Monitor-Mode layouts, see mango-layout-names):
+#  Valid layouts (the 6 the Monitor Mode plugin offers):
 #    tile  monocle  scroller  grid  deck  center_tile
 #
 set -euo pipefail
@@ -56,16 +55,16 @@ set -euo pipefail
 # syntax, and the commands MangoWM understands. Fix things HERE after an update.
 
 # --- 1. FILE PATHS ----------------------------------------------------------
-# CONFIG is the file whose tagrule lines this script edits (same file that
-# set-monitor-mode.sh edits). Per-monitor tagrules live in the auto-generated
-# dms/tagrules.conf (sourced by config.conf), so we edit THAT -- not config.conf.
+# CONFIG is the file whose tagrule lines this script edits. Per-monitor tagrules
+# live in the auto-generated dms/tagrules.conf (sourced by config.conf), so we
+# edit THAT -- not config.conf.
 CONFIG="$HOME/.config/mango/dms/tagrules.conf"                # per-monitor tagrules (this script edits it)
 
 # Every layout change funnels through THIS script (the Monitor Mode plugin and the
 # hotplug watcher both shell out to it), so this is where the persistent
 # monitor->layout memory gets updated. That memory is what lets an UNPLUGGED
-# monitor come back on its own layout instead of tile -- while it is unplugged it
-# has no tagrules at all, so CONFIG above cannot remember anything about it.
+# monitor come back on its own layout instead of tile -- while it's unplugged it
+# has no tagrules at all, so CONFIG above can't remember anything about it.
 # Best-effort by design: if the watcher script is missing, layouts still work, you
 # just lose the across-a-replug memory.
 MEMORY_HOOK="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/monitor-watcher.sh"
@@ -77,18 +76,17 @@ MEMORY_HOOK="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/monitor-watcher
 MANGO_LAYOUT_KEY="layout_name"
 
 # --- 3. THE VALID LAYOUT NAMES ----------------------------------------------
-# The 6 curated layouts and their exact mango layout_name strings (verified
-# empirically; see the mango-layout-names note). Use the PLAIN names, NOT the
-# vertical_* variants. An unrecognized name is SILENTLY ignored by mango (keeps
-# the previous layout, and `mango -c -p` still returns 0), so this whitelist --
-# not mango's validator -- is what guards against typos.
+# The 6 curated layouts, spelled exactly as mango's layout_name expects (each
+# verified against a running compositor). Use the PLAIN names, NOT the vertical_*
+# variants. mango SILENTLY ignores a name it doesn't know -- it keeps the previous
+# layout and `mango -c -p` still returns 0 -- so this whitelist, not mango's
+# validator, is the only thing standing between you and a typo.
 VALID_LAYOUTS="tile monocle scroller grid deck center_tile"
 
 # --- 4. COMMANDS THAT TALK TO MANGOWM ---------------------------------------
-# Reload the config so the layout change takes effect. Unlike tile/float, a
-# layout reload RE-ARRANGES already-open tiled windows immediately -- so there
-# is NO retroactive "sweep" step here (set-monitor-mode.sh needs one; this
-# doesn't).
+# Reload the config so the layout change takes effect. A layout reload
+# RE-ARRANGES already-open tiled windows immediately, so there's no retroactive
+# "sweep" step needed here.
 #   mango 0.13 (DEAD): mmsg -s -d reload_config
 #   mango 0.14+ (now): mmsg dispatch reload_config
 # To test by hand:  mmsg dispatch reload_config   (should print {"success":true})
@@ -143,9 +141,9 @@ for p in "${PAIRS[@]}"; do
 done
 
 # Rewrite the layout field on every matching tagrule line. Replaces an existing
-# "layout_name:<old>" in place; if a line somehow lacks the field it is left
-# alone (all generated lines carry it). The field name comes from
-# MANGO_LAYOUT_KEY above (passed to awk as `key`). Idempotent.
+# "layout_name:<old>" in place; a line that somehow lacks the field is left alone
+# (all generated lines carry it). The field name comes from MANGO_LAYOUT_KEY
+# above, passed to awk as `key`. Idempotent.
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 awk -v map="$MAP" -v key="$MANGO_LAYOUT_KEY" '
@@ -182,8 +180,8 @@ cat "$TMP" > "$CONFIG"
 mango_reload_config
 
 # Record what was just applied, so a replug of any of these monitors restores it.
-# `|| true` twice over: this script runs under `set -e` on the user's click path,
-# and a memory failure must never turn a successful layout change into an error.
+# `|| true` twice over: this runs under `set -e` on your click path, and a memory
+# failure must never turn a successful layout change into an error.
 if [ -x "$MEMORY_HOOK" ]; then
   for p in "${PAIRS[@]}"; do
     "$MEMORY_HOOK" --remember "${p%% *}" "${p##* }" >/dev/null 2>&1 || true

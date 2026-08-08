@@ -16,12 +16,12 @@
 #
 #    2. IT ONLY TOUCHES WHAT THE MANIFEST SAYS IS OURS. Packages that were already
 #       present before DankMango (packagesSkipped) are never removed. Packages we
-#       failed to install (packagesFailed) were never installed, so there is
+#       failed to install (packagesFailed) were never installed, so there's
 #       nothing to remove — both lists are report-only.
 #
 #    3. IT ASKS BEFORE ANYTHING DESTRUCTIVE, and every such prompt defaults to NO.
 #       Restores (putting YOUR files back) are the only thing done without asking,
-#       because that is the point of uninstalling.
+#       because that's the point of uninstalling.
 #
 #    4. IT DEGRADES GRACEFULLY. An old/partial/hand-edited manifest produces
 #       warnings about what couldn't be determined, never a crash and never a
@@ -102,7 +102,7 @@ while [ $# -gt 0 ]; do
         --manifest) MANIFEST="${2:-}"; [ -n "$MANIFEST" ] || die "--manifest needs a path"; shift 2 ;;
         # Header block above = the only copy of the flag list. Same idiom as
         # install.sh/update.sh (inlined rather than shared: uninstall.sh deliberately
-        # does not source lib/common.sh). Replaces a hardcoded `sed -n '3,36p'` that
+        # doesn't source lib/common.sh). Replaces a hardcoded `sed -n '3,36p'` that
         # had drifted a line short and cut the header's closing rule off.
         -h|--help)  awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; exit 0 ;;
         *)          die "unknown argument: $1  (try --help)" ;;

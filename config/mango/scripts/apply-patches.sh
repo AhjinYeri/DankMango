@@ -4,25 +4,25 @@
 #  apply-patches.sh  --  DankMango patch dispatcher
 # =============================================================================
 #  ONE command that re-applies whichever of DankMango's package-owned-file
-#  patches have gone stale. You do not have to know their names, or which of
-#  them your last system update happened to wipe:
+#  patches have gone stale. You don't have to know their names, or which of them
+#  your last system update happened to wipe:
 #
 #      ~/.config/mango/scripts/apply-patches.sh
 #
 #  WHAT A "PATCH" MEANS HERE
-#    A handful of DankMango's features are not files DankMango owns. They are
-#    small edits to files that belong to somebody else's PACKAGE (a DMS core
-#    QML file, say). Those files are replaced wholesale every time that package
-#    updates, which silently reverts the edit. Each patch therefore ships as an
-#    idempotent apply script, and each leaves a MARKER string in the file it
-#    patches so its presence can be tested for later.
+#    A handful of DankMango's features aren't files DankMango owns. They're small
+#    edits to files belonging to somebody else's PACKAGE (a DMS core QML file,
+#    say). Those files get replaced wholesale every time that package updates,
+#    which silently reverts the edit. So each patch ships as an idempotent apply
+#    script, and each leaves a MARKER string in the file it patches so you can
+#    test for it later.
 #
 #  WHAT THIS SCRIPT ADDS
-#    The marker test, the "has this user opted in?" test and the re-apply were
-#    previously spread across post-update-health.sh, install.sh and the patch
-#    script itself. This is the one place that knows the set of patches; the
-#    health check now ASKS this script (status --porcelain) instead of carrying
-#    its own copy of a target path and a marker string.
+#    The marker test, the "has this user opted in?" test and the re-apply used to
+#    be spread across post-update-health.sh, install.sh and the patch script
+#    itself. This is now the one place that knows the set of patches; the health
+#    check ASKS this script (status --porcelain) instead of carrying its own copy
+#    of a target path and a marker string.
 #
 #  OPT-IN IS RESPECTED, ALWAYS
 #    These patches are opt-in at install time, so "the marker is missing" does
@@ -49,8 +49,8 @@
 #     1. Ship its apply script in config/mango/scripts/ — idempotent, writes a
 #        MARKER into the target, backs the target up first, calls sudo itself.
 #     2. Add its id to PATCH_IDS below and fill in the p_* fields for it.
-#     3. There is no step 3. post-update-health.sh, this dispatcher and the
-#        GUIDE all read the registry; none of them names a patch individually.
+#     3. There's no step 3. post-update-health.sh, this dispatcher and the GUIDE
+#        all read the registry; none of them names a patch individually.
 # =============================================================================
 set -uo pipefail
 
@@ -115,10 +115,10 @@ script_of() { printf '%s/%s\n' "$SCRIPT_DIR" "${p_script[$1]}"; }
 # opted_in ID -> 0 if this machine ever had this patch applied.
 #
 # Two sources, because one of them is younger than some installs. install.sh
-# records a 'patch-applied' systemChange when you say yes at the prompt — that is
+# records a 'patch-applied' systemChange when you say yes at the prompt — that's
 # the authoritative answer. Installs made before that record existed have no such
 # entry, so fall back to physical evidence: the patch script backs the target up
-# every time it writes, so a backup matching its glob means it has run here.
+# every time it writes, so a backup matching its glob means it's run here.
 # Neither is a guess; both mean "this machine said yes at some point".
 opted_in() {
     local id="$1"
@@ -257,7 +257,7 @@ while [ $# -gt 0 ]; do
 done
 
 # Explicitly named patches (or --all): apply them whatever their state — naming a
-# patch IS the opt-in. Nothing named: repair only what is genuinely stale, and
+# patch IS the opt-in. Nothing named: repair only what's genuinely stale, and
 # report the rest without touching it.
 if [ "${#ARGS[@]}" -gt 0 ]; then
     main_apply "$FORCE" "${ARGS[@]}"

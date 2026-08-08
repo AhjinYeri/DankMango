@@ -8,18 +8,18 @@
 # HOW IT BEHAVES
 #   Press once  -> starts recording the monitor your mouse/focus is on.
 #   Press again -> stops it, finalises the file, and tells you where it went.
-#   One keybind does both; there is no separate stop key to forget.
+#   One keybind does both; there's no separate stop key to forget.
 #
 # WHY A PIDFILE AND NOT pkill
-#   Stopping wf-recorder MUST be a clean SIGINT -- killing it any harder leaves an
-#   unplayable, unfinalised file, because the container never gets its trailer
-#   written. We track the exact PID we started in a pidfile and signal only that
-#   PID. We deliberately do NOT `pkill wf-recorder`: matching by process name is
-#   how you end up killing something you did not start.
+#   Stopping wf-recorder MUST be a clean SIGINT -- kill it any harder and you get
+#   an unplayable, unfinalised file, because the container never gets its trailer
+#   written. So we track the exact PID we started in a pidfile and signal only
+#   that PID. Deliberately NOT `pkill wf-recorder`: matching by process name is
+#   how you end up killing something you didn't start.
 #
-# AUDIO IS OFF BY DEFAULT -- and that is deliberate
+# AUDIO IS OFF BY DEFAULT -- and that's deliberate
 #   Recording audio means naming a PipeWire source, and the right source changes
-#   depending on whether you are on speakers or headphones (see the audio-switch
+#   depending on whether you're on speakers or headphones (see the audio-switch
 #   scripts). A recording that silently captures the wrong device -- or nothing --
 #   is worse than one that captures no audio at all and says so. To turn it on,
 #   set AUDIO=1 below and put the source name in AUDIO_SOURCE. Find sources with:
@@ -78,12 +78,12 @@ mkdir -p "$DIR" || { notify "Cannot record" "Could not create $DIR"; exit 1; }
 
 # Which monitor to record: the one the pointer is on.
 #
-# NOTE FOR FUTURE EDITS -- do not "improve" this into `mmsg get all-monitors`
-# and look for selmon. mango 0.14 rewrote the mmsg CLI and there is no selmon
-# field any more (verified on 0.15.5: the monitor object has no such key). The
-# two things that DO report a monitor are `get cursorpos` and
-# `get focusing-client`. We use cursorpos because it always answers -- there is
-# always a pointer, but there is not always a focused window.
+# NOTE FOR FUTURE EDITS -- don't "improve" this into `mmsg get all-monitors` and
+# look for selmon. mango 0.14 rewrote the mmsg CLI and there's no selmon field
+# any more (verified on 0.15.5: the monitor object has no such key). The two
+# things that DO report a monitor are `get cursorpos` and `get focusing-client`.
+# cursorpos wins because it always answers -- there's always a pointer, but
+# there isn't always a focused window.
 #
 # Parsed with grep, not jq, on purpose: cursorpos is flat JSON, and jq is only a
 # soft dependency of install.sh. If this lookup fails we leave OUTPUT empty and

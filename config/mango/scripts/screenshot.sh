@@ -98,8 +98,8 @@ trap 'exit' INT TERM HUP
 dms_screenshot_mode begin
 
 # --- capture ---------------------------------------------------------------
-# Returns non-zero when the user backed out (Escape in slurp), which is a
-# normal exit, not an error -- hence the quiet `exit 0` at the call site.
+# Returns non-zero when you back out (Escape in slurp), which is a normal exit,
+# not an error -- hence the quiet `exit 0` at the call site.
 capture() {
     local geom out
     case "$MODE" in
@@ -136,8 +136,8 @@ if [ "$MODE" = "quick" ]; then
 fi
 
 if ! command -v satty >/dev/null 2>&1; then
-    # Degrade to the old behaviour rather than losing the capture the user
-    # already framed.
+    # Degrade to the old behaviour rather than losing the capture you already
+    # framed.
     FILE="$DIR/screenshot_$(date +'%Y-%m-%d_%H-%M-%S').png"
     cp "$TMP" "$FILE"
     wl-copy < "$TMP"

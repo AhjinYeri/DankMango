@@ -8,9 +8,9 @@
 #  custom device aliases (e.g. "Edifier R1280DB 2.0").
 #
 #  WHY THIS SCRIPT EXISTS: the target file is package-owned (dms-shell, root:root)
-#  and is OVERWRITTEN by every DMS update. post-update-health.sh detects when the
-#  patch has been clobbered and tells you to re-run this script. It is idempotent
-#  (skips if already patched, unless --force) and backs up the current file first.
+#  and gets OVERWRITTEN by every DMS update. post-update-health.sh spots when the
+#  patch has been clobbered and tells you to re-run this. It's idempotent (skips
+#  if already patched, unless --force) and backs the current file up first.
 #
 #  Usage:   ~/.config/mango/scripts/apply-combined-osd-patch.sh [--force]
 #  (needs sudo -- it writes a root-owned file; you'll be prompted for a password)
@@ -57,15 +57,15 @@ DankOSD {
     // AudioOutputOSD box on top of it. Sourced from AudioService.displayName(), so it
     // honours custom device aliases (e.g. "Edifier R1280DB 2.0").
     //
-    // This file is PACKAGE-OWNED (dms-shell) and is OVERWRITTEN by DMS updates. It is
-    // reapplied by  ~/.config/mango/scripts/apply-combined-osd-patch.sh  and its
-    // presence is verified by  ~/.config/mango/scripts/post-update-health.sh , which
-    // greps for the marker string  "DankMango patch: combined OSD device name"  below.
+    // This file is PACKAGE-OWNED (dms-shell) and gets OVERWRITTEN by DMS updates. It's
+    // put back by  ~/.config/mango/scripts/apply-combined-osd-patch.sh , and
+    // ~/.config/mango/scripts/post-update-health.sh  checks it's still here by grepping
+    // for the marker string  "DankMango patch: combined OSD device name"  below.
     readonly property string deviceName: AudioService.sink ? AudioService.displayName(AudioService.sink) : ""
 
-    // Tracks whether a sink has EVER resolved. Used by the onSinkChanged handler below
-    // to tell "the user just switched output" apart from "the shell is starting up and
-    // the sink went null -> real", which must NOT flash the OSD on login.
+    // Tracks whether a sink has EVER resolved. The onSinkChanged handler below uses it
+    // to tell "you just switched output" apart from "the shell is starting up and the
+    // sink went null -> real", which must NOT flash the OSD on login.
     property bool _hadSink: false
     // ---- end DankMango patch ------------------------------------------------------
 
@@ -380,8 +380,8 @@ if [ -f "$TARGET" ]; then
     cp "$TARGET" "$BK"
     echo "[combined-osd-patch] Backed up current file -> $BK"
 else
-    echo "[combined-osd-patch] WARNING: $TARGET does not exist (DMS moved/renamed it?)." >&2
-    echo "                     Writing anyway; verify the OSD path is still correct." >&2
+    echo "[combined-osd-patch] WARNING: $TARGET isn't there (DMS moved or renamed it?)." >&2
+    echo "                     Writing anyway; check the OSD path is still correct." >&2
 fi
 
 # --- write it (root-owned, world-readable) -----------------------------------

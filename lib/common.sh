@@ -470,7 +470,7 @@ manifest_finalize() {
 
 # ---- package sets (moved verbatim from install.sh stage 3) ------------------
 # Official-repo packages (the AUR helper pulls these straight from the repos).
-# rsync: NOT part of a base CachyOS install. It is no longer needed by the SDDM
+# rsync: NOT part of a base CachyOS install. It's no longer needed by the SDDM
 # stage (DankMango's own login theme replaced the astronaut theme's apply.sh, which
 # was the thing that needed it), but it stays pinned: an existing v1.x user who has
 # not cut over yet still re-runs that apply.sh by hand, and it would be a poor trade
@@ -491,7 +491,7 @@ manifest_finalize() {
 # imagemagick: `magick` is what scripts/sddm-palette-sync.sh uses to downscale and
 # re-encode the wallpaper into the login theme's slot files. Without it the palette
 # still syncs but the login screen keeps a stale/blank backdrop, silently (the script
-# logs and exits 0 by design). It is NOT part of a base CachyOS install -- on this dev
+# logs and exits 0 by design). It's NOT part of a base CachyOS install -- on this dev
 # box it was only present as a zbar dependency -- so pin it explicitly.
 REPO_PKGS=(nemo nemo-fileroller loupe celluloid matugen cosmic-icon-theme xdg-desktop-portal-wlr keyd rsync jq cava imagemagick satty)
 # AUR packages that DankMango needs.
@@ -505,7 +505,7 @@ REPO_PKGS=(nemo nemo-fileroller loupe celluloid matugen cosmic-icon-theme xdg-de
 #     It stays in their manifest's .packages, so uninstall.sh still offers to remove it.
 #   * system/sddm/sddm-astronaut-japanese/ stays in the repo for the same reason. If it
 #     were deleted, update.sh's retire_file() would offer to remove the very config dir
-#     those users' working login screen is built from. It is inert for new installs
+#     those users' working login screen is built from. It's inert for new installs
 #     (nothing copies it any more) and costs a few hundred KB.
 AUR_PKGS=(zen-browser-bin)
 # Standard taskbar apps (issue #5): the SEED_PINNED_APPS set minus what's already
@@ -743,7 +743,7 @@ route_dest() {
 # read at every startup and merged into prefs.js — and is safe to edit at any time.
 #
 # Zen reads userChrome.css only at startup, so a full quit+relaunch (not a reload)
-# is required before any of this is visible. That is inherent to the Firefox family,
+# is required before any of this is visible. That's inherent to the Firefox family,
 # not something this step can fix.
 ZEN_CSS="$HOME/.config/DankMaterialShell/zen.css"
 ZEN_MARK_BEGIN="/* >>> DankMango-managed — regenerated on install/update; edit outside this block <<< */"
@@ -755,7 +755,7 @@ ZEN_JS_MARK_END="// <<< end DankMango-managed >>>"
 #
 # Resolution order matters and is NOT the obvious one. A long-lived profile set can
 # carry a stale `Default=1` on a [ProfileN] that was never actually used, while the
-# profile the browser really opens is named by the [InstallXXXXXXXX] section. That is
+# profile the browser really opens is named by the [InstallXXXXXXXX] section. That's
 # the exact shape on the dev machine: [Profile1] Default=1 points at an empty dir
 # holding only times.json, while [Install15B76BAA26BA15E7] Default= names the real
 # one. So: Install section first, [ProfileN] Default=1 only as a fallback.
