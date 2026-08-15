@@ -62,6 +62,10 @@ UPDATED=(); PKGS_ADDED=(); MIGRATED=(); RETIRED=(); LEFT=(); MANUAL=()
 # The login theme is reinstalled as a WHOLE TREE, so however many of its files changed
 # in this delta, the installer runs once. Guards apply_change's dankmango-sddm-theme arm.
 SDDM_THEME_REINSTALLED=0
+# Same idea, per plugin: a DMS plugin is deployed as a whole DIRECTORY, so a delta that
+# touches several of its files is still ONE deployment. Keyed by plugin id (the "id" from
+# its plugin.json), set the first time apply_change deploys it. Guards the `plugin` arm.
+declare -A PLUGIN_DEPLOYED=()
 
 # Prompts must read the TERMINAL, not stdin: we never loop over a pipe while
 # prompting (the git delta is collected into an array first), but be defensive
@@ -92,6 +96,7 @@ MIGRATIONS=(
     "zen-userchrome-bridge:write the Zen userChrome.css/user.js bridge so matugen's zen.css is actually loaded (Zen theming never worked before this)"
     "strip-dead-floatsize-execonce:remove the dead 'exec-once = .../dp2-floatsize.sh' autostart left in a hand-edited config.conf after the float helper was retired"
     "sddm-dankmango-theme:install DankMango's own login theme (replaces the sddm-astronaut-theme AUR package) — deploys it, does NOT switch the login screen over"
+    "register-shipped-plugins:register plugins DankMango has started shipping since your install (e.g. the first-run welcome panel) — only ADDS missing entries, never changes ones you already have"
 )
 
 # v1.x installs got their login screen from the sddm-astronaut-theme AUR package,
@@ -241,6 +246,73 @@ migrate_strip-dead-floatsize-execonce() {
     fi
     rm -f "$tmp"
     return 0
+}
+
+# A plugin DankMango starts shipping AFTER your install never gets switched on, and the
+# failure is completely silent. Stage 4 copies the plugin's files correctly, but the file
+# that says "load this plugin" is plugin_settings.json — LIVE STATE, so the `dms-state`
+# route refuses to overwrite it and (rightly) says the change belongs in a migration.
+# This is that migration. Without it, DMS discovers the plugin and leaves it off, because
+# an unregistered id defaults to disabled:
+#     PluginService.qml:  isPureDesktop || SettingsData.getPluginSetting(id, "enabled", false)
+# and isPureDesktop is false for anything that isn't a pure desktop widget. Found on a
+# sandboxed v1.3.0 -> v1.4.0 run, where the welcome panel deployed and then never appeared.
+#
+# MERGE DIRECTION IS THE WHOLE POINT, and it is NOT install.sh's.
+#   install.sh stage 7c uses  jq -s '.[0] * .[1]'  (live * shipped) -> SHIPPED wins.
+#   This uses                 jq -s '.[1] * .[0]'  (shipped * live) -> LIVE wins.
+# jq's `*` is a recursive merge in which the RIGHT side wins on a conflict, so reusing
+# install.sh's order here would walk over the user's own choices — measured, not assumed:
+# with live {"monitorMode":{"enabled":false}} and shipped {"monitorMode":{"enabled":true}},
+# install.sh's order returns enabled:true and flips a plugin the user deliberately switched
+# off back on. An installer setting up a fresh machine may do that; an updater may not.
+# Live-wins still registers everything new, because a brand-new id has nothing to collide
+# with. (Nested values like audioToggle's machine-specific outputTargets survive either
+# way — `*` recurses rather than replacing the object — but the enabled flag is the case
+# that actually differs, so the direction is chosen for that.)
+#
+# Idempotent: it computes the shipped ids that are MISSING from the live file and does
+# nothing at all when that set is empty, so a second run is a no-op rather than a rewrite.
+migrate_register-shipped-plugins() {
+    local tgt="$HOME/.config/DankMaterialShell/plugin_settings.json"
+    local src="$REPO_DIR/config/dms/DankMaterialShell/plugin_settings.json"
+    [ -f "$src" ] || { info "  the repo ships no plugin_settings.json — nothing to do"; return 0; }
+    have jq || { warn "  jq unavailable — can't merge plugin registrations"; return 1; }
+
+    # No live file at all (a DMS config wiped by hand, say): the shipped one IS the answer,
+    # and there is nothing of the user's to preserve.
+    if [ ! -f "$tgt" ]; then
+        [ "$DRY_RUN" = 1 ] && { info "  (dry-run) would install the shipped plugin_settings.json"; return 0; }
+        mkdir -p "$(dirname "$tgt")"
+        cp -a "$src" "$tgt" && ok "  installed plugin_settings.json (you had none)"
+        return 0
+    fi
+    # Refuse to touch a file we can't parse rather than replacing it with the shipped copy:
+    # hand-broken JSON is still the user's settings, and it is recoverable by hand.
+    jq -e . "$tgt" >/dev/null 2>&1 || { warn "  $tgt isn't valid JSON — leaving it alone. Fix it, then re-run."; return 1; }
+    jq -e . "$src" >/dev/null 2>&1 || { warn "  the repo's plugin_settings.json isn't valid JSON — skipping"; return 1; }
+
+    local missing
+    missing="$(jq -r --slurpfile s "$src" '($s[0] | keys) - keys | join(" ")' "$tgt" 2>/dev/null)"
+    if [ -z "$missing" ]; then
+        info "  every plugin DankMango ships is already registered — nothing to do"; return 0
+    fi
+    info "  shipped but not registered on this install: $missing"
+    [ "$DRY_RUN" = 1 ] && return 0
+
+    local tmp; tmp="$(mktemp)"
+    if jq -s '.[1] * .[0]' "$tgt" "$src" > "$tmp" 2>/dev/null && [ -s "$tmp" ] && jq -e . "$tmp" >/dev/null 2>&1; then
+        cp -a "$tgt" "$tgt.bak-$STAMP"
+        prune_file_backups "$tgt"
+        cat "$tmp" > "$tgt"          # cat, not mv: keeps the original file's mode/owner
+        rm -f "$tmp"
+        ok "  registered: $missing (your existing settings kept; backup: $tgt.bak-$STAMP)"
+        MANUAL+=("newly registered plugin(s): $missing — run 'dms restart' to load them")
+        return 0
+    fi
+    rm -f "$tmp"
+    warn "  couldn't merge plugin registrations — left $tgt untouched. Add them in DMS Settings -> Plugins."
+    return 1
 }
 
 # =============================================================================
@@ -727,14 +799,47 @@ apply_change() {  # apply_change REPO_REL
             ;;
         plugin)
             # Re-copy the whole plugin tree the file belongs to (mirrors install stage 14).
+            #
+            # ONCE PER PLUGIN PER RUN, not once per changed file. A plugin is deployed as a
+            # whole directory, so a delta touching four of its files is still one
+            # deployment — the same reasoning (and the same flag idiom) as
+            # SDDM_THEME_REINSTALLED above. Without the guard the tree was re-copied once
+            # per file, which printed four identical report lines for one plugin and, worse,
+            # made the backup below fire on the SECOND file onward against a directory this
+            # very run had just created: `cp -a "$tgt" "$tgt.bak-$STAMP"` with the backup
+            # already existing copies INTO it, leaving a nested
+            # firstRunPanel.bak-<stamp>/firstRunPanel/. Deduping is what stops that.
             local pdir pid tgt
             pdir="$REPO_DIR/$(printf '%s' "$rel" | cut -d/ -f1-2)"
             [ -f "$pdir/plugin.json" ] || { warn "plugin.json missing for $rel — skipped"; return; }
             pid="$(grep -oP '"id"\s*:\s*"\K[^"]+' "$pdir/plugin.json" | head -1)"
+            [ -n "$pid" ] || { warn "couldn't read plugin id from $pdir/plugin.json — skipped"; return; }
+            if [ -n "${PLUGIN_DEPLOYED[$pid]:-}" ]; then
+                info "plugin '$pid' handled once per run — nothing further for: $rel"
+                return
+            fi
+            PLUGIN_DEPLOYED[$pid]=1
             tgt="$HOME/.config/DankMaterialShell/plugins/$pid"
             [ "$DRY_RUN" = 1 ] && { info "would update plugin '$pid' -> $tgt"; UPDATED+=("plugin:$pid"); return; }
             # Directory backup — prune_file_backups removes these as trees.
-            [ -d "$tgt" ] && { cp -a "$tgt" "$tgt.bak-$STAMP"; prune_file_backups "$tgt"; }
+            #
+            # Only when there is genuinely something to back up: a plugin that is NEW in this
+            # delta (firstRunPanel on a v1.3.0 -> v1.4.0 upgrade) has no installed version, and
+            # a .bak- of a directory that didn't exist is just litter in the plugins folder.
+            # The dedupe above is what makes this test meaningful — it now runs exactly once,
+            # BEFORE anything is written, so it reads the pre-update state rather than our own
+            # half-finished work.
+            #
+            # The `! -e` arm is the belt to that braces, and it is not theoretical: `cp -a DIR
+            # DEST` copies INTO DEST when DEST already exists, so any second backup of the same
+            # tree under the same stamp nests as plugins/foo.bak-<stamp>/foo/ instead of
+            # replacing. The dedupe stops that within one run; this also stops it across two
+            # runs that start in the same second (rewound manifest, scripted re-run), where
+            # STAMP is identical. One backup per path per run — and never delete the existing
+            # one to make room, since it is the copy of the state we are about to overwrite.
+            if [ -d "$tgt" ] && [ -n "$(ls -A "$tgt" 2>/dev/null)" ] && [ ! -e "$tgt.bak-$STAMP" ]; then
+                cp -a "$tgt" "$tgt.bak-$STAMP"; prune_file_backups "$tgt"
+            fi
             mkdir -p "$tgt"; cp -a "$pdir/." "$tgt/" && { ok "plugin '$pid' updated"; UPDATED+=("plugin:$pid"); }
             MANUAL+=("plugin '$pid' updated — a DMS reload/restart may be needed to pick it up")
             ;;
