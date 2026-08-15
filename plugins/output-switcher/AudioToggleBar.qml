@@ -214,10 +214,18 @@ PluginComponent {
     // --- switch to the next available sink (wraps) -------------------------------
     function cycleSinks() {
         var list = root.sinks
-        if (!list || list.length === 0)
+        if (!list || list.length === 0) {
+            ToastService.showError("Audio switch failed", "No audio outputs found")
             return
-        if (list.length === 1)
-            return                                  // nothing to switch to
+        }
+        // Nothing to switch TO. This used to return in silence, which made a real
+        // breakage (the machine's outputTargets going missing, dropping the plugin
+        // back to sink-cycling on a box with one sink) look identical to a working
+        // button on a quiet desktop. A click that does nothing has to say so.
+        if (list.length === 1) {
+            ToastService.showError("Audio switch failed", "Only one output to switch between")
+            return
+        }
         var idx = -1
         for (var i = 0; i < list.length; i++) {
             if (list[i].isDefault) {
@@ -305,9 +313,11 @@ PluginComponent {
     function cycleProfiles() {
         var t = root.outputTargets
         if (!t || t.length === 0)
+            return                                  // unreachable: hasTargets gates this
+        if (t.length === 1) {                       // nothing to switch to -- say so, as above
+            ToastService.showError("Audio switch failed", "Only one output configured to switch between")
             return
-        if (t.length === 1)
-            return                                  // nothing to switch to
+        }
         var cur = root.activeTargetIdx              // -1 (unknown/external) -> start at first
         var next = t[(cur + 1) % t.length]
         root.pendingName = next.label

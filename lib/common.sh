@@ -164,7 +164,7 @@ select_main_display() {
     local -a names=()
     mapfile -t names < <(monitor_names_for_prompt)
     if [ "${#names[@]}" -eq 0 ]; then
-        warn "couldn't list monitors (is MangoWM running?) — skipping main-display selection"
+        warn "couldn't list monitors (is MangoWM running?) — skipping game-display selection"
         info "set it later with:  ./install.sh --reselect-main-display"
         return 1
     fi
@@ -173,12 +173,12 @@ select_main_display() {
     # confirm the only possible answer — and it still gets recorded, so plugging in
     # a second monitor later behaves correctly from the first moment.
     if [ "${#names[@]}" -eq 1 ]; then
-        _store_main_display "${names[0]}" && ok "main display: ${names[0]} (only monitor connected)"
+        _store_main_display "${names[0]}" && ok "game display: ${names[0]} (only monitor connected)"
         return $?
     fi
 
     if ! have whiptail; then
-        warn "whiptail not found — skipping main-display selection"
+        warn "whiptail not found — skipping game-display selection"
         info "set it later with:  ./install.sh --reselect-main-display"
         return 1
     fi
@@ -227,20 +227,22 @@ select_main_display() {
     done
 
     # Height: fixed chrome (title, body, buttons) + one line per monitor, so the box
-    # grows with the list instead of clipping it on a 3+ monitor desk.
-    local box_h=$(( 14 + ${#ordered[@]} ))
+    # grows with the list instead of clipping it on a 3+ monitor desk. The constant
+    # counts the WRAPPED body lines, so re-count it if you edit the prompt text --
+    # it went 14 -> 15 when the "nothing else moves" sentence was added below.
+    local box_h=$(( 15 + ${#ordered[@]} ))
 
     local choice
-    choice="$(whiptail --title "DankMango — main display" \
-        --radiolist "Which monitor is your MAIN display?\n\nGames launched from Steam are sent here instead of wherever the mouse happens to be. You can change this later with:\n  ./install.sh --reselect-main-display\n\nMove: ↑/↓ or Ctrl-P/Ctrl-N   Select: Space   Confirm: Enter" \
+    choice="$(whiptail --title "DankMango — game display" \
+        --radiolist "Which monitor should GAMES open on?\n\nGames launched from Steam are sent here instead of wherever the mouse happens to be. Nothing else moves — this is not a general default screen. You can change it later with:\n  ./install.sh --reselect-main-display\n\nMove: ↑/↓ or Ctrl-P/Ctrl-N   Select: Space   Confirm: Enter" \
         "$box_h" 74 "${#ordered[@]}" "${rows[@]}" 3>&1 1>&2 2>&3)" || {
-        info "main-display selection cancelled — nothing stored"
+        info "game-display selection cancelled — nothing stored"
         info "set it later with:  ./install.sh --reselect-main-display"
         return 1
     }
     [ -n "$choice" ] || { info "no monitor picked — nothing stored"; return 1; }
 
-    _store_main_display "$choice" && ok "main display: $choice"
+    _store_main_display "$choice" && ok "game display: $choice"
 }
 
 # _store_main_display NAME — the one writer of .userPrefs.mainDisplay on the
@@ -248,12 +250,71 @@ select_main_display() {
 # preference, NOT install bookkeeping, so uninstall must not try to revert it.
 _store_main_display() {
     local name="$1"
-    [ -f "$MANIFEST" ] || { warn "no manifest yet — cannot store the main display"; return 1; }
+    [ -f "$MANIFEST" ] || { warn "no manifest yet — cannot store the game display"; return 1; }
     manifest_jq '.userPrefs = ((.userPrefs // {}) | .mainDisplay = $n)' --arg n "$name" || return 1
     # Make it take effect now rather than at the next hotplug: the watcher owns the
     # generated windowrules, so ask it to refresh them (no-op if it isn't installed).
     local watcher="$HOME/.config/mango/scripts/monitor-watcher.sh"
     [ -x "$watcher" ] && "$watcher" --once >/dev/null 2>&1
+    return 0
+}
+
+# ---- backup retention -------------------------------------------------------
+# How many timestamped backups to keep PER ORIGINAL FILE. Tune it here and nowhere
+# else — no other line in this repo knows the number. Deliberately mirrors
+# DANKMANGO_SNAPSHOT_RETAIN in update.sh, which caps snapper snapshots the same way.
+#
+# Also hardcoded in config/mango/scripts/apply-combined-osd-patch.sh, which prunes
+# ~/.config/mango/backups and ships standalone (it can't source this file) — keep the
+# two in sync.
+DANKMANGO_BACKUP_RETAIN=10
+
+# prune_file_backups ORIGINAL [NEED_SUDO] — never returns non-zero, by design.
+#
+# Every overwrite leaves ORIGINAL.bak-<stamp> beside the original, so a file touched
+# by twenty updates ends up with twenty copies that nothing ever removed. This keeps
+# the newest $DANKMANGO_BACKUP_RETAIN and deletes our older ones. It's called right
+# after a new backup is written, so each file prunes its own history — same shape as
+# prune_dankmango_snapshots in update.sh, and for the same reason: housekeeping of our
+# own artifacts should just happen, with no prompt and no report line unless something
+# was actually tidied.
+#
+# THE ONE RULE: a file is ours ONLY if it is exactly ORIGINAL.bak-YYYYmmdd-HHMMSS.
+# Hand-made and other-script backups share the .bak- prefix but not the shape
+# (.bak-altswitcher, .bak-logout, .bak-transp, .bak-pre-blur-<stamp>, .bak-0.14-<stamp>),
+# and quietly deleting somebody's labelled safety copy is unforgivable — so the stamp is
+# matched STRICTLY, digit by digit, and anything else is left alone. That strictness is
+# also what makes the rm below safe on a directory: the only way to match is to be a
+# sibling of a path we just backed up ourselves.
+#
+# Sorted by the STAMP IN THE NAME, never by mtime. Backups are made with `cp -a`, which
+# preserves the ORIGINAL's mtime — so a backup's mtime is the age of its CONTENT, not
+# the moment the backup was taken, and sorting by it would delete the wrong files. The
+# stamp format sorts lexicographically in chronological order, so plain `sort` is right.
+prune_file_backups() {
+    local orig="${1:-}" need_sudo="${2:-0}" f total cut
+    local -a found=() doomed=() rm_cmd=(rm -rf)
+    [ -n "$orig" ] || return 0
+    [ "$need_sudo" = 1 ] && rm_cmd=(sudo rm -rf)
+
+    while IFS= read -r f; do
+        [ -n "$f" ] && found+=("$f")
+    done < <(compgen -G "$orig.bak-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]" 2>/dev/null | sort)
+
+    total=${#found[@]}
+    [ "$total" -gt "$DANKMANGO_BACKUP_RETAIN" ] || return 0   # under the cap — stay quiet
+    cut=$(( total - DANKMANGO_BACKUP_RETAIN ))
+    doomed=( "${found[@]:0:cut}" )                            # the oldest $cut, and only those
+
+    if [ "${DRY_RUN:-0}" = 1 ]; then
+        info "(dry-run) would tidy $cut older backup(s) of $(basename "$orig"), keeping the most recent $DANKMANGO_BACKUP_RETAIN"
+        return 0
+    fi
+    if "${rm_cmd[@]}" "${doomed[@]}" 2>/dev/null; then
+        info "tidied $cut older backup(s) of $(basename "$orig") — the most recent $DANKMANGO_BACKUP_RETAIN are kept."
+    else
+        warn "couldn't tidy $cut older backup(s) of $orig — left in place. Harmless; they only take up space."
+    fi
     return 0
 }
 
@@ -275,6 +336,7 @@ sys_copy() {
             sudo cp -a "$dst" "$dst.bak-$STAMP"
             info "backed up existing $dst -> $dst.bak-$STAMP"
             manifest_add_backup "$dst" "$dst.bak-$STAMP" system "$CUR_STAGE"
+            prune_file_backups "$dst" 1
         fi
     fi
     sudo cp "$src" "$dst"
@@ -305,6 +367,7 @@ user_copy() {
             cp -a "$dst" "$dst.bak-$STAMP"
             info "backed up existing $dst -> $dst.bak-$STAMP"
             manifest_add_backup "$dst" "$dst.bak-$STAMP" user "$CUR_STAGE"
+            prune_file_backups "$dst"
         fi
     fi
     cp "$src" "$dst"
@@ -821,6 +884,7 @@ _zen_write() {
         cp -a "$f" "$f.bak-$STAMP"
         [ -n "${MANIFEST:-}" ] && [ -f "${MANIFEST:-}" ] && \
             manifest_add_backup "$f" "$f.bak-$STAMP" user "${CUR_STAGE:-zen}"
+        prune_file_backups "$f"
         printf '%s\n' "$new" > "$f"
         ok "  updated $label (backup: $(basename "$f").bak-$STAMP)"
     else

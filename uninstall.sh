@@ -114,6 +114,14 @@ done
 # never scatter files into the real state dir.
 RESCUE="$(cd "$(dirname "$MANIFEST")" && pwd)/uninstall-$STAMP"
 
+# How many rescue dirs to keep. Tune it here and nowhere else.
+#
+# Its OWN number rather than lib/common.sh's DANKMANGO_BACKUP_RETAIN, for two reasons:
+# this script is standalone (it deliberately doesn't source lib/common.sh), and the two
+# things are not the same size of artifact — a file backup is a few KB, a rescue dir is
+# a whole config tree and can be hundreds of MB. They deserve to be tuned apart.
+DANKMANGO_RESCUE_RETAIN=10
+
 echo "==================================================================="
 echo " DankMango uninstaller   ($STAMP)"
 echo " manifest: $MANIFEST"
@@ -150,6 +158,71 @@ rescue_move() {
     else
         mkdir -p "$(dirname "$dst")" && mv "$src" "$dst"
     fi || { warn "couldn't move $src into the rescue dir — left it in place"; return 1; }
+    return 0
+}
+
+# prune_rescue_dirs — never returns non-zero, by design.
+#
+# Every uninstall leaves a full uninstall-<stamp> tree behind and nothing has ever
+# removed them, so an uninstall/reinstall cycle accumulates whole config trees for
+# good. This keeps the newest $DANKMANGO_RESCUE_RETAIN and removes our older ones.
+#
+# WHY A PLAIN NEWEST-N CAP IS SAFE HERE: the rescue tree holds DANKMANGO'S OWN files,
+# not the user's pre-DankMango originals. Stage 3 restores from the manifest-recorded
+# .bak-<stamp> beside the original (`cp -a "$bak" "$orig"`), and manifest_add_backup's
+# keep-first rule is what guarantees that backup is the true pre-DankMango content.
+# Nothing in this script ever reads FROM the rescue tree — it exists so a human can go
+# and look. So no rescue dir is irreplaceable, and none needs permanent exemption.
+#
+# What a rescue dir CAN hold that exists nowhere else is post-install customisation:
+# a config you hand-edited after installing is moved here rather than deleted. That is
+# an argument for keeping the NEWEST ones, which is exactly what this does.
+#
+# THE ONE RULE: only directories named EXACTLY uninstall-YYYYmmdd-HHMMSS are ours. The
+# state dir also holds manifest.json and anything a user has put there, and this runs
+# `rm -rf` — so the stamp is matched digit by digit, non-directories are skipped, and
+# the dir we just created is excluded explicitly. Sorted by the stamp in the NAME, which
+# sorts lexicographically in chronological order.
+#
+# THIS RUN'S OWN dir is counted but never a candidate, which is what makes --dry-run and
+# a real run agree. It is excluded from `found` either way: on a dry run it doesn't exist
+# yet (we exit before the mkdir), and on a real run it's skipped explicitly. So the total
+# is always "what will be on disk when this run finishes" = found + 1.
+prune_rescue_dirs() {
+    local base total cut d failed=0
+    local -a found=() doomed=()
+    base="$(dirname "$RESCUE")"
+
+    while IFS= read -r d; do
+        [ -n "$d" ] && [ -d "$d" ] || continue
+        [ "$d" = "$RESCUE" ] && continue          # never the one this run just made
+        found+=("$d")
+    done < <(compgen -G "$base/uninstall-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]" 2>/dev/null | sort)
+
+    total=$(( ${#found[@]} + 1 ))
+    [ "$total" -gt "$DANKMANGO_RESCUE_RETAIN" ] || return 0   # under the cap — stay quiet
+    cut=$(( total - DANKMANGO_RESCUE_RETAIN ))
+    [ "$cut" -le "${#found[@]}" ] || cut=${#found[@]}
+    doomed=( "${found[@]:0:cut}" )                            # the oldest $cut, and only those
+    [ "${#doomed[@]}" -gt 0 ] || return 0
+
+    if [ "$DRY_RUN" = 1 ]; then
+        info "would tidy ${#doomed[@]} older rescue dir(s), keeping the most recent $DANKMANGO_RESCUE_RETAIN:"
+        for d in "${doomed[@]}"; do info "    $(basename "$d")"; done
+        return 0
+    fi
+
+    for d in "${doomed[@]}"; do
+        rm -rf "$d" 2>/dev/null && continue
+        # A rescue dir that captured the SDDM theme holds root-owned files, so plain rm
+        # can't finish it. `sudo -n` only: a cleanup step must never be the thing that
+        # stops to ask for a password.
+        have sudo && sudo -n rm -rf "$d" 2>/dev/null && continue
+        failed=$((failed + 1))
+        warn "couldn't remove old rescue dir $d — left in place. By hand: sudo rm -rf $d"
+    done
+    local done_n=$(( ${#doomed[@]} - failed ))
+    [ "$done_n" -gt 0 ] && info "tidied $done_n older rescue dir(s) — the most recent $DANKMANGO_RESCUE_RETAIN are kept."
     return 0
 }
 
@@ -250,6 +323,7 @@ info "Delete that dir yourself once you're happy — until then, every step is r
 
 if [ "$DRY_RUN" = 1 ]; then
     echo
+    prune_rescue_dirs
     ok "dry run complete — nothing was changed."
     info "Re-run without --dry-run to act on this plan."
     exit 0
@@ -261,6 +335,10 @@ if ! ask_yn "Proceed with the uninstall described above?"; then
     exit 0
 fi
 mkdir -p "$RESCUE" || die "couldn't create the rescue dir at $RESCUE — refusing to remove anything without it."
+# Right after the new one is created, so each run tidies its own history — the same
+# shape as the .bak pruning in lib/common.sh and the snapper pruning in update.sh.
+# Deliberately AFTER the confirmation prompt: an aborted run must change nothing.
+prune_rescue_dirs
 
 # =============================================================================
 # 3. Restore backed-up files

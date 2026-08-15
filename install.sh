@@ -18,9 +18,10 @@
 #
 #  Usage:
 #     bash install.sh                          full install; asks before anything big
-#     bash install.sh --reselect-main-display  re-run ONLY the "which monitor is your
-#                                              main display" picker, then exit. Changes
-#                                              one preference; installs nothing.
+#     bash install.sh --reselect-main-display  re-run ONLY the "which monitor should
+#                                              games open on" picker (your game
+#                                              display), then exit. Changes one
+#                                              preference; installs nothing.
 #     bash install.sh --help                   this text
 #
 #  Environment switches (advanced — both default to off):
@@ -45,7 +46,7 @@ set -uo pipefail
 # that implements them, so the hub stores no copy of its own. Add a line when you
 # add a flag worth showing; the fuller explanation stays in the Usage block above.
 # CMD: bash install.sh :: install or re-install DankMango (safe to re-run; backs up as it goes)
-# CMD: bash install.sh --reselect-main-display :: re-pick which monitor games open on; changes one preference only
+# CMD: bash install.sh --reselect-main-display :: re-pick your game display (which monitor games open on); changes one preference only
 
 # ---- --help ------------------------------------------------------------------
 # The flag list lives in the header comment above and NOWHERE ELSE — this prints
@@ -74,8 +75,10 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # because the library reads it; sourcing only defines things (no actions).
 source "$REPO_DIR/lib/common.sh"
 
-# ---- --reselect-main-display: re-run JUST the main-display prompt -------------
-# A user who dismissed the watcher's "main display disconnected" notification
+# ---- --reselect-main-display: re-run JUST the game-display prompt -------------
+# (The FLAG keeps its old name on purpose -- renaming a flag people have typed and
+# scripted is a breaking change, and only the wording shown to people changed.)
+# A user who dismissed the watcher's "game display disconnected" notification
 # without clicking either button has no other way back — the next prompt would only
 # come with the next hotplug. Rather than invent a second UI, this re-runs the very
 # same selector stage 7e uses and exits. Deliberately placed ABOVE the confirmation
@@ -83,7 +86,7 @@ source "$REPO_DIR/lib/common.sh"
 # type "I understand" (a warning about replacing their whole config) would be a lie.
 if [ "${1:-}" = "--reselect-main-display" ]; then
     echo "==================================================================="
-    echo " DankMango — reselect main display"
+    echo " DankMango — reselect game display"
     echo "==================================================================="
     if [ ! -f "$MANIFEST" ]; then
         die "no install manifest at $MANIFEST — run the installer first (bash install.sh)"
@@ -134,6 +137,15 @@ if ! ask_typed "Type 'I understand' to continue (anything else aborts): " "I und
     info "Aborted — nothing was changed."
     exit 0
 fi
+
+# FRESH INSTALL? Captured HERE, immediately before manifest_init, because that is the
+# call that creates the manifest — ask afterwards and the answer is always "no". Used
+# once, at the very end, to decide whether to restart DMS so the first-run welcome
+# panel appears. Re-runs and update.sh must never trigger that: an existing user has
+# already seen it (or deliberately dismissed it), and restarting their shell
+# unprompted would be rude.
+FRESH_INSTALL=0
+[ -f "$MANIFEST" ] || FRESH_INSTALL=1
 
 # Stage 0 (setup, not user-facing): open the install manifest FIRST, so even a run
 # that crashes early leaves an accurate partial record. Every stage below appends to
@@ -352,6 +364,29 @@ uri_encode_path() {
 if [ -s "$NEMO_BOOKMARKS" ]; then
     info "$NEMO_BOOKMARKS already has entries — leaving your bookmarks untouched"
 else
+    # The folders have to EXIST before there is any point bookmarking them (the loop
+    # below skips what's missing, and a dead bookmark makes Nemo nag on startup). On a
+    # bone-fresh install nothing has created them yet: xdg-user-dirs ships an autostart
+    # hook that does it at first login, but that only fires under a desktop that
+    # processes /etc/xdg/autostart — a bare mango session doesn't, so ~/Documents and
+    # friends never appear and the whole feature silently seeds nothing.
+    #
+    # NATIVE FIRST. When ~/.config/user-dirs.dirs has never been written, run the real
+    # tool rather than guessing: it creates the folders under the user's own locale
+    # (Dokumente, Documentos — it ships gettext catalogues), honours a site's
+    # /etc/xdg/user-dirs.defaults, and records the result where every XDG-aware app
+    # looks it up. A plain `mkdir ~/Documents` does none of that. Gated on the file
+    # being ABSENT, which is precisely "the login hook never ran": once it exists, that
+    # is the user's own layout and we re-run nothing over the top of it.
+    if [ ! -e "$HOME/.config/user-dirs.dirs" ] && have xdg-user-dirs-update; then
+        info "XDG user folders were never set up — asking xdg-user-dirs to create them"
+        # Deliberately not checked for success: with enabled=False in user-dirs.conf it
+        # creates nothing and still exits 0, and that refusal is the user's decision to
+        # respect, not to work around. The per-folder mkdir in the loop is what actually
+        # guarantees the five we need, whether or not this did anything.
+        xdg-user-dirs-update 2>/dev/null || true
+    fi
+
     bookmark_lines=""
     bookmark_count=0
     for key in "${NEMO_BOOKMARK_DIRS[@]}"; do
@@ -371,10 +406,25 @@ else
                 *) dir="$HOME/$(printf '%s' "${key:0:1}")$(printf '%s' "${key:1}" | tr '[:upper:]' '[:lower:]')" ;;
             esac
         fi
-        # Skip what doesn't exist. A bookmark pointing at a missing folder shows
-        # up broken in the sidebar and makes Nemo nag "Do you want to remove any
-        # bookmarks with the non-existing location from your list?" on startup —
-        # a bad first impression on a system with, say, no ~/Music.
+        # Still missing? Create it. This is the RESOLVED path, so where xdg-user-dir
+        # answered we create the user's localized folder, and the English fallback
+        # above is only ever reached on a system with no xdg-user-dirs at all.
+        # mkdir -p leaves an existing directory completely alone, so this is purely
+        # additive — it can only ever add what wasn't there.
+        #
+        # NOT recorded in the manifest, on purpose. Every other change this installer
+        # makes is undoable, and a user data folder must never be on that list: by
+        # uninstall time ~/Documents may hold years of files, and nothing here is
+        # worth the chance of an undo step reaching for it. An empty ~/Music left
+        # behind after uninstall costs nothing.
+        if [ ! -d "$dir" ] && mkdir -p "$dir" 2>/dev/null; then
+            info "created $dir"
+        fi
+
+        # Skip what still doesn't exist — mkdir can fail on a read-only or full
+        # $HOME. A bookmark pointing at a missing folder shows up broken in the
+        # sidebar and makes Nemo nag "Do you want to remove any bookmarks with the
+        # non-existing location from your list?" on startup.
         if [ -d "$dir" ]; then
             bookmark_lines+="file://$(uri_encode_path "$dir")"$'\n'
             bookmark_count=$((bookmark_count + 1))
@@ -702,6 +752,7 @@ if [ -f "$HOME/.config/mango/config.conf" ] && ! cmp -s "$REPO_DIR/config/mango/
     cp -a "$HOME/.config/mango/config.conf" "$HOME/.config/mango/config.conf.bak-$STAMP"
     info "backed up existing config.conf -> config.conf.bak-$STAMP"
     manifest_add_backup "$HOME/.config/mango/config.conf" "$HOME/.config/mango/config.conf.bak-$STAMP" user "$CUR_STAGE"
+    prune_file_backups "$HOME/.config/mango/config.conf"
 fi
 cp -a "$REPO_DIR/config/mango/." "$HOME/.config/mango/" && ok "mango config + scripts -> ~/.config/mango/"
 have jq && manifest_add_change owned-tree "$CUR_STAGE" "$HOME/.config/mango" \
@@ -722,19 +773,51 @@ if [ ! -f "$HOME/.config/mango/dms/outputs.conf" ]; then
 fi
 
 # 7c. DankMaterialShell tree -> ~/.config/DankMaterialShell/ (merge, don't wipe
-#     runtime state). Back up the two stateful JSONs before overwrite.
+#     runtime state).
+#
+#     settings.json and plugin_settings.json are LIVE STATE, not static config:
+#     they hold per-machine keys DankMango never ships. The blanket copy below
+#     used to flatten them, so every re-run of the installer silently discarded
+#     those keys -- the backup was taken, but nobody reads a .bak they weren't
+#     told they'd need. That is exactly how the audio switcher lost its
+#     machine-specific `outputTargets` (Speakers/Headphones card profiles) and
+#     quietly fell back to sink-cycling, where it had nothing to switch to.
+#
+#     So MERGE them instead: shipped keys win (a new plugin registration still
+#     lands), anything the repo doesn't ship survives. update.sh already refuses
+#     to overwrite these outright -- see its `dms-state` route -- and this brings
+#     install.sh in line with that policy rather than contradicting it.
+#
+#     Merged copies are staged beside the target and moved into place AFTER the
+#     tree copy, which would otherwise overwrite them again. Without jq we can't
+#     merge, so we fall back to the old behaviour and say so out loud.
 mkdir -p "$HOME/.config/DankMaterialShell"
+DMS_STATE_MERGED=()
 for j in settings.json plugin_settings.json; do
     tgt="$HOME/.config/DankMaterialShell/$j"
     src="$REPO_DIR/config/dms/DankMaterialShell/$j"
-    if [ -f "$tgt" ] && [ -f "$src" ] && ! cmp -s "$src" "$tgt"; then
-        cp -a "$tgt" "$tgt.bak-$STAMP"
-        info "backed up existing $j -> $j.bak-$STAMP"
-        manifest_add_backup "$tgt" "$tgt.bak-$STAMP" user "$CUR_STAGE"
+    # Nothing live yet (fresh install), or identical already -> the tree copy handles it.
+    [ -f "$tgt" ] && [ -f "$src" ] && ! cmp -s "$src" "$tgt" || continue
+    cp -a "$tgt" "$tgt.bak-$STAMP"
+    info "backed up existing $j -> $j.bak-$STAMP"
+    manifest_add_backup "$tgt" "$tgt.bak-$STAMP" user "$CUR_STAGE"
+    prune_file_backups "$tgt"
+    if have jq && jq -s '.[0] * .[1]' "$tgt" "$src" > "$tgt.merge-$STAMP" 2>/dev/null \
+       && [ -s "$tgt.merge-$STAMP" ]; then
+        DMS_STATE_MERGED+=("$j")
+    else
+        rm -f "$tgt.merge-$STAMP"
+        warn "couldn't merge $j — the shipped copy replaces yours; yours is kept at $j.bak-$STAMP"
+        have jq || info "  (install jq and re-run to merge instead of replace)"
     fi
 done
 cp -a "$REPO_DIR/config/dms/DankMaterialShell/." "$HOME/.config/DankMaterialShell/" \
     && ok "DMS config -> ~/.config/DankMaterialShell/"
+for j in "${DMS_STATE_MERGED[@]:-}"; do
+    [ -n "$j" ] || continue
+    tgt="$HOME/.config/DankMaterialShell/$j"
+    mv -f "$tgt.merge-$STAMP" "$tgt" && ok "merged shipped $j into yours (your own keys kept)"
+done
 have jq && manifest_add_change owned-tree "$CUR_STAGE" "$HOME/.config/DankMaterialShell" \
     "$(jq -nc --arg d "$HOME/.config/DankMaterialShell" '{dir:$d, scope:"user", note:"runtime state (session.json etc.) lives here too; uninstall should preserve or back it up"}')" \
     "back up ~/.config/DankMaterialShell, then remove the DankMango-shipped files"
@@ -790,7 +873,7 @@ if select_main_display; then
             "rm $MAINRULES_FILE (re-created by monitor-watcher.sh)"
     fi
 else
-    info "no main display recorded — Steam games will open wherever the pointer is."
+    info "no game display recorded — Steam games will open wherever the pointer is."
     info "you can set it any time with:  ./install.sh --reselect-main-display"
 fi
 
@@ -864,6 +947,7 @@ elif [ -f "$SETTINGS" ] && have jq; then
         cp -a "$SETTINGS" "$SETTINGS.bak-$STAMP"; mv "$tmp" "$SETTINGS"
         ok "set popupTransparency = 0.75"
         manifest_add_backup "$SETTINGS" "$SETTINGS.bak-$STAMP" user "$CUR_STAGE"
+        prune_file_backups "$SETTINGS"
         manifest_add_change config-edit "$CUR_STAGE" "settings.json:popupTransparency" \
             "$(jq -nc --arg f "$SETTINGS" '{file:$f, key:"popupTransparency", value:0.75}')" \
             "restore $SETTINGS from its .bak-*"
@@ -913,6 +997,7 @@ elif [ -f "$SETTINGS" ] && have jq; then
         cp -a "$SETTINGS" "$SETTINGS.bak-$STAMP"; mv "$tmp" "$SETTINGS"
         ok "set keybindsFloatingWindow = true (SUPER+/ descriptions stop truncating)"
         manifest_add_backup "$SETTINGS" "$SETTINGS.bak-$STAMP" user "$CUR_STAGE"
+        prune_file_backups "$SETTINGS"
         manifest_add_change config-edit "$CUR_STAGE" "settings.json:keybindsFloatingWindow" \
             "$(jq -nc --arg f "$SETTINGS" '{file:$f, key:"keybindsFloatingWindow", value:true}')" \
             "restore $SETTINGS from its .bak-*"
@@ -1017,6 +1102,8 @@ for pdir in "$REPO_DIR"/plugins/*/; do
     tgt="$PLUGINS_DST/$pid"
     if [ -d "$tgt" ]; then
         cp -a "$tgt" "$tgt.bak-$STAMP" && info "backed up existing plugin -> $tgt.bak-$STAMP"
+        # Directory backups, so these are the ones the prune has to remove as trees.
+        prune_file_backups "$tgt"
     fi
     mkdir -p "$tgt"
     cp -a "$pdir." "$tgt/" && ok "plugin '$pid' -> $tgt"
@@ -1124,6 +1211,7 @@ if have jq; then
         if [ "$had_sess" -eq 1 ]; then
             cp -a "$sess" "$sess.bak-$STAMP"
             manifest_add_backup "$sess" "$sess.bak-$STAMP" user "$CUR_STAGE"
+            prune_file_backups "$sess"
         fi
         cat "$tmp" > "$sess"
         if [ "${#pins_present[@]}" -gt 0 ]; then
@@ -1231,6 +1319,27 @@ if have jq && [ -f "$MANIFEST" ]; then
         warn "  Then re-run this installer, or pin them by hand in the taskbar."
     fi
 fi
+# =============================================================================
+# Restart DMS so the first-run welcome panel appears  (FRESH INSTALLS ONLY)
+# =============================================================================
+# The panel is a `daemon` plugin: DMS instantiates it on shell startup, it checks for
+# ~/.local/state/dankmango/first-run-complete, and shows itself if that's absent. So
+# it needs a shell start to ride in on. Logging out (step 1 below) would do it, but
+# restarting now means the welcome is the first thing a new user sees rather than
+# something they meet after the next reboot.
+#
+# NEVER on a re-run or from update.sh — see FRESH_INSTALL at the top. Best-effort
+# throughout: if dms isn't on PATH or the restart fails, the panel simply waits for
+# the next login, which is the very next thing the notes below tell them to do.
+if [ "$FRESH_INSTALL" = 1 ] && have dms; then
+    info "restarting DMS so the welcome panel can appear..."
+    if dms restart >/dev/null 2>&1; then
+        ok "DMS restarted — the welcome panel should be on screen."
+    else
+        info "couldn't restart DMS — the welcome panel will appear at your next login instead."
+    fi
+fi
+
 echo
 echo "==================================================================="
 printf ' %sDankMango install finished.%s' "$c_grn" "$c_off"

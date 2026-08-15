@@ -142,6 +142,22 @@ two** targets; clicking just cycles through them in order and wraps around.
 > **ships without it** — a fresh install defaults to zero-config sink cycling. Add it by hand
 > only if your hardware needs it. After editing, `dms restart`.
 
+Because DankMango ships `plugin_settings.json` without `outputTargets`, `install.sh` used to
+**overwrite your copy with the shipped one** on every re-run, taking your mapping with it. The
+button then fell back to sink cycling and — on exactly the hardware `outputTargets` exists for —
+had nothing to switch to, so it silently did nothing. `install.sh` now **merges** the shipped file
+into yours instead (shipped keys win, your own keys survive), matching what `update.sh` already
+did. `post-update-health.sh` also checks this now: it verifies your configured cards and profiles
+still exist, and warns if the plugin has only one output to cycle between.
+
+### Symptom: clicking the pill does nothing
+
+It'll now tell you so — "Audio switch failed / Only one output to switch between". That means the
+plugin found nothing to switch *to*, not that a command failed. Run
+`~/.config/mango/scripts/post-update-health.sh` and read section 2: either a configured target has
+gone missing (card renamed, hardware unplugged), or you're in sink-cycling mode on a machine with
+one real sink and want the `outputTargets` mapping above.
+
 ---
 
 ## Test / enable

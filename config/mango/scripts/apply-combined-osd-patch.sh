@@ -379,6 +379,32 @@ if [ -f "$TARGET" ]; then
     BK="$BACKUP_DIR/VolumeOSD.qml.$(date +%Y%m%d-%H%M%S)"
     cp "$TARGET" "$BK"
     echo "[combined-osd-patch] Backed up current file -> $BK"
+
+    # Keep the newest N and drop our older ones, right here where the new one was
+    # written — otherwise every DMS update that needs a re-patch adds a permanent
+    # ~25 KB copy and nothing ever removes it.
+    #
+    # BACKUP_RETAIN duplicates lib/common.sh's DANKMANGO_BACKUP_RETAIN. This script
+    # is deployed standalone to ~/.config/mango/scripts and can't source that file,
+    # so the two must be changed together.
+    #
+    # Only files named EXACTLY VolumeOSD.qml.YYYYmmdd-HHMMSS are ours. The same dir
+    # holds labelled copies made by hand (VolumeOSD.qml.pre-blur-<stamp> and friends);
+    # they share the prefix but not the shape, and they are not ours to delete — hence
+    # the digit-by-digit glob. Sorted by the stamp in the NAME, not mtime, for the same
+    # reason as lib/common.sh: `cp` here preserves nothing useful to sort on.
+    BACKUP_RETAIN=10
+    mapfile -t _osd_bk < <(compgen -G "$BACKUP_DIR/VolumeOSD.qml.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]" 2>/dev/null | sort || true)
+    if [ "${#_osd_bk[@]}" -gt "$BACKUP_RETAIN" ]; then
+        _osd_cut=$(( ${#_osd_bk[@]} - BACKUP_RETAIN ))
+        # Never fatal: this runs under `set -e`, and a cleanup step must not be the
+        # thing that aborts a patch that already succeeded.
+        if rm -f "${_osd_bk[@]:0:$_osd_cut}" 2>/dev/null; then
+            echo "[combined-osd-patch] Tidied $_osd_cut older backup(s); newest $BACKUP_RETAIN kept."
+        else
+            echo "[combined-osd-patch] NOTE: couldn't tidy $_osd_cut older backup(s) — harmless, they only take space." >&2
+        fi
+    fi
 else
     echo "[combined-osd-patch] WARNING: $TARGET isn't there (DMS moved or renamed it?)." >&2
     echo "                     Writing anyway; check the OSD path is still correct." >&2

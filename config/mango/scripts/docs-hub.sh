@@ -58,6 +58,13 @@ set -uo pipefail
 # add a flag worth showing; the fuller explanation stays in the Usage block above.
 # CMD: ~/.config/mango/scripts/docs-hub.sh :: open this help hub (same as SUPER+SHIFT+/)
 # CMD: ~/.config/mango/scripts/docs-hub.sh keys :: print the keyboard-shortcut table and exit
+#
+# The two below aren't this script's own flags -- they're welcome-panel commands, and
+# they live here because NO script owns them (the panel is a DMS plugin, not a script,
+# and there is nothing else with a "# CMD:" header to hang them on). Same reasoning as
+# the "cd:" line further down: the hub authors a line only when nothing else can.
+# CMD: rm ~/.local/state/dankmango/first-run-complete && dms restart :: see the DankMango welcome panel again (it only shows itself once)
+# CMD: dms ipc call welcome open :: open DankMaterialShell's OWN welcome tour -- a separate thing, and one a DankMango install never shows you by itself
 
 # Where the installed helper scripts live. Resolved from this script's own
 # location rather than assumed, so the command menu still finds its siblings if

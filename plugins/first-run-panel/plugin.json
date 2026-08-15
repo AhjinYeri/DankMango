@@ -1,0 +1,12 @@
+{
+    "id": "firstRunPanel",
+    "name": "First-Run Welcome",
+    "description": "One-time welcome panel on a brand-new DankMango install: points at the help hub and the first two or three things worth doing. Never reappears once dismissed.",
+    "version": "0.1.0",
+    "author": "AhjinYeri",
+    "type": "daemon",
+    "capabilities": ["daemon"],
+    "component": "./FirstRunPanel.qml",
+    "icon": "waving_hand",
+    "permissions": ["process"]
+}

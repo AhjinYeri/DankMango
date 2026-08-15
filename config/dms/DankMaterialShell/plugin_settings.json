@@ -7,5 +7,8 @@
   },
   "altSwitcher": {
     "enabled": true
+  },
+  "firstRunPanel": {
+    "enabled": true
   }
 }

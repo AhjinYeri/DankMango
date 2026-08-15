@@ -15,11 +15,27 @@ The stuff that got cut from the main README to keep it from being a wall of text
 - Copies the system-level stuff into place (keyd, the SDDM theme)
 - Installs and registers the DMS plugins
 - Sets up your per-monitor tagrules (more on this below) and seeds your taskbar pins + a default wallpaper
-- Asks which monitor is your main display — the one Steam games should open on. Skipping is fine, and you can set or change it later with `./install.sh --reselect-main-display`
+- Asks which monitor is your game display — the one Steam games should open on. Nothing else moves; it's not a general default screen. Skipping is fine, and you can set or change it later with `./install.sh --reselect-main-display`
 - Asks about pinning your power profile to performance (desktop only — it skips this on a laptop)
 - Asks about autostarting easyeffects
 - Asks about the combined audio OSD patch. That one's different: it edits a file DMS itself owns, not something DankMango installed, which is why it's opt-in. Changed your mind after saying no? `~/.config/mango/scripts/apply-patches.sh combined-audio-osd` applies it; see [Patches](#patches-the-bits-that-edit-other-programs-files) for what happens to it after a DMS update
 - Restarts DMS so all of it takes effect
+
+## The welcome panel
+
+The first time your new desktop starts, a small panel opens to say hello. It points you at the help hub (`SUPER+SHIFT+/`), and gives you buttons for the two or three things worth doing on day one — open the guide, pick a wallpaper, choose your game display. It opens on your game display, or on your leftmost monitor if you never picked one.
+
+It shows up **once**. Hitting "Got it" writes a marker file and that's the last you see of it. If you're wondering why it didn't appear on an install you've done before, that's why — the marker's still there from last time.
+
+Dismissed it too fast and want another look?
+
+```bash
+rm ~/.local/state/dankmango/first-run-complete && dms restart
+```
+
+`dms restart` reloads the bar, launcher and popups. It doesn't log you out and it won't close your windows.
+
+Worth knowing: DankMaterialShell has a welcome tour of its own, which you never see on a DankMango install (DankMango's installer writes the settings file DMS uses to decide you're a new user, so DMS decides you aren't one). It's still there if you're curious — `dms ipc call welcome open`.
 
 ## Per-monitor layout
 
@@ -46,13 +62,13 @@ It handles two situations, and treats them very differently on purpose.
 
 The part that isn't obvious: regenerating those rules resets every monitor to tile. So the watcher captures your layouts first and puts them back afterwards. It also remembers them **persistently**, so a monitor you unplug and replug later comes back on the layout it had. A monitor it's never seen before starts on tile, as you'd expect. None of this needs anything from you.
 
-**Your main display going away — always asked, never assumed.** If the monitor you picked as your main display gets unplugged, the watcher stands in a temporary replacement (leftmost, largest if that ties) so anything depending on it keeps working, and tells you what happened. It does **not** quietly rewrite your choice — plug the original back in and everything returns to normal on its own.
+**Your game display going away — always asked, never assumed.** If the monitor you picked as your game display gets unplugged, the watcher stands in a temporary replacement (leftmost, largest if that ties) so anything depending on it keeps working, and tells you what happened. It does **not** quietly rewrite your choice — plug the original back in and everything returns to normal on its own.
 
-The notification has two buttons: make the stand-in your new main display, or keep your original. **DankMaterialShell only shows notification buttons when you hover the notification**, which catches people out. Ignoring it is fine and changes nothing. Plug a genuinely new monitor in and you get a quieter notification offering to make that one your main display — once per monitor, so it won't nag.
+The notification has two buttons: use the stand-in for games from now on, or keep your original. **DankMaterialShell only shows notification buttons when you hover the notification**, which catches people out. Ignoring it is fine and changes nothing. Plug a genuinely new monitor in and you get a quieter notification offering to open games on that one instead — once per monitor, so it won't nag.
 
-## Your main display
+## Your game display
 
-The installer asks which monitor is your main one, because nothing can work it out for you — "the biggest" and "the leftmost" are both wrong often enough (a small primary next to a big secondary is a normal desk). Monitors are listed by physical position, left to right:
+The installer asks which monitor games should open on, because nothing can work it out for you — "the biggest" and "the leftmost" are both wrong often enough (a small primary next to a big secondary is a normal desk). Monitors are listed by physical position, left to right:
 
 ```
 ( ) DP-1  1st from left  2560x1440
@@ -67,9 +83,11 @@ To change it later:
 
 That re-opens the same picker and changes nothing else — it won't re-run the installer. Move with the **arrow keys** or **Ctrl-P / Ctrl-N** (handy if your keyboard has no dedicated arrows), **Space** to select, **Enter** to confirm. Space matters: pressing Enter without it just accepts whatever was already highlighted.
 
-**What it actually changes:** games launched from Steam open on that monitor instead of wherever your mouse happens to be. That's it, for now. It works through a generated rules file (`~/.config/mango/dms/mainmonitor.conf`) that the watcher rewrites whenever your main display changes — mango can't read a preference from disk at runtime, so the monitor name has to be baked into a real rule. Don't hand-edit that file; it gets overwritten.
+**What it actually changes:** games launched from Steam open on that monitor instead of wherever your mouse happens to be. That's it, for now — it is **not** a general "default monitor" setting, and nothing else you open pays any attention to it. It works through a generated rules file (`~/.config/mango/dms/mainmonitor.conf`) that the watcher rewrites whenever your game display changes — mango can't read a preference from disk at runtime, so the monitor name has to be baked into a real rule. Don't hand-edit that file; it gets overwritten.
 
-Skipping the question is fine. With no main display set, games open wherever the pointer is, which is mango's normal behaviour.
+Skipping the question is fine. With no game display set, games open wherever the pointer is, which is mango's normal behaviour.
+
+(Under the bonnet the setting is still stored as `mainDisplay`, and the flag is still `--reselect-main-display`. Only the wording changed — renaming either would break every existing install and anyone's muscle memory for no real gain.)
 
 ## If the monitor stuff seems wrong
 
@@ -79,7 +97,7 @@ Check what the watcher currently thinks:
 ~/.config/mango/scripts/monitor-watcher.sh --status
 ```
 
-That prints your connected monitors, your stored main display, which one's actually in use right now, and the layouts it's remembered. Its log is at `/tmp/mango-monitor-watcher.log` — every hotplug it handled and what it did about it.
+That prints your connected monitors, your stored game display, which one's actually in use right now, and the layouts it's remembered. Its log is at `/tmp/mango-monitor-watcher.log` — every hotplug it handled and what it did about it.
 
 `post-update-health.sh` checks this too: it'll tell you if the watcher has stopped running, or if it's running but no longer wired into `config.conf` to start at login (which works fine now and silently vanishes at your next reboot).
 
@@ -209,12 +227,25 @@ Every DankMango script documents its own flags behind `--help`, including the he
 
 `update.sh` only touches what's actually changed since you last updated — it isn't re-running the whole installer. It works that out from the commit recorded in your install manifest, compares it to the repo's current state, and from there:
 
+- takes a snapshot first, so a bad update is a rollback away
 - installs any new packages
 - re-copies any config/script files that changed (backing up first)
 - removes anything the repo has dropped
 - runs migrations for things like `settings.json` or `session.json` — files a plain copy can't handle, since they hold your own live settings
 
 It won't overwrite something you've hand-edited without checking with you first. And if it can't work out the delta safely — your last update got interrupted, your git history's been rebased, you've got uncommitted changes sitting around — it tells you and points you at `install.sh` instead of guessing.
+
+### The snapshot it takes first
+
+Before it changes anything, `update.sh` asks snapper to take a snapshot of your system, described `DankMango pre-update: <old commit> -> <new commit>`. If an update goes badly, that snapshot is waiting for you in the boot menu (this is what grub-btrfs puts there), and you can boot straight back into how things were ten minutes ago.
+
+This needs two things, and it checks for both rather than assuming: your root filesystem is Btrfs, and snapper is already set up on it. That's the default on a stock CachyOS install, so most people get it for free. If you're on ext4, or on Btrfs without snapper, `update.sh` says so in one line and gets on with the update — nothing is wrong and there's nothing you need to do. It's a bonus when it's available, never a requirement, so even a snapshot that outright fails only prints a warning: an update never gets blocked over it.
+
+It won't ask which snapper config to use either. If you have one named `root` — nearly everyone does — it uses that; otherwise it uses the first one you've got.
+
+It keeps the 10 most recent of its own snapshots and quietly clears out older ones as it goes, so they don't pile up on your disk. Snapshots you took yourself, and anything snapper or pacman made, are never touched — it only ever removes snapshots it created and labelled itself.
+
+The health check (`SUPER+SHIFT+/` → **Run the health check**) confirms afterwards that a snapshot actually landed. That check is informational: it can't fail, and it stays quiet entirely on machines without Btrfs and snapper.
 
 ## If `git pull` says your branch has diverged
 
@@ -274,7 +305,7 @@ Then run `./update.sh` from the new folder and delete `DankMango-old` once you'r
 
 ## What to do when the health check fails
 
-After an update, run `~/.config/mango/scripts/post-update-health.sh`. It checks everything DankMango customises that a MangoWM or DMS update can quietly break — per-monitor tagrules, the monitor watcher (both that it's running and that it's still wired to start at login), the generated main-display game rules, the bar plugins, the combined audio OSD patch, the border colour chain, and the SDDM login theme (installed, actually in use, and its wallpaper sync still wired up) — and prints a PASS or FAIL line for each, plus which versions changed since you last ran it.
+After an update, run `~/.config/mango/scripts/post-update-health.sh`. It checks everything DankMango customises that a MangoWM or DMS update can quietly break — per-monitor tagrules, the monitor watcher (both that it's running and that it's still wired to start at login), the generated game-display rules, the bar plugins, the welcome panel, the combined audio OSD patch, the border colour chain, and the SDDM login theme (installed, actually in use, and its wallpaper sync still wired up) — and prints a PASS or FAIL line for each, plus which versions changed since you last ran it.
 
 If anything fails you get a numbered list of problems, each with a plain-English walkthrough: the exact commands to type, what each one does, and why you're running it. It assumes no prior Linux knowledge, and following the steps as written is the entire fix — no AI tooling involved. A ready-made Claude Code prompt gets printed underneath for anyone who happens to use it, but it's strictly optional and safe to ignore. A few failures are expected and take a single command (a patch wiped by a DMS update just needs re-applying — see [Patches](#patches-the-bits-that-edit-other-programs-files) below); one or two genuinely can't be fixed by hand, and those say so plainly instead of sending you round in circles.
 

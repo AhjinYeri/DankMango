@@ -6,6 +6,9 @@
 #  Applies ONLY what changed since your last update, instead of re-running the
 #  whole installer. It works out the delta from the install manifest's recorded
 #  lastAppliedCommit -> the repo's current HEAD, then:
+#    * takes a named snapper snapshot first, so a bad update is a rollback away —
+#      only on Btrfs systems that already have snapper set up; skipped with a note
+#      on any machine that doesn't, and never allowed to block the update
 #    * installs any newly-added packages (--needed, so nothing reinstalls)
 #    * re-copies changed/added config + script files (backing up first, and
 #      NOT clobbering a file you hand-edited since install without asking)
@@ -201,6 +204,7 @@ migrate_reseed-pins-installed-only() {
           | .pinnedApps    = ((.pinnedApps    // []) | map(select(. as $x | ($d | index($x)) | not)))
         ' "$sess" > "$tmp" && [ -s "$tmp" ]; then
         cp -a "$sess" "$sess.bak-$STAMP"; cat "$tmp" > "$sess"
+        prune_file_backups "$sess"
         ok "  removed dead pins: $present (backup: $sess.bak-$STAMP)"
     else
         warn "  couldn't edit session.json — left as-is"
@@ -230,6 +234,7 @@ migrate_strip-dead-floatsize-execonce() {
     local tmp; tmp="$(mktemp)"
     if grep -vE "$re" "$cfg" > "$tmp" && [ -s "$tmp" ]; then
         cp -a "$cfg" "$cfg.bak-$STAMP"; cat "$tmp" > "$cfg"
+        prune_file_backups "$cfg"
         ok "  removed dead dp2-floatsize.sh exec-once line (backup: $cfg.bak-$STAMP)"
     else
         warn "  couldn't rewrite config.conf — left as-is"; rm -f "$tmp"; return 1
@@ -381,6 +386,179 @@ EOF
 }
 
 # =============================================================================
+# Pre-update snapshot — the Btrfs safety net, on machines that already have one
+# =============================================================================
+# README tells you to take a snapshot before updating. This just takes it for you,
+# so "I forgot" stops being the only thing between a bad update and a two-minute
+# rollback from the boot menu (grub-btrfs lists snapper's snapshots there).
+#
+# TWO GATES, and missing either is NOT an error: the root filesystem has to be
+# Btrfs, and snapper has to be set up with at least one config. Plenty of perfectly
+# good installs have neither — ext4, or Btrfs with no snapper — so a miss prints one
+# line saying what was skipped and the update carries straight on. Same for a
+# `snapper create` that FAILS (no sudo rights, full disk): warn, continue. A safety
+# net is not a prerequisite, and an update must never be blocked by tooling that
+# only some machines have.
+
+# The description every DankMango snapshot carries, and the ONLY thing that marks a
+# snapshot as ours. It lives in one variable because two things depend on it agreeing
+# exactly: the create below writes it, and the prune below decides what it is allowed
+# to delete by matching it. Two copies of this string that drifted apart would mean
+# either dead snapshots nobody tidies, or — far worse — a prefix broad enough to match
+# something that isn't ours.
+# Also hardcoded in post-update-health.sh's section 7 check (~line 1204), which ships standalone and can't source this — keep the two in sync.
+SNAPSHOT_DESC_PREFIX="DankMango pre-update:"
+
+root_is_btrfs() { [ "$(findmnt -no FSTYPE / 2>/dev/null)" = btrfs ]; }
+
+# snapper_config -> prints the config to snapshot, or returns non-zero when snapper
+# isn't installed / has no configs / can't be asked.
+#
+# NOT hardcoded to "root": that's the near-universal name (and what CachyOS's own
+# installer sets up), so it wins when present, but a setup that names its root config
+# something else is still a setup worth snapshotting — so otherwise take the first
+# one listed rather than deciding the user's layout is wrong.
+#
+# Listing usually works unprivileged (snapperd answers list-configs over D-Bus), but
+# not on every setup, so retry once under `sudo -n`. Non-interactive on purpose: a
+# gate check should never be the thing that pops a password prompt. If both come back
+# empty we treat snapper as "not set up here" and skip, which is the right call either
+# way — we couldn't create the snapshot under those conditions anyway.
+snapper_config() {
+    have snapper || return 1
+    local out configs
+    out="$(snapper --csvout list-configs 2>/dev/null)"
+    [ -n "$out" ] || out="$(sudo -n snapper --csvout list-configs 2>/dev/null)"
+    [ -n "$out" ] || return 1
+    # Drop the "config,subvolume" header; keep the config name (first field).
+    configs="$(printf '%s\n' "$out" | awk -F, 'NR>1 && $1 != "" {print $1}')"
+    [ -n "$configs" ] || return 1
+    if printf '%s\n' "$configs" | grep -qx root; then printf 'root\n'
+    else printf '%s\n' "$configs" | head -1; fi
+}
+
+# How many DankMango pre-update snapshots to keep. Tune it here and nowhere else —
+# no other line in this file knows the number.
+DANKMANGO_SNAPSHOT_RETAIN=10
+
+# prune_dankmango_snapshots CONFIG [PENDING] — never returns non-zero, by design.
+#
+# One snapshot per update adds up, and each one pins the disk blocks the update
+# replaced, so left alone they quietly cost real space. This keeps the most recent
+# $DANKMANGO_SNAPSHOT_RETAIN and removes DankMango's older ones. It's housekeeping of
+# our own artifacts, so it just happens — no prompt, no report line unless something
+# actually got tidied.
+#
+# THE ONE RULE: a snapshot is ours ONLY if its description starts with
+# $SNAPSHOT_DESC_PREFIX. Everything else on the system — snapper's own timeline
+# snapshots, pacman-hook snapshots, anything you took by hand before doing something
+# risky — has to come out of here untouched, so the prefix is matched literally
+# (index(), not a regex, so nothing in the string can be read as a pattern) and only
+# ids that are genuinely numeric and non-zero are ever passed to `delete`. Snapshot 0
+# is snapper's "current" pseudo-entry and is not a deletable thing.
+#
+# PENDING counts snapshots that WILL exist but don't yet: a --dry-run hasn't actually
+# created this run's snapshot, so it passes 1 and the plan it prints matches what a
+# real run would do rather than being off by one.
+prune_dankmango_snapshots() {
+    local cfg="$1" pending="${2:-0}" list ours keep total cut
+    local -a sudo_run=() doomed=()
+
+    if [ "$(id -u)" != 0 ]; then
+        have sudo || return 0
+        # A dry-run promises to change nothing AND to ask for nothing, so -n makes
+        # sudo fail rather than prompt. A real run reaches here having just created a
+        # snapshot through sudo, so its credentials are already cached — neither path
+        # produces a password prompt that the create step didn't already produce.
+        if [ "$DRY_RUN" = 1 ]; then sudo_run=(sudo -n); else sudo_run=(sudo); fi
+    fi
+
+    # snapper prints "No permissions." and still EXITS 0, so trust the output, not $?.
+    list="$("${sudo_run[@]}" snapper --csvout -c "$cfg" list --columns number,description 2>/dev/null)"
+    case "$list" in *"No permissions"*) list="" ;; esac
+    if [ -z "$list" ]; then
+        if [ "$DRY_RUN" = 1 ]; then
+            info "(dry-run) couldn't read the snapshot list without a password, so can't say which older ones would be tidied."
+        else
+            warn "couldn't list snapshots on config '$cfg' to tidy older ones. Harmless — your new snapshot is there either way; this only means old ones may pile up. Look with: sudo snapper -c $cfg list"
+        fi
+        return 0
+    fi
+
+    # Ours only, oldest first. snapper hands them back in number order already, but
+    # sorting is one word and means the retention maths can't depend on that.
+    ours="$(printf '%s\n' "$list" | awk -F, -v pfx="$SNAPSHOT_DESC_PREFIX" '
+        NR > 1 {
+            n = $1
+            d = $0; sub(/^[^,]*,/, "", d); gsub(/^"|"$/, "", d)
+            if (n ~ /^[0-9]+$/ && n + 0 > 0 && index(d, pfx) == 1) print n
+        }' | sort -n)"
+    [ -n "$ours" ] || return 0
+
+    mapfile -t doomed <<<"$ours"
+    total=${#doomed[@]}
+    keep=$(( DANKMANGO_SNAPSHOT_RETAIN - pending ))
+    [ "$keep" -lt 0 ] && keep=0
+    [ "$total" -gt "$keep" ] || return 0        # nothing over the limit — stay quiet
+    cut=$(( total - keep ))
+    doomed=( "${doomed[@]:0:cut}" )             # the oldest $cut, and only those
+
+    if [ "$DRY_RUN" = 1 ]; then
+        info "(dry-run) would tidy $cut older DankMango snapshot(s), keeping the most recent $DANKMANGO_SNAPSHOT_RETAIN: ${doomed[*]}"
+        return 0
+    fi
+    if "${sudo_run[@]}" snapper -c "$cfg" delete "${doomed[@]}"; then
+        info "tidied $cut older DankMango snapshot(s) — the most recent $DANKMANGO_SNAPSHOT_RETAIN are kept."
+    else
+        warn "couldn't remove $cut older DankMango snapshot(s) — snapper refused. Harmless; they only take up space. By hand: sudo snapper -c $cfg delete ${doomed[*]}"
+    fi
+    return 0
+}
+
+# pre_update_snapshot FROM_COMMIT TO_COMMIT — never returns non-zero, by design.
+pre_update_snapshot() {
+    local from="$1" to="$2" cfg desc branch
+    if ! root_is_btrfs; then
+        info "no snapshot taken: your root filesystem isn't Btrfs, so snapper snapshots don't apply here. Nothing's wrong — carrying on."
+        return 0
+    fi
+    if ! cfg="$(snapper_config)"; then
+        info "no snapshot taken: snapper isn't set up on this machine. Nothing's wrong — carrying on."
+        return 0
+    fi
+
+    # The two commits, in the same short form the final report prints, plus the branch
+    # so the snapshot still reads clearly months later in the boot menu.
+    branch="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+    desc="$SNAPSHOT_DESC_PREFIX ${from:0:12} -> ${to:0:12}"
+    [ -n "$branch" ] && [ "$branch" != HEAD ] && desc="$desc ($branch)"
+
+    if [ "$DRY_RUN" = 1 ]; then
+        info "(dry-run) would take a snapper snapshot on config '$cfg', described: $desc"
+        # Pass 1: the snapshot this run WOULD take doesn't exist yet, so count it in
+        # and the plan matches what a real run would tidy.
+        prune_dankmango_snapshots "$cfg" 1
+        return 0
+    fi
+
+    info "taking a snapshot first, on snapper config '$cfg' — this may ask for your password."
+    local -a as_root=(); [ "$(id -u)" = 0 ] || as_root=(sudo)
+    if [ "${#as_root[@]}" -gt 0 ] && ! have sudo; then
+        warn "couldn't take the pre-update snapshot: snapper needs administrator rights and sudo isn't available. The update carries on regardless — you just won't have this rollback point."
+        return 0
+    fi
+    if "${as_root[@]}" snapper -c "$cfg" create --description "$desc"; then
+        ok "snapshot taken — if this update goes badly you can roll back to it from the boot menu."
+        # Only after a snapshot actually landed. A failed create already warned, and
+        # there's nothing to tidy around on that path.
+        prune_dankmango_snapshots "$cfg"
+    else
+        warn "couldn't take the pre-update snapshot (snapper refused — usually permissions or a full disk). The update carries on regardless; you just won't have this rollback point. To take one by hand: sudo snapper -c $cfg create --description 'manual pre-update'"
+    fi
+    return 0
+}
+
+# =============================================================================
 # 1. Read the manifest and work out the delta
 # =============================================================================
 stage "1/6  Working out what changed"
@@ -428,6 +606,16 @@ ok "manifest OK — last applied: ${LAST:0:12}   HEAD: ${HEAD:0:12}"
 if [ "$LAST" = "$HEAD" ]; then
     echo; ok "Already up to date — nothing to apply."; exit 0
 fi
+
+# =============================================================================
+# 1b. Safety snapshot — before anything is touched
+# =============================================================================
+# Numbered 1b rather than renumbering the run (install.sh's 10b does the same): this
+# is the first point where BOTH commits are known and validated and we know an update
+# is actually going to happen, and it is still ahead of every stage that changes
+# something — stage 3 installs packages, and nothing before it writes a thing.
+stage "1b/6  Safety snapshot"
+pre_update_snapshot "$LAST" "$HEAD"
 
 # =============================================================================
 # 2. Changelog — show what's new BEFORE doing anything
@@ -545,7 +733,8 @@ apply_change() {  # apply_change REPO_REL
             pid="$(grep -oP '"id"\s*:\s*"\K[^"]+' "$pdir/plugin.json" | head -1)"
             tgt="$HOME/.config/DankMaterialShell/plugins/$pid"
             [ "$DRY_RUN" = 1 ] && { info "would update plugin '$pid' -> $tgt"; UPDATED+=("plugin:$pid"); return; }
-            [ -d "$tgt" ] && cp -a "$tgt" "$tgt.bak-$STAMP"
+            # Directory backup — prune_file_backups removes these as trees.
+            [ -d "$tgt" ] && { cp -a "$tgt" "$tgt.bak-$STAMP"; prune_file_backups "$tgt"; }
             mkdir -p "$tgt"; cp -a "$pdir/." "$tgt/" && { ok "plugin '$pid' updated"; UPDATED+=("plugin:$pid"); }
             MANUAL+=("plugin '$pid' updated — a DMS reload/restart may be needed to pick it up")
             ;;
@@ -626,6 +815,7 @@ retire_file() {  # retire_file REPO_REL
     [ "$DRY_RUN" = 1 ] && { info "would retire (back up + remove): $dst"; RETIRED+=("$dst"); return; }
     if ask_tty "DankMango removed $rel. Retire the installed $dst (backs it up first)?"; then
         cp -a "$dst" "$dst.bak-$STAMP" 2>/dev/null || sudo cp -a "$dst" "$dst.bak-$STAMP"
+        prune_file_backups "$dst" "$( [ "$scope" = system ] && printf 1 || printf 0 )"
         if [ "$scope" = system ]; then sudo rm -f "$dst"; else rm -f "$dst"; fi
         ok "retired $dst (backup: $dst.bak-$STAMP)"; RETIRED+=("$dst")
     else

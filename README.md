@@ -58,6 +58,7 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 
 ## What you're actually getting
 
+- A welcome panel on your first login that points you at the help hub and the handful of things worth doing on day one, then never bothers you again
 - Wallpaper-driven theming (change your wallpaper, everything recolors — borders, GTK, terminal, the bar)
 - Tap Super to open the launcher, no click needed
 - `Super+/` for a searchable keybinds cheatsheet, built from your actual config
