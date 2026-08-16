@@ -105,6 +105,7 @@ MIGRATIONS=(
     "strip-dead-floatsize-execonce:remove the dead 'exec-once = .../dp2-floatsize.sh' autostart left in a hand-edited config.conf after the float helper was retired"
     "sddm-dankmango-theme:install DankMango's own login theme (replaces the sddm-astronaut-theme AUR package) — deploys it, does NOT switch the login screen over"
     "register-shipped-plugins:register plugins DankMango has started shipping since your install (e.g. the first-run welcome panel) — only ADDS missing entries, never changes ones you already have"
+    "seed-active-preset:activate the 'Default' desktop preset so the new preset switcher has something to mark as current (Default adds nothing, so your desktop does not change)"
 )
 
 # v1.x installs got their login screen from the sddm-astronaut-theme AUR package,
@@ -321,6 +322,32 @@ migrate_register-shipped-plugins() {
     rm -f "$tmp"
     warn "  couldn't merge plugin registrations — left $tgt untouched. Add them in DMS Settings -> Plugins."
     return 1
+}
+
+# Desktop presets arrived after v1.x. Stage 4 deploys the preset FOLDERS and the new
+# Presets plugin correctly, and config.conf grows the source-optional= include — but
+# nothing on the copy path creates the ~/.config/mango/active/preset.conf symlink that
+# include points at, because a symlink is not a file the repo can ship. install.sh
+# seeds it (stage 7f); an existing install never runs that stage again.
+#
+# Left alone the result is not broken, just half-arrived: the include is OPTIONAL, so
+# mango reads a missing target in silence and the desktop behaves exactly as before —
+# but the launcher lists the presets with none marked active, and post-update-health.sh
+# has a preset to talk about that isn't active. This closes that gap.
+#
+# It seeds "default", which is an EMPTY fragment. That is the whole reason this is safe
+# to do unattended: activating it changes NO setting on the machine. Anything else would
+# be an updater altering a running desktop's appearance without being asked.
+#
+# Idempotent by delegation: seed_active_preset() returns early when the symlink already
+# exists, so a user who has already picked a preset (or a second run of this migration)
+# is left alone.
+migrate_seed-active-preset() {
+    [ -d "$HOME/.config/mango/presets/$DEFAULT_PRESET" ] || {
+        info "  presets aren't installed on this machine yet — nothing to activate"; return 0; }
+    seed_active_preset || return 1
+    MANUAL+=("new desktop presets — open the launcher and type 'preset' to switch between them")
+    return 0
 }
 
 # =============================================================================

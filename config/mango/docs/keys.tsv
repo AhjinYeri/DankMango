@@ -24,6 +24,13 @@
 # modifier list are ignored, so "SUPER+SHIFT , 1" here matches "SUPER+SHIFT, 1"
 # in config.conf. The key name itself is case-sensitive, because mango treats
 # "i" and "I" (i.e. SHIFT+i) as different binds.
+#
+# WHAT IS DELIBERATELY NOT HERE
+#   The XF86* hardware keys -- volume, media, brightness, the Tools key. They are
+#   bound and working in config.conf and stay that way; they just aren't shortcuts
+#   anyone needs to LEARN. The key has the icon printed on the cap. This file is
+#   the list you read to discover what you can do, so a row that teaches you to
+#   press the volume key to change the volume is noise, not documentation.
 
 = Getting around
 SUPER+CTRL, Return
@@ -40,6 +47,7 @@ SUPER, b
 SUPER, c
 SUPER, m
 SUPER, s
+SUPER, d
 SUPER, n
 SUPER, w
 NONE, Print
@@ -100,16 +108,6 @@ CTRL+ALT, Left
 CTRL+ALT, Right
 CTRL+ALT, Up
 CTRL+ALT, Down
-
-= Sound and screen
-NONE, XF86AudioRaiseVolume
-NONE, XF86AudioLowerVolume
-NONE, XF86AudioMute
-NONE, XF86AudioPlay
-NONE, XF86AudioNext
-NONE, XF86AudioPrev
-NONE, XF86MonBrightnessUp
-NONE, XF86MonBrightnessDown
 
 = Session
 SUPER+ALT, l

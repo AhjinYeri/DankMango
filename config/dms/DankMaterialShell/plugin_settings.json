@@ -10,5 +10,11 @@
   },
   "firstRunPanel": {
     "enabled": true
+  },
+  "presetSwitcher": {
+    "enabled": true
+  },
+  "controlHub": {
+    "enabled": true
   }
 }

@@ -1,0 +1,12 @@
+{
+    "id": "controlHub",
+    "name": "DankMango Hub",
+    "description": "One branded panel for the things DankMango adds to your desktop. Opens on a keybind, stays open until you close it, and grows a new section as each feature gets one. Starts with desktop presets.",
+    "version": "0.1.0",
+    "author": "AhjinYeri",
+    "type": "daemon",
+    "capabilities": ["daemon"],
+    "component": "./ControlHubPanel.qml",
+    "icon": "dashboard",
+    "permissions": ["process"]
+}

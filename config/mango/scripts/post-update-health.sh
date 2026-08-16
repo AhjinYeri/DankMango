@@ -97,6 +97,18 @@ BORDER_LOCK="/tmp/mango-wallpaper-border-reload.lock"
 
 ALTTAB_SCRIPT="$SCRIPTS/alt-switcher.sh"
 
+# Desktop presets. config.conf includes ONE fixed path -- a symlink into a preset
+# folder -- and the include is source-OPTIONAL, which is exactly why this needs
+# checking: mango reads a DANGLING link in complete silence (measured on 0.16.0:
+# no error, no warning, exit 0). So the failure this catches -- an update removed
+# a preset folder the link still points at -- has no symptom other than "my preset
+# quietly stopped applying". Nothing else in the system will ever mention it.
+PRESETS_DIR="$HOME/.config/mango/presets"
+PRESET_LINK="$HOME/.config/mango/active/preset.conf"
+PRESET_SETTER="$SCRIPTS/set-preset.sh"
+PRESET_ID="presetSwitcher"                          # the DMS plugin id
+PRESET_PLUGIN_DIR="$DMS_DIR/plugins/$PRESET_ID"
+
 # The first-run welcome panel. Unlike the other three plugins this one is a `daemon`
 # plugin with no bar presence and no IPC handler, so there is NOTHING to poke at
 # runtime -- see section 7 for what can and can't be established about it.
@@ -1502,6 +1514,181 @@ else
             "Run install.sh from $dm_repo — it copies every file, where update.sh only copies what changed in its commit range."
         [ "${#dm_stale[@]}" -gt 0 ] && warn "differs from the repo copy: ${dm_stale[*]}" \
             "Expected if you edit these yourself. Otherwise they're STALE — an update missed them, and no later update will revisit them. Take the shipped versions: cd $dm_repo && ./install.sh"
+    fi
+fi
+
+# =============================================================================
+# 10. Desktop presets
+# =============================================================================
+# The chain is short: a preset FOLDER, a SYMLINK pointing into it, and one
+# source-optional= line in config.conf pointing at the symlink. Only the middle
+# link can rot silently, and it is the reason this section exists -- see the
+# PRESET_LINK note in the EDIT-HERE box at the top.
+section "10. Desktop presets"
+
+if [ ! -d "$PRESETS_DIR" ]; then
+    note "desktop presets aren't installed on this machine — normal if you haven't updated since they were added. Nothing is wrong; the desktop uses its baseline settings."
+else
+    # ---- the setter -----------------------------------------------------------
+    if ! execu "$PRESET_SETTER"; then
+        fail "preset switcher (setter missing)" \
+             "$PRESET_SETTER isn't there or isn't runnable — the Presets bar button can't switch anything" \
+             "$PRESET_SETTER (deployed from config/mango/scripts/ by install.sh stage 7a)" \
+             "Re-run install.sh from the DankMango folder, or chmod +x the script." \
+"$(manual_restore_script "$PRESET_SETTER")"
+    else
+        pass "preset setter present ($PRESET_SETTER)"
+    fi
+
+    # ---- is config.conf actually reading a preset? -----------------------------
+    # WARN, not FAIL: nothing is broken, the feature is just inert. Most likely
+    # cause is keeping your own config.conf when update.sh offered to replace it.
+    if grep -qF 'active/preset.conf' "$MANGO_CFG" 2>/dev/null; then
+        pass "config.conf includes the active preset"
+    else
+        warn "config.conf has no preset include line — presets are switched but never applied" \
+             "Add this as the LAST source line in $MANGO_CFG, then press Super+r:  source-optional=~/.config/mango/active/preset.conf   (re-running ./install.sh restores it too)"
+    fi
+
+    # ---- THE SYMLINK ----------------------------------------------------------
+    # Four states, and they are genuinely different things:
+    #   nothing there      -> not in use. Fine, and the pre-presets behaviour.
+    #   a regular file     -> works, but set-preset.sh will replace it on the next
+    #                         switch, so say so before that surprises anyone.
+    #   dangling symlink   -> THE failure this section exists for. Silent in mango.
+    #   resolves to a file -> good; name the preset.
+    if [ ! -e "$PRESET_LINK" ] && [ ! -L "$PRESET_LINK" ]; then
+        note "no preset is active — that's a valid state and matches how DankMango behaved before presets existed. Pick one from the Presets bar button, or: $PRESET_SETTER default"
+    elif [ -L "$PRESET_LINK" ] && [ ! -e "$PRESET_LINK" ]; then
+        preset_broken_target="$(readlink "$PRESET_LINK" 2>/dev/null)"
+        fail "desktop preset (broken link)" \
+             "$PRESET_LINK points at '${preset_broken_target:-?}', which doesn't exist — your chosen preset silently stopped applying" \
+             "$PRESET_LINK -> $preset_broken_target ; the folders that DO exist are under $PRESETS_DIR" \
+             "Point it at a preset that exists: $PRESET_SETTER default   (mango ignores a dangling optional include without any error, which is why nothing else reports this)" \
+"Your desktop has a \"preset\" chosen - a named bundle of settings like
+Minimal. The shortcut that points at it has gone stale, most likely because
+an update removed the preset it was pointing to. MangoWM ignores it silently,
+so the only symptom is that your preset stopped having any effect.
+
+Nothing is damaged and nothing was lost. You just need to pick a preset again.
+
+1. See which presets you actually have:
+     $PRESET_SETTER --list
+   (Each one is a folder under $PRESETS_DIR.)
+
+2. Pick one from that list. \"default\" is always safe - it applies no
+   overrides at all, which is how the desktop behaves with no preset:
+     $PRESET_SETTER default
+   (Or click any card in the Presets button in your top bar - same thing.)
+
+3. Re-run this health check to confirm:
+     $SCRIPTS/post-update-health.sh"
+    elif [ ! -L "$PRESET_LINK" ]; then
+        warn "$PRESET_LINK is a normal file, not a shortcut to a preset" \
+             "It still works, but the next preset switch replaces it. If it holds settings you wrote by hand, copy them into a preset folder first — see $PRESETS_DIR/README.md."
+    else
+        preset_target="$(readlink -f "$PRESET_LINK" 2>/dev/null)"
+        preset_now="$(basename "$(dirname "$preset_target")" 2>/dev/null)"
+        pass "active preset: ${preset_now:-?}  (link resolves to a real file)"
+
+        # A link pointing OUTSIDE the presets folder is legal and works, so it is
+        # only ever a note -- but it's worth naming, because such a preset isn't
+        # offered by --list and won't be highlighted by the bar plugin.
+        case "$preset_target" in
+            "$PRESETS_DIR"/*) : ;;
+            *) note "that preset lives outside $PRESETS_DIR, so the bar button won't list or highlight it. Works fine; just be aware." ;;
+        esac
+
+        # The manifest is a RECORD, not the authority -- the symlink is what mango
+        # obeys. A disagreement means something repointed the link without going
+        # through set-preset.sh, which is harmless but worth seeing.
+        if [ -r "$DANKMANGO_MANIFEST" ] && have jq; then
+            preset_recorded="$(jq -r '.userPrefs.activePreset // empty' "$DANKMANGO_MANIFEST" 2>/dev/null)"
+            if [ -n "$preset_recorded" ] && [ -n "$preset_now" ] && [ "$preset_recorded" != "$preset_now" ]; then
+                note "the install record still says '$preset_recorded' — the shortcut says '$preset_now', and the shortcut is what counts. Switching once with $PRESET_SETTER puts them back in step."
+            fi
+        fi
+    fi
+
+    # ---- BAR CLEARANCE --------------------------------------------------------
+    # The bar can COVER more pixels than it RESERVES, and a preset that sets a
+    # small vertical outer gap then has its windows drawn underneath it. Measured
+    # in DMS 1.5.3, Modules/DankBar/DankBarWindow.qml:
+    #     exclusiveZone = barThickness + spacing + bottomGap     (line 764)
+    #     visual height = barThickness + spacing                 (line 663)
+    # so a NEGATIVE bar "Gap" (bottomGap) overhangs by exactly that much, and
+    # gappov is the only thing that can cover it:
+    #     gappov >= -bottomGap
+    #
+    # Deliberately computed from the USER's own settings.json rather than checking
+    # for a hardcoded number: bottomGap is a personal taste setting (DMS ships 0),
+    # so the required clearance differs per machine.
+    #
+    # It does NOT depend on any display or font setting. barThickness is a function
+    # of the bar's innerPadding and spacing only (Theme.barHeight is a hardcoded 48;
+    # font/icon scale do not enter into it), and both terms appear on BOTH lines
+    # above, so they cancel -- the overhang is exactly (-bottomGap) at every bar
+    # size. Measured at bar heights 47px and 59px: overhang 15px in both.
+    #
+    # The gappov it compares against is the EFFECTIVE one: the active preset's if it
+    # sets gappov (the preset is sourced last, so it wins), otherwise the value DMS
+    # wrote to layout.conf. Both are worth checking -- a too-small DMS slider clips
+    # windows exactly the same way a too-small preset does.
+    #
+    # WARN, never FAIL: the desktop still works, windows just look wrong at the
+    # bottom edge.
+    preset_bottom_gap=""
+    if have jq && [ -r "$BAR_SETTINGS" ]; then
+        preset_bottom_gap="$(jq -r '.barConfigs[0].bottomGap // 0' "$BAR_SETTINGS" 2>/dev/null)"
+    fi
+    case "$preset_bottom_gap" in
+        ''|*[!0-9-]*) preset_bottom_gap="" ;;          # unreadable -> skip quietly
+    esac
+    if [ -n "$preset_bottom_gap" ] && [ "$preset_bottom_gap" -lt 0 ] 2>/dev/null; then
+        preset_need=$(( -preset_bottom_gap ))
+        # The EFFECTIVE gappov: the active preset's, if it sets one (it is sourced
+        # last, so it wins); otherwise whatever DMS wrote to layout.conf.
+        preset_gappov=""
+        if [ -n "${preset_target:-}" ] && [ -f "${preset_target:-}" ]; then
+            preset_gappov="$(sed -n 's/^[[:space:]]*gappov[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$preset_target" | tail -1)"
+        fi
+        preset_gappov_src="the active preset"
+        if [ -z "$preset_gappov" ]; then
+            preset_gappov="$(sed -n 's/^[[:space:]]*gappov[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$HOME/.config/mango/dms/layout.conf" 2>/dev/null | tail -1)"
+            preset_gappov_src="DMS Settings -> Compositor Layout"
+        fi
+        if [ -z "$preset_gappov" ]; then
+            note "couldn't work out the vertical window gap, so the bar-clearance check was skipped. Harmless."
+        elif [ "$preset_gappov" -ge "$preset_need" ]; then
+            pass "windows clear the bar (gap $preset_gappov >= $preset_need needed for your bar's Gap of $preset_bottom_gap)"
+        else
+            warn "windows are drawn UNDER the bar: the vertical gap is ${preset_gappov}px but your bar needs ${preset_need}px" \
+                 "Your bar's Gap setting is $preset_bottom_gap, so it covers ${preset_need}px more than it reserves and the bottom edge of every tiled window is hidden. Raise gappov to at least $preset_need in $preset_gappov_src (see ~/.config/mango/presets/README.md), or set the bar's Gap back to 0 in DMS Settings -> Appearance."
+        fi
+    fi
+
+    # ---- the launcher plugin --------------------------------------------------
+    # Same three-state registration pattern (and the same tones) as the welcome
+    # panel in section 7: enabled, deliberately off, or not registered at all.
+    # NOTE: there is no bar widget to check for any more -- presets moved to the
+    # launcher surface on purpose, so "not in your DankBar layout" is correct now,
+    # not a fault.
+    if [ -f "$PRESET_PLUGIN_DIR/PresetSwitcherLauncher.qml" ]; then
+        pass "preset switcher plugin files present ($PRESET_PLUGIN_DIR)"
+    elif [ -f "$PRESET_PLUGIN_DIR/PresetSwitcherBar.qml" ]; then
+        warn "the OLD bar-widget version of the Presets plugin is still installed" \
+             "It became a launcher plugin. Re-run ./install.sh from your DankMango folder, then 'dms restart' — after that, open the launcher and type 'preset'."
+    else
+        warn "the Presets launcher plugin isn't installed at $PRESET_PLUGIN_DIR" \
+             "Presets still work from the terminal ($PRESET_SETTER --list). To get them in the launcher, re-run ./install.sh from your DankMango folder, then 'dms restart'."
+    fi
+    if plugin_enabled "$PRESET_ID"; then
+        pass "preset switcher enabled in plugin_settings.json (launcher trigger: type it in the launcher)"
+    elif grep -q "\"$PRESET_ID\"" "$PLUGIN_SETTINGS" 2>/dev/null; then
+        note "the Presets plugin is switched off in DMS Settings -> Plugins. Nothing wrong with that — presets still work from the terminal."
+    else
+        warn "the Presets plugin isn't registered in plugin_settings.json — DMS won't load it" \
+             "Run ./update.sh from your DankMango folder (its 'register-shipped-plugins' step adds it), or turn it on in DMS Settings -> Plugins, then 'dms restart'."
     fi
 fi
 

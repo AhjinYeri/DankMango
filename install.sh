@@ -5,7 +5,7 @@
 # =============================================================================
 #  Takes a fresh CachyOS + MangoWM system and applies the DankMango rice:
 #  packages, system files (keyd / SDDM), the mango + DankMaterialShell (DMS)
-#  configs, the three DMS plugins, GTK/terminal theming, and a couple of
+#  configs, the DMS plugins, GTK/terminal theming, and a couple of
 #  opt-in tweaks (power profile, easyeffects autostart).
 #
 #  It's meant to be SAFE TO RE-RUN:
@@ -881,6 +881,15 @@ else
     info "you can set it any time with:  ./install.sh --reselect-main-display"
 fi
 
+# 7f. Desktop preset -- activate one so config.conf's source-optional= include
+#     resolves to a real file from the very first login.
+#     Seeds "default", which is an EMPTY fragment: a fresh install behaves exactly
+#     as it did before presets existed, and the launcher ("preset") is how you
+#     change that. Never resets a preset you already chose (seed_active_preset
+#     returns early when the symlink exists), and never fatal -- the include is
+#     source-OPTIONAL, so "no preset" is a valid state, not a broken desktop.
+seed_active_preset || true
+
 # =============================================================================
 # 8. Wallpapers -> ~/Pictures/Wallpapers/  (a sensible default matugen source)
 #    Never clobbers existing wallpapers: same-named files already there are
@@ -1092,9 +1101,12 @@ fi
 # =============================================================================
 # 14. DMS plugins -> ~/.config/DankMaterialShell/plugins/<id>/
 #     Target folder = the plugin.json "id" (monitorMode / altSwitcher /
-#     audioToggle), matching the live DMS convention and the plugin READMEs.
-#     Registration in plugin_settings.json + settings.json already ships in the
-#     copied JSONs (step 7), so we only copy files and verify — no duplicates.
+#     audioToggle / firstRunPanel / presetSwitcher / controlHub), matching the live DMS
+#     convention and the plugin READMEs. The loop below is generic -- it walks
+#     plugins/*/ and reads each id -- so a new plugin needs no edit here.
+#     Registration in plugin_settings.json (all plugins) and in settings.json's
+#     DankBar layout (WIDGET plugins only) already ships in the copied JSONs
+#     (step 7), so we only copy files and verify — no duplicates.
 # =============================================================================
 stage "14/18  Installing DMS plugins"
 PLUGINS_DST="$HOME/.config/DankMaterialShell/plugins"
@@ -1116,8 +1128,21 @@ for pdir in "$REPO_DIR"/plugins/*/; do
     # sanity-check it's registered (it ships registered; warn if somehow not)
     grep -q "\"$pid\"" "$HOME/.config/DankMaterialShell/plugin_settings.json" 2>/dev/null \
         || warn "plugin '$pid' not found in plugin_settings.json — enable it in DMS Settings -> Plugins."
-    grep -q "\"$pid\"" "$SETTINGS" 2>/dev/null \
-        || warn "plugin '$pid' not in settings.json bar widgets — add it via Settings -> Appearance -> DankBar Layout."
+    # The BAR-WIDGET registration only applies to plugins that HAVE a bar widget.
+    # A `daemon` plugin (firstRunPanel) has no bar presence at all, and a `launcher`
+    # plugin (presetSwitcher) lives on the launcher surface on purpose -- neither
+    # belongs in settings.json's DankBar layout, so demanding one there produced a
+    # warning that was always wrong and told the user to "fix" a correct install.
+    ptype="$(grep -oP '"type"\s*:\s*"\K[^"]+' "$pdir/plugin.json" | head -1)"
+    case "$ptype" in
+        widget|desktop|composite|"")
+            grep -q "\"$pid\"" "$SETTINGS" 2>/dev/null \
+                || warn "plugin '$pid' not in settings.json bar widgets — add it via Settings -> Appearance -> DankBar Layout." ;;
+        launcher)
+            info "plugin '$pid' is a launcher plugin — reached from the launcher, not the bar (no DankBar entry expected)." ;;
+        *)
+            info "plugin '$pid' is a '$ptype' plugin — no bar entry expected." ;;
+    esac
 done
 
 # =============================================================================

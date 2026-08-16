@@ -259,6 +259,62 @@ _store_main_display() {
     return 0
 }
 
+# ---- desktop presets ---------------------------------------------------------
+# A "preset" is a named bundle of MangoWM settings swapped as a unit (see
+# config/mango/presets/README.md). config.conf includes ONE fixed path,
+# ~/.config/mango/active/preset.conf, which is a symlink into a preset folder;
+# switching presets repoints that symlink.
+#
+# OWNERSHIP, and it is the whole reason these are only THREE lines: scripts/
+# set-preset.sh is the SOLE writer of both the symlink and the manifest key.
+# Nothing here writes either. install.sh seeds the first preset by CALLING that
+# script (seed_active_preset below), exactly as _store_main_display applies the
+# main display by calling monitor-watcher.sh rather than duplicating its logic.
+# So there is one implementation of "switch preset", and it is the one the
+# launcher plugin and the user's terminal also go through.
+ACTIVE_PRESET_LINK="$HOME/.config/mango/active/preset.conf"
+DEFAULT_PRESET="default"
+
+# manifest_active_preset -> the remembered preset name, or "" if none/unknown.
+# READ-ONLY. For reporting; the symlink, not this key, is what mango obeys, so
+# treat a disagreement between the two as "the symlink is right".
+manifest_active_preset() {
+    [ -f "$MANIFEST" ] || return 0
+    have jq || return 0
+    jq -r '.userPrefs.activePreset // empty' "$MANIFEST" 2>/dev/null
+}
+
+# seed_active_preset — make sure SOME preset is active, once, at install time.
+#
+# Deliberately does nothing if the symlink already exists: re-running install.sh
+# must never reset a preset the user chose. It is also non-fatal in every failure
+# mode — the include is source-OPTIONAL, so "no preset active" is a valid steady
+# state that simply means baseline behaviour, not a broken desktop.
+seed_active_preset() {
+    local setter="$HOME/.config/mango/scripts/set-preset.sh"
+    if [ -L "$ACTIVE_PRESET_LINK" ]; then
+        info "desktop preset: keeping your current choice ($(basename "$(dirname "$(readlink -f "$ACTIVE_PRESET_LINK" 2>/dev/null)")" 2>/dev/null))"
+        return 0
+    fi
+    if [ ! -x "$setter" ]; then
+        warn "set-preset.sh not found/executable at $setter — no desktop preset activated."
+        info "Was config/mango/scripts/ copied in stage 7a? Then run: $setter $DEFAULT_PRESET"
+        return 1
+    fi
+    if [ "${DRY_RUN:-0}" = 1 ]; then
+        info "(dry-run) would activate the '$DEFAULT_PRESET' desktop preset"
+        return 0
+    fi
+    if "$setter" "$DEFAULT_PRESET" >/dev/null 2>&1; then
+        ok "desktop preset: $DEFAULT_PRESET (change it from the launcher — type \"preset\")"
+    else
+        warn "couldn't activate the '$DEFAULT_PRESET' preset — harmless; the desktop just uses its baseline settings."
+        info "try it by hand to see why:  $setter $DEFAULT_PRESET"
+        return 1
+    fi
+    return 0
+}
+
 # ---- backup retention -------------------------------------------------------
 # How many timestamped backups to keep PER ORIGINAL FILE. Tune it here and nowhere
 # else — no other line in this repo knows the number. Deliberately mirrors

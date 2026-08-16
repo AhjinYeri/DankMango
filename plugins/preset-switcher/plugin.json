@@ -1,0 +1,14 @@
+{
+    "id": "presetSwitcher",
+    "name": "Preset Switcher",
+    "description": "Switch between named bundles of MangoWM settings (gaps, animations) from the launcher — front-end for set-preset.sh. Type the trigger in the launcher; no permanent bar space used.",
+    "version": "0.2.0",
+    "author": "AhjinYeri",
+    "type": "launcher",
+    "capabilities": ["launcher"],
+    "component": "./PresetSwitcherLauncher.qml",
+    "settings": "./PresetSwitcherSettings.qml",
+    "trigger": "preset",
+    "icon": "tune",
+    "permissions": ["process", "settings_read", "settings_write"]
+}

@@ -64,7 +64,8 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 - `Super+/` for a searchable keybinds cheatsheet, built from your actual config
 - Per-monitor layout, switchable from the bar
 - Monitors handled on the fly — unplug one and your layouts survive it, and Steam games open on the display you picked
-- Custom alt-tab switcher, output switcher, and monitor mode plugins
+- Desktop presets — open the launcher, type `preset`, and swap a whole bundle of settings (tight gaps, quick animations) at once; switch straight back with nothing left behind. Adding your own is a folder and a text file
+- Custom alt-tab switcher, output switcher, monitor mode, and preset switcher plugins
 - `Print` to snip a region and mark it up — crop, arrows, text, highlight, blur — with the pen colours pulled from your wallpaper. `Ctrl+Print` skips the editor when you just want it on the clipboard
 - Nemo and Zen themed to match
 - Loupe set as your image viewer (a fresh CachyOS install has nothing that opens photos)

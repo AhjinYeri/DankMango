@@ -9,6 +9,12 @@ DankMango is a personal desktop configuration built on top of the work of others
 - **[matugen](https://github.com/InioX/matugen)** by InioX — the wallpaper-driven Material You color generation engine behind DankMango's dynamic theming.
 - **[SDDM](https://github.com/sddm/sddm)** — the display manager DankMango's own login theme is written against. The theme uses SDDM's Qt6 greeter and its two-file (`theme.conf` + `theme.conf.user`) config layering; SDDM itself ships with CachyOS and is not installed by DankMango.
 
+## Ideas borrowed
+
+- **[ML4W dotfiles](https://github.com/mylinuxforwork/dotfiles)** by Stephan Raabe — DankMango's **desktop presets** (`config/mango/presets/`, `set-preset.sh`, the Presets launcher plugin) are inspired by ML4W's "Configuration Variations": the idea of swapping a whole bundle of settings at once by repointing a **native include line** at a different config fragment, rather than rewriting the main config in place. That approach is what makes switching reversible with nothing to clean up, and it's a genuinely good idea I would not have arrived at on my own.
+
+  **Nothing is ported.** No ML4W code, file layout, or naming was copied — DankMango's implementation is its own (a symlink swapped atomically behind MangoWM's `source-optional=`, wired into this project's existing manifest/backup/dry-run lifecycle). The credit is for the concept, and it's here because a good idea deserves naming whether or not any of its code came with it.
+
 ## Tools & packages
 
 DankMango's install script sets up a number of third-party tools it didn't write, including:

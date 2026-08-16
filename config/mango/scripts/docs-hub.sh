@@ -351,6 +351,7 @@ COMMANDS=(
     "=DESKTOP TOOLS   (mostly run for you by keybinds and watchers)"
     "here:monitor-watcher.sh"
     "here:set-monitor-layout.sh"
+    "here:set-preset.sh"
     "here:generate-tagrules.sh"
     "here:sddm-palette-sync.sh"
     "here:screenshot.sh"

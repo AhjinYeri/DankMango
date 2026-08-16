@@ -46,6 +46,16 @@
 #   re-enable DMS keyboard focus while the first is still sitting in satty. The
 #   flock below makes a second press while satty is open a no-op instead.
 #
+#   AND THE LOCK FD MUST NOT LEAK INTO CHILDREN. A flock lives on the open file
+#   description, not on the process, so any child that inherits fd 9 keeps
+#   holding the lock after this script is gone. wl-copy is exactly that child:
+#   it forks a resident background process to serve the selection until some
+#   other client claims it, so one copy would pin the lock for the rest of the
+#   session and every later Print/SUPER+p would silently `exit 0` at the flock
+#   below -- the "works once, then nothing" bug. satty spawns wl-copy itself via
+#   --copy-command, so it needs the same treatment. Hence `9>&-` on every
+#   command here that can outlive the script.
+#
 set -uo pipefail
 
 # CMD lines are what docs-hub.sh's command list shows: a real, runnable command
@@ -130,7 +140,7 @@ capture || exit 0
 if [ "$MODE" = "quick" ]; then
     FILE="$DIR/screenshot_$(date +'%Y-%m-%d_%H-%M-%S').png"
     cp "$TMP" "$FILE"
-    wl-copy < "$TMP"
+    wl-copy < "$TMP" 9>&-   # 9>&-: don't hand the lock to wl-copy's resident child
     notify-send "Screenshot Captured" "Saved to $FILE" -i "$ICON"
     exit 0
 fi
@@ -140,7 +150,7 @@ if ! command -v satty >/dev/null 2>&1; then
     # framed.
     FILE="$DIR/screenshot_$(date +'%Y-%m-%d_%H-%M-%S').png"
     cp "$TMP" "$FILE"
-    wl-copy < "$TMP"
+    wl-copy < "$TMP" 9>&-   # 9>&-: as above
     notify-send "Screenshot Captured (satty not installed)" "Saved to $FILE" -i "$ICON"
     exit 0
 fi
@@ -152,8 +162,9 @@ fi
 # these win regardless.
 #   --early-exit all  : close after a save/copy instead of idling in the editor
 #   --initial-tool    : arrow is the annotation you reach for most
+# 9>&- so the wl-copy satty forks for --copy-command can't inherit the lock.
 satty --filename "$TMP" \
       --output-filename "$FILE_TEMPLATE" \
       --copy-command wl-copy \
       --early-exit all \
-      --initial-tool arrow
+      --initial-tool arrow 9>&-
