@@ -59,6 +59,14 @@ done
 
 # Report buckets, printed together at the end (same spirit as install/uninstall).
 UPDATED=(); PKGS_ADDED=(); MIGRATED=(); RETIRED=(); LEFT=(); MANUAL=()
+# How many file copies FAILED this run. Separate from WARNINGS on purpose: warnings
+# are routine here (a Zen profile that doesn't exist yet, a snapshot that couldn't be
+# taken) and must not block the run, whereas a failed copy means the delta was NOT
+# fully applied. Stage 6 refuses to stamp lastAppliedCommit while this is non-zero,
+# so the unapplied files stay in the next run's delta instead of being skipped
+# forever — an update only re-copies what changed in ITS commit range, so a file
+# written off as applied is never revisited.
+COPY_FAILED=0
 # The login theme is reinstalled as a WHOLE TREE, so however many of its files changed
 # in this delta, the installer runs once. Guards apply_change's dankmango-sddm-theme arm.
 SDDM_THEME_REINSTALLED=0
@@ -790,8 +798,20 @@ apply_change() {  # apply_change REPO_REL
                 fi
             fi
             [ "$DRY_RUN" = 1 ] && { info "would update ($kind): $dst"; UPDATED+=("$dst"); return; }
-            if [ "$kind" = sys_copy ]; then sys_copy "$src" "$dst"; else user_copy "$src" "$dst"; fi \
-                && UPDATED+=("$dst")
+            # A failed copy is a FAILED UPDATE, not a line to swallow. The helper has
+            # already said why; this makes sure it reaches the end-of-run report and
+            # blocks the commit stamp (see COPY_FAILED at stage 6) so the same delta
+            # is retried instead of being written off as applied.
+            local copied=0
+            if [ "$kind" = sys_copy ]; then sys_copy "$src" "$dst" && copied=1
+            else                            user_copy "$src" "$dst" && copied=1; fi
+            if [ "$copied" = 1 ]; then
+                UPDATED+=("$dst")
+            else
+                COPY_FAILED=$((COPY_FAILED+1))
+                LEFT+=("$dst — COPY FAILED; still the old version")
+                MANUAL+=("$dst is stale — re-run install.sh (it re-copies every file, not just this delta)")
+            fi
             ;;
         wallpaper)
             [ "$DRY_RUN" = 1 ] && { info "would add wallpaper: $dst"; UPDATED+=("$dst"); return; }
@@ -983,12 +1003,33 @@ fi
 # Refresh commit/run metadata (status -> in-progress) then mark complete, which stamps
 # lastAppliedCommit = the now-current HEAD. Done LAST so a mid-update failure leaves
 # lastAppliedCommit at the OLD commit and the next run safely retries the same delta.
-manifest_init >/dev/null 2>&1
-manifest_finalize
+#
+# A file that could not be written is exactly such a failure, so it gets the same
+# treatment: NOT stamping the commit is what keeps those files in the next run's
+# delta. Stamping anyway would mark them applied when they are still the old
+# version, and no later update would ever look at them again — each run only
+# re-copies what changed inside ITS OWN commit range. The manifest is left at
+# status "in-progress", which the next update.sh reads as "re-run install.sh",
+# and install.sh re-copies every file rather than a delta. That is the repair.
+if [ "$COPY_FAILED" -gt 0 ]; then
+    manifest_init >/dev/null 2>&1
+    warn "$COPY_FAILED file(s) could not be written — see below."
+    info "  NOT recording this update as applied, on purpose: the files listed under"
+    info "  \"LEFT ALONE\" are still the old version, and a recorded update would hide"
+    info "  that forever (later updates only re-copy what changed in their own range)."
+    info "  Fix the cause, then run install.sh — it re-copies everything, not a delta."
+else
+    manifest_init >/dev/null 2>&1
+    manifest_finalize
+fi
 
 print_list() { local t="$1"; shift; echo; info "$t"; if [ "$#" -eq 0 ]; then info "  (none)"; else printf '      - %s\n' "$@"; fi; }
 echo; echo "==================================================================="
-printf ' %sDankMango updated %s -> %s%s\n' "$c_grn" "${LAST:0:12}" "${HEAD:0:12}" "$c_off"
+if [ "$COPY_FAILED" -gt 0 ]; then
+    printf ' %sDankMango update INCOMPLETE %s -> %s%s\n' "$c_yel" "${LAST:0:12}" "${HEAD:0:12}" "$c_off"
+else
+    printf ' %sDankMango updated %s -> %s%s\n' "$c_grn" "${LAST:0:12}" "${HEAD:0:12}" "$c_off"
+fi
 echo "==================================================================="
 print_list "PACKAGES added:"          ${PKGS_ADDED[@]+"${PKGS_ADDED[@]}"}
 print_list "FILES updated:"           ${UPDATED[@]+"${UPDATED[@]}"}
@@ -998,9 +1039,13 @@ print_list "LEFT ALONE (and why):"    ${LEFT[@]+"${LEFT[@]}"}
 print_list "STILL FOR YOU TO DO:"     ${MANUAL[@]+"${MANUAL[@]}"}
 echo
 info "Backups of anything overwritten sit beside the originals as .bak-$STAMP."
-if [ "$WARNINGS" -gt 0 ]; then
+if [ "$COPY_FAILED" -gt 0 ]; then
+    warn "$COPY_FAILED file(s) were NOT updated — this update is unfinished. Run install.sh to complete it."
+elif [ "$WARNINGS" -gt 0 ]; then
     warn "finished with $WARNINGS warning(s) — read them above."
 else
     ok "update finished cleanly."
 fi
 info "Log out/in or reload DMS if a plugin, keyd, or a service-level file changed."
+[ "$COPY_FAILED" -gt 0 ] && exit 1
+exit 0

@@ -618,7 +618,11 @@ if sys_copy "$REPO_DIR/system/keyd/default.conf" "/etc/keyd/default.conf"; then
         warn "couldn't enable/start keyd — run: sudo systemctl enable --now keyd"
     fi
 else
-    info "no keyd config shipped in the repo yet -> not enabling the keyd service."
+    # Two ways to land here, and sys_copy has already printed which: the repo ships
+    # no keyd config, or the copy itself failed. Either way the service must not be
+    # enabled — starting keyd against a config we didn't install is worse than not
+    # starting it. (Before sys_copy checked its own cp, only the first case existed.)
+    info "no keyd config was installed -> not enabling the keyd service (see the line above for why)."
 fi
 
 # 5b. SDDM: DankMango's own login theme.

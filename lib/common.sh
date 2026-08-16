@@ -322,6 +322,17 @@ prune_file_backups() {
 # Records the backup (if any) and a system-file-installed change in the manifest,
 # noting whether the target pre-existed (so uninstall knows: restore vs. delete).
 #   sys_copy SRC DST
+#
+# EVERY cp here is checked, and that is not defensive padding -- an unchecked one
+# is how a file goes silently stale FOREVER. The old version ran `cp` bare, then
+# unconditionally printed "installed" and recorded the SOURCE's hash in the
+# manifest. So a copy that failed (sudo declined or timed out, target read-only,
+# disk full) was reported as a success, counted in update.sh's "FILES updated"
+# list, and left the manifest asserting a hash the file on disk does not have.
+# Nothing downstream could ever notice: the recorded hash matches the repo, so
+# update.sh's edit-detection sees "unchanged", and the file is not in any FUTURE
+# delta -- a later update only re-copies what changed in ITS commit range, so it
+# never revisits the one that got missed. One failed write, silently permanent.
 sys_copy() {
     local src="$1" dst="$2"
     if [ ! -f "$src" ]; then
@@ -333,13 +344,23 @@ sys_copy() {
     if [ -f "$dst" ]; then
         existed=1
         if ! sudo cmp -s "$src" "$dst"; then
-            sudo cp -a "$dst" "$dst.bak-$STAMP"
+            # Backup first, and STOP if it fails: never overwrite a file we've just
+            # proven we can't make a restore point for. (In practice a failed backup
+            # means the directory isn't writable, so the copy below would fail too --
+            # this just fails at the safe end of that.)
+            if ! sudo cp -a "$dst" "$dst.bak-$STAMP"; then
+                warn "couldn't back up $dst — leaving it UNCHANGED rather than overwriting a file we can't restore."
+                return 1
+            fi
             info "backed up existing $dst -> $dst.bak-$STAMP"
             manifest_add_backup "$dst" "$dst.bak-$STAMP" system "$CUR_STAGE"
             prune_file_backups "$dst" 1
         fi
     fi
-    sudo cp "$src" "$dst"
+    if ! sudo cp "$src" "$dst"; then
+        warn "couldn't write $dst — it is UNCHANGED (still the old version). Nothing was recorded for it, so this update is NOT finished. Fix the cause (admin rights, read-only file, full disk) and re-run install.sh."
+        return 1
+    fi
     ok "installed $dst"
     if have jq; then
         local h; h="$(file_hash "$src")"
@@ -353,6 +374,12 @@ sys_copy() {
 # Copy a USER file (no sudo). Backs up an existing, differing target. Same manifest
 # bookkeeping as sys_copy, scoped "user".
 #   user_copy SRC DST
+#
+# Same checked-cp rule as sys_copy, and for the same reason -- see the long note
+# there. This is the path every ~/.config/mango/scripts/*.sh goes through on an
+# update, so an unchecked failure here is exactly how a machine ends up running a
+# shipped DankMango script that is several releases old while the updater reports
+# a clean run.
 user_copy() {
     local src="$1" dst="$2"
     if [ ! -f "$src" ]; then
@@ -364,13 +391,19 @@ user_copy() {
     if [ -f "$dst" ]; then
         existed=1
         if ! cmp -s "$src" "$dst"; then
-            cp -a "$dst" "$dst.bak-$STAMP"
+            if ! cp -a "$dst" "$dst.bak-$STAMP"; then
+                warn "couldn't back up $dst — leaving it UNCHANGED rather than overwriting a file we can't restore."
+                return 1
+            fi
             info "backed up existing $dst -> $dst.bak-$STAMP"
             manifest_add_backup "$dst" "$dst.bak-$STAMP" user "$CUR_STAGE"
             prune_file_backups "$dst"
         fi
     fi
-    cp "$src" "$dst"
+    if ! cp "$src" "$dst"; then
+        warn "couldn't write $dst — it is UNCHANGED (still the old version). Nothing was recorded for it, so this update is NOT finished. Fix the cause (read-only file, full disk) and re-run install.sh."
+        return 1
+    fi
     ok "installed $dst"
     if have jq; then
         local h; h="$(file_hash "$src")"

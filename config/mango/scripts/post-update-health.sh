@@ -23,6 +23,9 @@
 #      6. Screenshot annotation (Print / Shift+Print / Ctrl+Print)
 #      7. The first-run welcome panel (firstRunPanel)
 #      8. That update.sh's pre-update snapper snapshot actually landed
+#      9. That the DankMango scripts you're actually running are the shipped
+#         ones -- update.sh only re-copies what changed in its commit range, so
+#         a file it ever misses stays stale until install.sh is run again
 #    ...plus it records the mango / dms-shell / quickshell versions and tells you
 #    which changed since the last run (a changed version = prime suspect for a break).
 #
@@ -1446,6 +1449,59 @@ if [ -n "$snap_cfg" ]; then
         else
             note "no DankMango pre-update snapshot in the last 24 hours. Expected if you haven't updated today; update.sh takes one automatically each time it runs."
         fi
+    fi
+fi
+
+# =============================================================================
+# 9. Are the installed DankMango scripts the shipped ones?  (informational)
+# =============================================================================
+# update.sh applies a DELTA: it only re-copies files that changed between your
+# last recorded commit and the repo's HEAD. That makes it fast, but it also means
+# it can never heal a file that went stale earlier -- once a copy is missed, no
+# later update looks at that file again, because it isn't in any later delta.
+# (install.sh is the repair: it re-copies the whole tree unconditionally.)
+#
+# So this compares what's actually deployed under ~/.config/mango against the
+# clone update.sh reads from. It is the only check that can catch "you are running
+# a months-old copy of a shipped script and everything LOOKS fine".
+#
+# SCOPE -- DankMango-owned files only:
+#   scripts/  and docs/   are ours; you're not meant to edit them, so a difference
+#                         is worth telling you about
+#   config.conf           is YOURS. The guide actively tells you to edit it (bar
+#                         position, gaps, binds), so it is deliberately NOT
+#                         compared -- it would warn on every well-used install
+#   dms/*.conf            not compared either: colors.conf is rewritten by matugen,
+#                         outputs.conf by DMS, tagrules.conf by the generator. They
+#                         live in the repo under config/dms/, not config/mango/, so
+#                         walking config/mango/ skips them for free
+#
+# WARN, never FAIL, and the same rule the welcome-panel check uses: no reachable
+# clone is normal (people move or delete it), so that's a note, not a problem.
+section "9. Installed scripts vs the DankMango clone"
+dm_repo=""
+if [ -r "$DANKMANGO_MANIFEST" ] && have jq; then
+    dm_repo="$(jq -r '.dankmango.repoDir // empty' "$DANKMANGO_MANIFEST" 2>/dev/null)"
+fi
+if [ -z "$dm_repo" ] || [ ! -d "$dm_repo/config/mango" ]; then
+    note "can't compare your installed files against the repo (no DankMango clone found) — normal if you deleted or moved it"
+else
+    dm_stale=(); dm_missing=()
+    while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        dm_dst="$HOME/.config/mango/$rel"
+        if [ ! -e "$dm_dst" ]; then dm_missing+=("$rel")
+        elif ! cmp -s "$dm_repo/config/mango/$rel" "$dm_dst"; then dm_stale+=("$rel")
+        fi
+    done < <(cd "$dm_repo/config/mango" && find scripts docs -type f 2>/dev/null | sort)
+
+    if [ "${#dm_stale[@]}" -eq 0 ] && [ "${#dm_missing[@]}" -eq 0 ]; then
+        pass "every installed script + doc matches the repo copy"
+    else
+        [ "${#dm_missing[@]}" -gt 0 ] && warn "not installed at all: ${dm_missing[*]}" \
+            "Run install.sh from $dm_repo — it copies every file, where update.sh only copies what changed in its commit range."
+        [ "${#dm_stale[@]}" -gt 0 ] && warn "differs from the repo copy: ${dm_stale[*]}" \
+            "Expected if you edit these yourself. Otherwise they're STALE — an update missed them, and no later update will revisit them. Take the shipped versions: cd $dm_repo && ./install.sh"
     fi
 fi
 
