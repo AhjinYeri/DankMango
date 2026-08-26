@@ -6,7 +6,7 @@
 #  Takes a fresh CachyOS + MangoWM system and applies the DankMango rice:
 #  packages, system files (keyd / SDDM), the mango + DankMaterialShell (DMS)
 #  configs, the DMS plugins, GTK/terminal theming, and a couple of
-#  opt-in tweaks (power profile, easyeffects autostart).
+#  opt-in tweaks (power profile, easyeffects autostart, Ripe Chroma).
 #
 #  It's meant to be SAFE TO RE-RUN:
 #    * package installs use --needed (already-installed packages are skipped)
@@ -787,10 +787,47 @@ fi
 #     machine-specific `outputTargets` (Speakers/Headphones card profiles) and
 #     quietly fell back to sink-cycling, where it had nothing to switch to.
 #
-#     So MERGE them instead: shipped keys win (a new plugin registration still
-#     lands), anything the repo doesn't ship survives. update.sh already refuses
-#     to overwrite these outright -- see its `dms-state` route -- and this brings
-#     install.sh in line with that policy rather than contradicting it.
+#     So MERGE them instead -- and the DIRECTION of that merge is the whole
+#     decision. jq's `*` is a recursive merge in which the RIGHT side wins a
+#     conflict, so:
+#         jq -s '.[0] * .[1]'   live * shipped -> SHIPPED wins   (what this WAS)
+#         jq -s '.[1] * .[0]'   shipped * live -> LIVE wins      (what this IS)
+#
+#     It used to be shipped-wins, and that quietly reverted real customisation on
+#     every re-run. Measured on a working machine, not theorised: 18 top-level keys
+#     changed, including currentThemeName / currentThemeCategory / customThemeFile
+#     (the whole theme snapping back to "dynamic" -- which also un-does the Ripe
+#     Chroma setup that post-update-health.sh's check 12d explicitly supports),
+#     matugenScheme, and configVersion DOWNGRADED 13 -> 5: a schema-version number
+#     handed back to code that runs its own migrations off it.
+#
+#     Arrays were the worst of it, because `*` recurses into objects but REPLACES
+#     arrays outright. barConfigs, notificationRules and desktopWidgetInstances
+#     were swapped wholesale, so an entire customised bar could vanish leaving no
+#     per-key trace in a diff to explain where it went.
+#
+#     LIVE-WINS is the call update.sh already made, for the same reason, and its
+#     migrate_register-shipped-plugins says so in as many words: "MERGE DIRECTION
+#     IS THE WHOLE POINT, and it is NOT install.sh's." This is that sentence being
+#     acted on, and it brings install.sh in line with the `dms-state` route (which
+#     refuses to overwrite these files at all) instead of contradicting it.
+#
+#     NEW KEYS STILL LAND IN EITHER DIRECTION. `*` unions the key sets, and a key
+#     the live file has never heard of has nothing to collide with -- so a newly
+#     shipped plugin registration arrives exactly as before. Only CONFLICTS change
+#     hands, and a conflict is by definition a value the user already has an
+#     opinion about.
+#
+#     WHAT ABOUT VALUES DANKMANGO GENUINELY MUST IMPOSE? They get set explicitly,
+#     by name, AFTER this stage: stages 10 and 10b do precisely that for
+#     popupTransparency and keybindsFloatingWindow. That list is deliberately the
+#     ONLY imposition mechanism. A merge direction cannot express "these six keys
+#     are ours and the rest are yours", and a preserve-list inside the merge would
+#     have to name every affected key today and then track DMS's schema forever.
+#     Need to force a value? Add a stage-10-shaped block; don't touch the direction.
+#     (Verified when this flipped: popupTransparency and keybindsFloatingWindow are
+#     the only settings.json keys ANYTHING in this repo reads, asserts or sets, so
+#     nothing else had to move here.)
 #
 #     Merged copies are staged beside the target and moved into place AFTER the
 #     tree copy, which would otherwise overwrite them again. Without jq we can't
@@ -806,7 +843,9 @@ for j in settings.json plugin_settings.json; do
     info "backed up existing $j -> $j.bak-$STAMP"
     manifest_add_backup "$tgt" "$tgt.bak-$STAMP" user "$CUR_STAGE"
     prune_file_backups "$tgt"
-    if have jq && jq -s '.[0] * .[1]' "$tgt" "$src" > "$tgt.merge-$STAMP" 2>/dev/null \
+    # shipped * live -> LIVE wins on every conflict. See the direction note above;
+    # the operand ORDER here is load-bearing, not stylistic.
+    if have jq && jq -s '.[1] * .[0]' "$tgt" "$src" > "$tgt.merge-$STAMP" 2>/dev/null \
        && [ -s "$tgt.merge-$STAMP" ]; then
         DMS_STATE_MERGED+=("$j")
     else
@@ -820,7 +859,7 @@ cp -a "$REPO_DIR/config/dms/DankMaterialShell/." "$HOME/.config/DankMaterialShel
 for j in "${DMS_STATE_MERGED[@]:-}"; do
     [ -n "$j" ] || continue
     tgt="$HOME/.config/DankMaterialShell/$j"
-    mv -f "$tgt.merge-$STAMP" "$tgt" && ok "merged shipped $j into yours (your own keys kept)"
+    mv -f "$tgt.merge-$STAMP" "$tgt" && ok "merged shipped $j into yours (anything new is added; your own values win)"
 done
 have jq && manifest_add_change owned-tree "$CUR_STAGE" "$HOME/.config/DankMaterialShell" \
     "$(jq -nc --arg d "$HOME/.config/DankMaterialShell" '{dir:$d, scope:"user", note:"runtime state (session.json etc.) lives here too; uninstall should preserve or back it up"}')" \
@@ -1096,6 +1135,85 @@ if [ -f "$CONF" ] && grep -qE "$EE_LINE_RE" "$CONF"; then
     fi
 else
     warn "no 'exec-once = easyeffects' line found in config.conf — nothing to toggle."
+fi
+
+# =============================================================================
+# 13b. Ripe Chroma, the wallpaper colour engine (opt-in; builds tools/ripe-chroma)
+#
+# WHY THIS IS OPT-IN AND NOT A STANDARD DEPENDENCY.
+#   The engine itself is tiny (a 1.8 MB binary, ~24 s to build, 60 unremarkable
+#   crates). The COST IS THE TOOLCHAIN: `rust` is 77 MiB to download and ~295 MiB
+#   installed, and it is not part of a base CachyOS install. That is by a wide
+#   margin the largest thing DankMango would ever put on a machine, and it would
+#   land on every user including everyone perfectly happy with matugen's palettes.
+#   Pinning a compiler into REPO_PKGS for an optional theming refinement is exactly
+#   the kind of "you get it whether you want it or not" this project avoids.
+#
+# WHY NOT BUILD LAZILY ON FIRST USE.
+#   Considered and rejected. Deferring does not avoid the 295 MB -- it just moves a
+#   multi-minute pacman transaction into the middle of a UI interaction, at the one
+#   moment the user is expecting an instant colour change. The build is the cheap
+#   half; only the toolchain is expensive, and nothing about waiting makes it less
+#   so. Asking once, here, where every other optional extra is decided, is honest.
+#
+# DECLINING IS FULLY SAFE AND LEAVES NO STUBS. Everything downstream is guarded on
+# the binary existing: the fan-out in wallpaper-border-reload.sh tests `[ -x ]` and
+# no-ops, and the health check reports "not installed" as a note rather than a
+# warning. Nothing is written, nothing is recorded, and re-running install.sh
+# offers it again.
+# =============================================================================
+stage "13b/18 Ripe Chroma, the wallpaper colour engine (optional)"
+if [ ! -d "$REPO_DIR/$RIPE_CHROMA_SRC" ]; then
+    warn "$RIPE_CHROMA_SRC missing from this clone — skipping Ripe Chroma."
+elif ask_yn "Build Ripe Chroma, the wallpaper colour engine? (needs $RIPE_CHROMA_PKG, ~295 MB installed; ~30 s to build)"; then
+    # 1. Toolchain. `have cargo` first so an existing toolchain is honoured --
+    #    a rustup user already has cargo on PATH and does not need the pacman
+    #    package as well. Same AUR-helper invocation as the easyeffects step
+    #    above; the helper pulls it straight from the official repos.
+    CE_TOOLCHAIN=0
+    if have cargo; then
+        ok "cargo already available ($(cargo --version 2>/dev/null | head -1))"
+        manifest_add_skipped "$RIPE_CHROMA_PKG" already-installed
+        CE_TOOLCHAIN=1
+    elif "$AUR" -S --needed --noconfirm "$RIPE_CHROMA_PKG"; then
+        ok "$RIPE_CHROMA_PKG installed"
+        manifest_add_package "$RIPE_CHROMA_PKG" repo optional-feature
+        CE_TOOLCHAIN=1
+    else
+        warn "$RIPE_CHROMA_PKG failed to install — Ripe Chroma not built. Install it and re-run install.sh: sudo pacman -S $RIPE_CHROMA_PKG"
+    fi
+
+    # 2. Build + install. Built inside the clone, then the ONE binary is copied
+    #    to its fixed path; `cargo clean` afterwards reclaims the ~186 MB of
+    #    intermediates, which have no value once the binary is out.
+    if [ "$CE_TOOLCHAIN" = 1 ]; then
+        info "building $RIPE_CHROMA_SRC (this takes ~30 s the first time)..."
+        if (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo build --release --quiet); then
+            RC_BUILT="$REPO_DIR/$RIPE_CHROMA_SRC/target/release/dankmango-ripe-chroma"
+            if [ -x "$RC_BUILT" ]; then
+                mkdir -p "$(dirname "$RIPE_CHROMA_BIN")"
+                if install -m 755 "$RC_BUILT" "$RIPE_CHROMA_BIN"; then
+                    ok "Ripe Chroma installed -> $RIPE_CHROMA_BIN"
+                    have jq && manifest_add_change user-file-installed "$CUR_STAGE" "$RIPE_CHROMA_BIN" \
+                        "$(jq -nc --arg p "$RIPE_CHROMA_BIN" '{path:$p, preexisting:false, scope:"user", builtFrom:"tools/ripe-chroma"}')" \
+                        "rm $RIPE_CHROMA_BIN"
+                    info "the wallpaper fan-out picks it up automatically on your next wallpaper change."
+                    info "point DMS at its output to actually use it: Settings -> Theme -> Custom."
+                else
+                    warn "built OK but couldn't copy the binary to $RIPE_CHROMA_BIN — nothing recorded."
+                fi
+            else
+                warn "cargo reported success but no binary at $RC_BUILT — nothing recorded."
+            fi
+            # Reclaim the build tree either way; a failed copy doesn't make 186 MB
+            # of intermediates worth keeping in the user's clone.
+            (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo clean --quiet 2>/dev/null) || true
+        else
+            warn "cargo build failed — Ripe Chroma not installed. Build it by hand to see why: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release"
+        fi
+    fi
+else
+    info "Skipped Ripe Chroma. Nothing was installed; re-run install.sh if you change your mind."
 fi
 
 # =============================================================================

@@ -65,6 +65,16 @@ QtObject {
     readonly property color fieldBg:     Qt.rgba(1, 1, 1, 0.06)
     readonly property color fieldBgHot:  Qt.rgba(1, 1, 1, 0.10)
 
+    // Resting colour of a field underline and of a system-control outline, now
+    // that neither is drawn as a box. Deliberately NOT glassBorder: that value
+    // (white at 0.10) was tuned to edge a 55%-opaque glass card, where it only
+    // ever had to separate the card from the blur behind it. These lines sit on
+    // the wallpaper directly with nothing under them, and at 0.10 they simply
+    // vanish over a bright frame -- which on a form with no boxes means the
+    // fields vanish with them. Stronger, and fixed rather than palette-derived,
+    // so a dark accent cannot make the controls disappear.
+    readonly property color rule:        Qt.rgba(1, 1, 1, 0.38)
+
     // --- wallpaper ---------------------------------------------------------
     // Written by sddm-palette-sync.sh, which copies a downscaled, re-encoded
     // copy of the wallpaper into one of two fixed slots beside this theme and

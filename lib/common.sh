@@ -668,6 +668,26 @@ AUR_PKGS=(zen-browser-bin)
 # (multilib is enabled by default on CachyOS). Spotify ships as spotify-launcher (the
 # official launcher; it fetches the real client on first run).
 STANDARD_APPS=(discord steam spotify-launcher)
+
+# ---- Ripe Chroma, the wallpaper colour engine (tools/ripe-chroma) ---------------------------
+# DankMango's own wallpaper -> palette generator: a small Rust binary this repo
+# builds itself, rather than a script or a plugin. OPT-IN at install (stage 13b),
+# because the toolchain it needs is ~295 MB installed and most people who want the
+# rice do not want a compiler; see that stage for the full reasoning.
+#
+# THE BINARY PATH IS FIXED AND LOAD-BEARING. Three separate things call it by this
+# exact path and none of them discover it: the wallpaper fan-out
+# (scripts/wallpaper-border-reload.sh), the health check
+# (scripts/post-update-health.sh, which hardcodes its own copy because it ships
+# standalone and cannot source this file), and the control-hub Ripe Chroma
+# section. Move it and all three break silently -- the fan-out's `[ -x ]` guard
+# just goes quiet. If it ever has to move, grep for the basename across the repo.
+RIPE_CHROMA_SRC="tools/ripe-chroma"                            # relative to $REPO_DIR
+RIPE_CHROMA_BIN="$HOME/.local/bin/dankmango-ripe-chroma"
+# The package that provides cargo/rustc. Official repos on CachyOS
+# (cachyos-extra-v3/rust) and on Arch (extra/rust) -- NO AUR build, matching this
+# project's posture of keeping AUR to the one package that genuinely needs it.
+RIPE_CHROMA_PKG="rust"
 # NOTE: intentionally NOT installed here (CachyOS + MangoWM base already ships
 # them): sddm, alacritty, the pipewire stack, wireplumber, networkmanager,
 # power-profiles-daemon, bluez, fonts (noto / meslo-nerd), jq, libnotify, gawk,

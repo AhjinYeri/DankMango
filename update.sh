@@ -106,6 +106,7 @@ MIGRATIONS=(
     "sddm-dankmango-theme:install DankMango's own login theme (replaces the sddm-astronaut-theme AUR package) — deploys it, does NOT switch the login screen over"
     "register-shipped-plugins:register plugins DankMango has started shipping since your install (e.g. the first-run welcome panel) — only ADDS missing entries, never changes ones you already have"
     "seed-active-preset:activate the 'Default' desktop preset so the new preset switcher has something to mark as current (Default adds nothing, so your desktop does not change)"
+    "offer-ripe-chroma:offer Ripe Chroma, the wallpaper colour engine, to an install that predates it — asks once, builds it only if you say yes, and records the answer either way"
 )
 
 # v1.x installs got their login screen from the sddm-astronaut-theme AUR package,
@@ -348,6 +349,90 @@ migrate_seed-active-preset() {
     seed_active_preset || return 1
     MANUAL+=("new desktop presets — open the launcher and type 'preset' to switch between them")
     return 0
+}
+
+# Ripe Chroma arrived AFTER v1.4.x, and until this migration existed an existing user
+# had no way to reach it from an update at all. The rebuild block at the end of stage 4
+# is gated on `[ -x "$RIPE_CHROMA_BIN" ]` -- it keeps an EXISTING binary current and is
+# deliberately silent for everyone else -- so a machine that never opted in got seven
+# "Ripe Chroma source changed: ..." info lines scrolling past and then nothing. Measured
+# on a sandboxed ddd11d9 -> v1.5.0 run: named seven times, offered zero times, absent
+# from FILES/MIGRATIONS/STILL-FOR-YOU-TO-DO and from the manifest. Mentioning a feature
+# and then giving no way in is worse than staying quiet.
+#
+# The only route in was "re-run install.sh", which is what the control hub's Ripe Chroma
+# section still tells people -- a full 18-stage re-run, confirmation gate and all, to
+# reach one optional build. This is the same shape of fix as register-shipped-plugins:
+# a scoped migration that closes one gap, NOT the opt-in framework from the lifecycle
+# investigation.
+#
+# ASKS ONCE, AND RECORDS THAT IT ASKED. The id is `offer-ripe-chroma`, not
+# `install-ripe-chroma`, precisely so the end-of-run "MIGRATIONS run" line stays true
+# whichever way the user answers -- the offer was made either way. Declining therefore
+# returns 0 (marked applied, never nags again), which matches the standing policy in
+# stage 3: "you declined them at install — not revisiting".
+#
+# Everything else mirrors install.sh stage 13b, including WHY it is opt-in: the binary
+# is tiny, but `rust` is ~295 MB installed and an updater is the last place to put that
+# on someone unasked. Declining leaves nothing behind -- every consumer is guarded on
+# the binary existing.
+migrate_offer-ripe-chroma() {
+    # Already opted in (by install.sh, or by a previous run of this): the stage-4
+    # rebuild block owns keeping it current from here on. Nothing to offer.
+    if [ -x "$RIPE_CHROMA_BIN" ]; then
+        info "  already installed at $RIPE_CHROMA_BIN — the update keeps it current for you"
+        return 0
+    fi
+    [ -d "$REPO_DIR/$RIPE_CHROMA_SRC" ] || {
+        info "  this clone ships no $RIPE_CHROMA_SRC — nothing to offer"; return 0; }
+
+    info "  Ripe Chroma is DankMango's own wallpaper -> palette engine (richer colours than"
+    info "  matugen's). It is OPT-IN because building it needs $RIPE_CHROMA_PKG: ~295 MB"
+    info "  installed, ~30 s to build. Saying no changes nothing and leaves nothing behind."
+    # Dry-run: ask_tty reports the question and answers NO, so we describe and stop. The
+    # runner does not record migrations during a dry run, so this is re-offered for real.
+    if ! ask_tty "Build Ripe Chroma, the wallpaper colour engine? (installs $RIPE_CHROMA_PKG, ~295 MB)"; then
+        [ "$DRY_RUN" = 1 ] && return 0
+        info "  left it out — nothing was installed."
+        MANUAL+=("Ripe Chroma: declined. Changed your mind? Build it any time with: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release && install -m 755 target/release/dankmango-ripe-chroma $RIPE_CHROMA_BIN")
+        return 0
+    fi
+
+    # 1. Toolchain. `have cargo` first so an existing rustup toolchain is honoured
+    #    rather than pulling the pacman package alongside it -- same order as 13b.
+    if have cargo; then
+        ok "  cargo already available ($(cargo --version 2>/dev/null | head -1))"
+        manifest_add_skipped "$RIPE_CHROMA_PKG" already-installed
+    elif [ -n "${AUR:-}" ] && "$AUR" -S --needed --noconfirm "$RIPE_CHROMA_PKG"; then
+        ok "  $RIPE_CHROMA_PKG installed"
+        manifest_add_package "$RIPE_CHROMA_PKG" repo optional-feature
+    else
+        warn "  couldn't install $RIPE_CHROMA_PKG — Ripe Chroma not built."
+        MANUAL+=("Ripe Chroma: install the toolchain and retry: sudo pacman -S $RIPE_CHROMA_PKG, then re-run update.sh")
+        return 1   # NOT recorded: a failed toolchain is a retry, not an answer.
+    fi
+
+    # 2. Build + install the one binary, then reclaim the ~186 MB of intermediates.
+    info "  building $RIPE_CHROMA_SRC (this takes ~30 s the first time)..."
+    local built="$REPO_DIR/$RIPE_CHROMA_SRC/target/release/dankmango-ripe-chroma" rc=1
+    if (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo build --release --quiet) && [ -x "$built" ]; then
+        mkdir -p "$(dirname "$RIPE_CHROMA_BIN")"
+        if install -m 755 "$built" "$RIPE_CHROMA_BIN"; then
+            ok "  Ripe Chroma installed -> $RIPE_CHROMA_BIN"
+            manifest_add_change user-file-installed "$CUR_STAGE" "$RIPE_CHROMA_BIN" \
+                "$(jq -nc --arg p "$RIPE_CHROMA_BIN" '{path:$p, preexisting:false, scope:"user", builtFrom:"tools/ripe-chroma"}')" \
+                "rm $RIPE_CHROMA_BIN"
+            MANUAL+=("Ripe Chroma is built. It themes from your next wallpaper change on its own; to make DMS actually display its palette, open the control hub's Ripe Chroma section (or Settings -> Theme -> Custom).")
+            rc=0
+        else
+            warn "  built OK but couldn't copy the binary to $RIPE_CHROMA_BIN — nothing recorded."
+        fi
+    else
+        warn "  cargo build failed — Ripe Chroma not installed."
+        MANUAL+=("Ripe Chroma: build by hand to see why: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release")
+    fi
+    (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo clean --quiet 2>/dev/null) || true
+    return $rc
 }
 
 # =============================================================================
@@ -795,6 +880,13 @@ is_ours() {  # is_ours DST -> 0 if manifest recorded us installing DST as a NON-
 # apply one added/modified repo file through the routing table.
 apply_change() {  # apply_change REPO_REL
     local rel="$1" route dst scope kind
+    # Ripe Chroma is COMPILED, not copied, so it has no route_dest entry and
+    # would otherwise be reported as "not an installed path" once per changed .rs
+    # file. Flag it instead and rebuild ONCE after the loop (below) -- rebuilding
+    # per-file would run cargo four times for one commit.
+    case "$rel" in
+        tools/ripe-chroma/*) info "Ripe Chroma source changed: $rel"; RC_SRC_CHANGED=1; return ;;
+    esac
     if ! route="$(route_dest "$rel")"; then
         info "skip (not an installed path): $rel"; LEFT+=("$rel — not something install.sh copies"); return
     fi
@@ -938,6 +1030,9 @@ apply_change() {  # apply_change REPO_REL
 # retire a file DankMango removed from the repo.
 retire_file() {  # retire_file REPO_REL
     local rel="$1" route dst scope kind
+    case "$rel" in
+        tools/ripe-chroma/*) info "Ripe Chroma source removed: $rel (rebuild below picks it up)"; RC_SRC_CHANGED=1; return ;;
+    esac
     route="$(route_dest "$rel")" || { info "removed from repo, not an installed path: $rel"; return; }
     IFS=$'\t' read -r dst scope kind <<<"$route"
     [ -e "$dst" ] || { info "already gone: $dst"; return; }
@@ -987,6 +1082,49 @@ else
             *)     info "unhandled git status '$status' for: $rest"; MANUAL+=("$rest — git status $status, handle by hand") ;;
         esac
     done
+fi
+
+# ---- Ripe Chroma: rebuild if its source moved under an existing install -----
+# ONLY for people who opted in at install time. The binary's existence IS the
+# opt-in record -- no binary means the user declined (or predates the feature),
+# and an update is not the place to talk them into a 295 MB toolchain, so we say
+# nothing at all in that case.
+#
+# WHY THIS EXISTS AT ALL. A compiled artifact is the one thing in this repo that a
+# file sync cannot keep current: every other installed file IS the repo file, but
+# the binary is a build OUTPUT, so a changed .rs leaves a stale binary behind with
+# no error anywhere -- the exact silent-staleness failure this project has been
+# bitten by before. The mtime test is a second net under the git-delta flag above,
+# so a source change that arrived some other way (a hand edit, an interrupted
+# earlier update) still gets caught.
+if [ -x "$RIPE_CHROMA_BIN" ]; then
+    rc_stale=0
+    [ "${RC_SRC_CHANGED:-0}" = 1 ] && rc_stale=1
+    if [ "$rc_stale" = 0 ] && [ -d "$REPO_DIR/$RIPE_CHROMA_SRC" ]; then
+        # Any source file newer than the installed binary.
+        if [ -n "$(find "$REPO_DIR/$RIPE_CHROMA_SRC/src" "$REPO_DIR/$RIPE_CHROMA_SRC/Cargo.toml" \
+                        -newer "$RIPE_CHROMA_BIN" -print -quit 2>/dev/null)" ]; then
+            rc_stale=1
+        fi
+    fi
+    if [ "$rc_stale" = 1 ]; then
+        if [ "$DRY_RUN" = 1 ]; then
+            info "would rebuild Ripe Chroma (source is newer than $RIPE_CHROMA_BIN)"
+        elif ! have cargo; then
+            warn "Ripe Chroma source changed but cargo is gone — $RIPE_CHROMA_BIN is now STALE."
+            MANUAL+=("$RIPE_CHROMA_BIN — stale; reinstall $RIPE_CHROMA_PKG and re-run install.sh")
+        else
+            info "rebuilding Ripe Chroma (source changed)..."
+            if (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo build --release --quiet) \
+               && install -m 755 "$REPO_DIR/$RIPE_CHROMA_SRC/target/release/dankmango-ripe-chroma" "$RIPE_CHROMA_BIN"; then
+                ok "Ripe Chroma rebuilt -> $RIPE_CHROMA_BIN"
+            else
+                warn "Ripe Chroma rebuild FAILED — $RIPE_CHROMA_BIN is still the old build."
+                MANUAL+=("$RIPE_CHROMA_BIN — rebuild by hand: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release")
+            fi
+            (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo clean --quiet 2>/dev/null) || true
+        fi
+    fi
 fi
 
 # =============================================================================

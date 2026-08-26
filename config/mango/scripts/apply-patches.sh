@@ -89,7 +89,7 @@ c_grn=$'\033[32m'; c_red=$'\033[31m'; c_yel=$'\033[33m'; c_dim=$'\033[2m'; c_off
 #    verify   how the user confirms it worked, after the restart
 #    restart  the command that makes the patched file take effect
 # =============================================================================
-PATCH_IDS=(combined-audio-osd)
+PATCH_IDS=(combined-audio-osd keybinds-columns)
 
 declare -A p_title p_blurb p_target p_marker p_package p_script p_backup p_verify p_restart
 
@@ -102,6 +102,16 @@ p_script[combined-audio-osd]="apply-combined-osd-patch.sh"
 p_backup[combined-audio-osd]="VolumeOSD.qml.*"
 p_verify[combined-audio-osd]="switch between speakers and headphones using the audio button on the bar — you should get ONE popup showing the device name, its icon and the volume slider together"
 p_restart[combined-audio-osd]="dms restart"
+
+p_title[keybinds-columns]="keybinds 2-column cap patch"
+p_blurb[keybinds-columns]="lays the SUPER+/ shortcut cheatsheet out in two columns instead of three, so each shortcut's description has room to finish its sentence instead of being cut off"
+p_target[keybinds-columns]="/usr/share/quickshell/dms/Modals/KeybindsContent.qml"
+p_marker[keybinds-columns]="DankMango patch: keybinds 2-column cap"
+p_package[keybinds-columns]="dms-shell"
+p_script[keybinds-columns]="apply-keybinds-columns-patch.sh"
+p_backup[keybinds-columns]="KeybindsContent.qml.*"
+p_verify[keybinds-columns]="press SUPER+/ — the cheatsheet should be TWO columns wide, with descriptions like \"Show this list of keyboard shortcuts. You can search it by typing.\" printed in full rather than trailing off in a …"
+p_restart[keybinds-columns]="dms restart"
 
 # =============================================================================
 #  State detection

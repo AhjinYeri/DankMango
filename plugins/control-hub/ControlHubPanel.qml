@@ -22,10 +22,15 @@
 //
 //  HOW YOU OPEN AND CLOSE IT
 //    open/close   SUPER+d, which runs `dms ipc call controlhub toggle`
-//    close only   the X in the top-right of the panel
-//  Nothing else closes it. Clicking away leaves it where it is, on purpose: this
-//  is a surface you browse, not a menu that evaporates the moment you look at
-//  something else. There is no timeout either.
+//    close        the X in the top-right of the panel
+//    close        a click anywhere outside the card
+//  Nothing else closes it -- no keyboard route, and no timeout.
+//
+//  CLICKING AWAY DOES NOT ALWAYS MEAN "CLOSE". A click that lands on a surface
+//  the hub itself put up -- DMS's colour picker from the Ripe Chroma section, a
+//  DMS popout, or (if a section ever grows one) a terminal we launched -- leaves
+//  the hub open behind it. That distinction is the whole of `suppressDismiss`
+//  below, and it is the part to read first if dismissal ever misbehaves.
 //
 //  WHICH MONITOR IT OPENS ON: the focused one, re-checked every time it opens.
 //  See "SCREEN TARGETING" below for how that is asked for, and what happens when
@@ -60,12 +65,17 @@
 //  deliberately the same shape as plugins/first-run-panel/FirstRunPanel.qml.
 //  The short version, with the long version in that file's header:
 //
-//    * BARE PanelWindow, NOT DankModal. DankModal makes its surface the size of
-//      the whole output (so every click on that monitor lands on it) and takes a
-//      keyboard grab on anything that isn't Hyprland. Neither is fixable by
-//      setting properties. A bare PanelWindow the size of the card, masked to
-//      the card, asking for no keyboard focus, has neither problem by
-//      construction. This is DMS's own DankOSD.qml shape.
+//    * BARE PanelWindow, NOT DankModal. DankModal takes a KEYBOARD GRAB on
+//      anything that isn't Hyprland, and that is not fixable by setting
+//      properties. A bare PanelWindow asking for no keyboard focus does not,
+//      by construction. This is DMS's own DankOSD.qml shape.
+//
+//      THE SURFACE IS NOW OUTPUT-SIZED, WHICH DANKMODAL'S ALSO WAS -- and that
+//      is fine, because the output-sized surface was never the half that hurt.
+//      The keyboard grab was. Read "CLICK OUTSIDE TO CLOSE" at the window below
+//      before assuming this file drifted back toward the thing it replaced: the
+//      input region, not the surface, is what decides who gets a click, and it
+//      shrinks back to the card whenever anything else needs to be clickable.
 //
 //    * "daemon", NOT a bar widget. Bar widgets are instantiated ONCE PER BAR PER
 //      SCREEN. That matters enormously here, because this file registers an
@@ -77,9 +87,29 @@
 //      (Services/PluginService.qml, pluginDaemonInstances), so the handler below
 //      can sit at the root where you can see it.
 //
-//  NO KEYBOARD FOCUS is also what makes "only the X closes it" true rather than
-//  merely intended: with WlrKeyboardFocus.None, Escape never reaches this panel,
-//  so there is no second way to dismiss it that could drift out of step.
+//  NO KEYBOARD FOCUS is what keeps the KEYBOARD out of this entirely: with
+//  WlrKeyboardFocus.None, Escape never reaches this panel, so dismissal has
+//  exactly the two mouse routes listed above and no third one that could drift
+//  out of step with them.
+//
+//  WHY DISMISSAL IS NOT A FOCUS WATCHER. The obvious alternative -- watch
+//  `mmsg watch focusing-client` and close when focus moves to a client that
+//  isn't ours -- was investigated first and DOES NOT WORK ON MANGO. Two measured
+//  reasons, so nobody spends an evening rediscovering them:
+//
+//    1. mango ships sloppyfocus=1 (/etc/mango/config.conf) and DankMango does
+//       not override it, so focus follows the POINTER. Merely moving the mouse
+//       toward the hub across another window changes the focused client, and a
+//       focus watcher would close the panel before you ever reached it.
+//    2. The hub opens centred over the window that was focused when you pressed
+//       the bind. Clicking THAT window -- the single most common way anyone
+//       dismisses a popup -- changes nothing, because it was already focused,
+//       so the compositor emits no event at all. The primary gesture is
+//       invisible to focus tracking by construction.
+//
+//  (Also measured, in case a watcher ever comes back for another reason: the
+//  stream fires on TITLE changes of the already-focused client too, so anything
+//  reading it must diff on client id rather than on the payload.)
 // =============================================================================
 
 import QtQuick
@@ -114,6 +144,12 @@ PluginComponent {
             "label": "Desktop presets",
             "icon": "tune",
             "source": "PresetsSection.qml"
+        },
+        {
+            "id": "ripechroma",
+            "label": "Ripe Chroma",
+            "icon": "palette",
+            "source": "RipeChromaSection.qml"
         }
     ]
 
@@ -132,11 +168,81 @@ PluginComponent {
     // #########################################################################
 
     // ---- OPEN/CLOSE STATE ---------------------------------------------------
-    // One property, written in exactly three places: the IPC handler's hide(),
-    // the close button, and the screen probe (which opens it). There is no
-    // ModalManager here, no background click-catcher, and no keyboard focus, so
-    // nothing else in the shell can put this down.
+    // Written in exactly four places: the IPC handler, the close button, the
+    // screen probe (which opens it), and the outside-click dismissal below.
+    // This panel still does not REGISTER with ModalManager and still takes no
+    // keyboard focus -- it only reads ModalManager to know when to hold off --
+    // so nothing else in the shell can put it down on its own.
     property bool panelOpen: false
+
+    // ---- WHEN DISMISSAL IS SWITCHED OFF -------------------------------------
+    // >>> READ THIS BEFORE CHANGING ANYTHING ABOUT CLICK-OUTSIDE-TO-CLOSE <<<
+    //
+    // "Focus left the panel" is NOT the test, and it deliberately isn't -- see
+    // the header. But "the user clicked outside" still has to be told apart from
+    // "the panel handed off to a surface of its own", and there are two kinds:
+    //
+    //   modalActive     a DMS MODAL is up. This is the one that matters in
+    //                   practice: the Ripe Chroma section's seed-colour picker
+    //                   is PopoutService.colorPickerModal, and that is a
+    //                   DankModal -- CHECKED IN THE DMS SOURCE, not assumed.
+    //                   DankModalStandalone.qml registers with ModalManager
+    //                   (openModal/closeModal, signal modalChanged), and NOT
+    //                   with PopoutManager, so watching PopoutManager alone --
+    //                   the obvious move, since that is what the first-run panel
+    //                   uses -- would have missed the colour picker entirely and
+    //                   closed the hub the moment you clicked the picker.
+    //
+    //                   ANY modal on ANY screen counts, deliberately. A DankModal
+    //                   puts up its own full-output clickcatcher, so while one is
+    //                   open our clicks are not the ones being delivered anyway;
+    //                   "no dismissal while a DMS modal is up" is one rule to
+    //                   remember instead of a per-monitor comparison against a
+    //                   screen the modal resolves for itself.
+    //
+    //   popoutActive    a DMS POPOUT (the dash, the control centre) is up on our
+    //                   monitor. Not the colour picker -- see above -- but the
+    //                   same courtesy for DMS's own surfaces that the first-run
+    //                   panel already extends, via the same signal.
+    //
+    //   spawnedRunning  a window WE started is up. The hub starts none today --
+    //                   PresetsSection's set-preset.sh and Ripe Chroma's binary
+    //                   are both headless, they open nothing to click on -- but
+    //                   the first-run panel's guide / health-check / game-display
+    //                   terminals are exactly this shape, and if a section ever
+    //                   grows one it must count it here (++ on launch, -- in
+    //                   onExited, guarded against going negative) instead of
+    //                   inventing a second mechanism. That is the ONE contract
+    //                   this property exists to publish.
+    //
+    // All three are OR'd, all three are advisory-only, and a stuck value fails
+    // SAFE: the worst case is the hub going back to "only the X closes it",
+    // which is exactly where it started.
+    property bool modalActive: false
+    property bool popoutActive: false
+    property int spawnedRunning: 0
+    readonly property bool suppressDismiss: modalActive || popoutActive || spawnedRunning > 0
+
+    // Recomputed from both signals and again at open time -- neither signal
+    // knows that panelScreen may have just moved to a different monitor, so the
+    // open path re-asks rather than trusting the last answer.
+    function refreshSurfaceGuard() {
+        const modals = ModalManager.currentModalsByScreen
+        root.modalActive = !!(modals && Object.keys(modals).length > 0)
+        root.popoutActive = !!(root.panelScreen && PopoutManager.getActivePopout(root.panelScreen))
+    }
+
+    // WHY .connect() AND NOT `Connections { target: ... }` -- this is the same
+    // trap the first-run panel documents at length, and it is NOT theoretical:
+    // a declarative Connections on one of these singletons segfaulted the whole
+    // shell on 3 of ~11 boots. Do not "tidy" these into Connections blocks.
+    // This is a daemon plugin, so DMS incubates it asynchronously; connecting
+    // here runs strictly after incubation, by which point the lazily-created
+    // singletons are real objects.
+    Component.onCompleted: {
+        ModalManager.modalChanged.connect(root.refreshSurfaceGuard)
+        PopoutManager.popoutChanged.connect(root.refreshSurfaceGuard)
+    }
 
     // Which section the content area is showing. Defaults to the first entry in
     // the registry, so an empty registry is survivable rather than fatal.
@@ -261,6 +367,11 @@ PluginComponent {
         root.openPending = false
         probeWatchdog.stop()
         root.panelScreen = root.resolveScreen(name)
+        // popoutActive is only ever recomputed from popoutChanged, and that
+        // signal knows nothing about panelScreen having just moved to a
+        // different monitor. Re-ask now, against the screen we are actually
+        // about to open on, or the first click could be judged by a stale answer.
+        root.refreshSurfaceGuard()
         root.panelOpen = true
     }
 
@@ -375,10 +486,6 @@ PluginComponent {
         readonly property real screenWidth: screen ? screen.width : 1920
         readonly property real screenHeight: screen ? screen.height : 1080
 
-        // Room for the drop shadow to render into. Not part of the card, and
-        // masked out of the input region below, so it swallows no clicks.
-        readonly property real shadowBuffer: 15
-
         // Nav rail plus a content column wide enough for a row of preset cards.
         readonly property real cardWidth: 780
 
@@ -392,41 +499,98 @@ PluginComponent {
         readonly property real alignedX: Theme.snap((screenWidth - alignedWidth) / 2, dpr)
         readonly property real alignedY: Theme.snap((screenHeight - alignedHeight) / 2, dpr)
 
+        // THE SURFACE IS THE WHOLE OUTPUT; THE CARD IS NOT. This is the one place
+        // the hub differs structurally from the first-run panel, and it is what
+        // makes "click outside to close" possible -- see "CLICK OUTSIDE TO CLOSE"
+        // below for why it is this and not a focus watcher or a second window.
+        // exclusiveZone is -1, so covering the output pushes nothing around.
         anchors {
             top: true
             left: true
+            right: true
+            bottom: true
         }
 
-        WlrLayershell.margins {
-            left: Math.max(0, Theme.snap(panelWindow.alignedX - panelWindow.shadowBuffer, panelWindow.dpr))
-            top: Math.max(0, Theme.snap(panelWindow.alignedY - panelWindow.shadowBuffer, panelWindow.dpr))
-        }
+        // NO MARGINS ANY MORE. The window is the output, so the card is placed by
+        // its own x/y inside it (alignedX/alignedY, the same snapped numbers that
+        // used to be layer-shell margins) and the drop shadow has the whole screen
+        // to render into rather than a 15px allowance.
 
-        implicitWidth: alignedWidth + (shadowBuffer * 2)
-        implicitHeight: alignedHeight + (shadowBuffer * 2)
-
-        // The input region is the card and nothing else: a click one pixel
-        // outside it goes to whatever is underneath, rather than to us.
+        // ---- THE INPUT REGION IS THE SWITCH -------------------------------------
+        // ARMED (the normal case): the whole output takes input, so a click
+        // anywhere lands on us -- the card's own controls handle their own, and
+        // everything else falls through to dismissArea below and closes the hub.
+        //
+        // SUPPRESSED: back to exactly the old behaviour -- the card and nothing
+        // else, so a click one pixel outside it goes to whatever is underneath.
+        // That is what keeps DMS's colour picker (and any future spawned window)
+        // fully interactive; see root.suppressDismiss for the whole list.
         mask: Region {
-            item: cardBackground
+            item: root.suppressDismiss ? cardBackground : dismissLayer
         }
 
+        // Blur is registered as an EXPLICIT REGION, not "this surface", which is
+        // why widening the window does not blur the whole monitor: these four
+        // numbers are the card, and they always were. They now use alignedX/Y
+        // because the card sits at alignedX/Y rather than at a fixed inset.
         WindowBlur {
             targetWindow: panelWindow
-            blurX: panelWindow.shadowBuffer
-            blurY: panelWindow.shadowBuffer
+            blurX: panelWindow.alignedX
+            blurY: panelWindow.alignedY
             blurWidth: panelWindow.visible ? panelWindow.alignedWidth : 0
             blurHeight: panelWindow.visible ? panelWindow.alignedHeight : 0
             blurRadius: Theme.cornerRadius
         }
 
+        // Geometry source for the mask when dismissal is armed. Draws nothing and
+        // has no input of its own -- Region reads its rectangle, that is all.
+        Item {
+            id: dismissLayer
+            anchors.fill: parent
+        }
+
+        // ---- CLICK OUTSIDE TO CLOSE --------------------------------------------
+        // Declared BEFORE the card, so the card and its controls sit above it and
+        // are hit first. Anything that reaches here is by definition not on the
+        // card, which is the whole test -- there is no click-position arithmetic
+        // and nothing to keep in sync with the card's geometry.
+        //
+        // acceptedButtons is all three on purpose: a right-click outside a popup
+        // dismisses it everywhere else, and a middle-click that fell through to
+        // the window underneath while the hub stayed open would be a surprise.
+        //
+        // onPressed, not onClicked: dismissal should happen on the way down, the
+        // same as every menu, and a press-drag-release that starts outside should
+        // still close rather than being swallowed as a non-click.
+        MouseArea {
+            id: dismissArea
+            anchors.fill: parent
+            enabled: !root.suppressDismiss
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onPressed: mouse => {
+                mouse.accepted = true
+                root.closePanel()
+            }
+        }
+
         Item {
             id: card
 
-            x: panelWindow.shadowBuffer
-            y: panelWindow.shadowBuffer
+            x: panelWindow.alignedX
+            y: panelWindow.alignedY
             width: panelWindow.alignedWidth
             height: panelWindow.alignedHeight
+
+            // THE CARD'S OWN DEAD SPACE IS STILL "INSIDE". Without this, a click on
+            // the padding between two controls would fall past the card's
+            // non-interactive children, reach dismissArea, and close the hub --
+            // the panel would dismiss itself when you clicked its own background.
+            // First child, so it is BELOW every real control and steals nothing.
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                onPressed: mouse => mouse.accepted = true
+            }
 
             // Same fill, radius, outline and shadow as the first-run panel: a
             // matugen readableSurface with alpha so the wallpaper blur shows

@@ -37,15 +37,24 @@
 #        login screen silently keeps the old palette and old background.
 #     c) It's the ONLY caller of wallpaper-accent-extract.sh, so the cava
 #        visualiser silently keeps the old accent pair.
+#     d) It's what makes DankMango's own colour engine DYNAMIC. Without the
+#        wallpaper branch at the bottom of the loop, the engine's palette only
+#        ever changes when you press Generate in the control hub -- which defeats
+#        the point of a palette derived from the wallpaper. Note that branch
+#        watches session.json, NOT dms-colors.json like (a)-(c) do; the comment
+#        there explains why that difference is load-bearing.
 #   Even if (a) got fixed upstream tomorrow, deleting this script would still break
-#   (b) and (c) with no error anywhere. Re-check all three before retiring it.
+#   (b), (c) and (d) with no error anywhere. Re-check all four before retiring it.
 #
 # RESTARTING IT DOESN'T FIX ALREADY-STALE COLORS.
-#   It baselines both mtimes at startup and only reacts to the NEXT change, so
-#   anything it missed while it was down stays missed. To force a resync:
+#   It baselines both mtimes and the current wallpaper path at startup and only
+#   reacts to the NEXT change, so anything it missed while it was down stays
+#   missed. To force a resync:
 #       touch ~/.cache/DankMaterialShell/dms-colors.json
 #   (border-color-healthcheck.sh will NOT catch this -- it checks that the chain is
 #   wired up, not that the colors are current, and reports OK on stale values.)
+#   That touch covers (a)-(c) only. For the colour engine (d), re-set the same
+#   wallpaper from the control hub, or just press Generate.
 #
 self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
 case "${1:-}" in -h|--help) self_help; exit 0 ;; esac
@@ -116,6 +125,38 @@ ACCENT_EXTRACT="$HOME/.config/mango/scripts/wallpaper-accent-extract.sh"
 # user-owned theme.conf.user that the greeter CAN read. No elevation involved --
 # see the script's header for why. Exits quietly if the theme isn't installed.
 SDDM_PALETTE_SYNC="$HOME/.config/mango/scripts/sddm-palette-sync.sh"
+# DankMango's own colour engine, Ripe Chroma (tools/ripe-chroma). Regenerates the DMS custom
+# theme palette straight from the wallpaper, holding the wallpaper's true hue
+# instead of letting Material You's tonal mapping wash it out -- the reason a red
+# wallpaper produces a salmon accent under matugen. Reads the wallpaper path from
+# DMS's own session state rather than being told, so it stays a fan-out consumer
+# like the two above and needs nothing passed in.
+#
+# THIS IS WHAT MAKES THE ENGINE DYNAMIC. Without this block the palette only ever
+# changes when you click Generate in the control hub, which defeats the point --
+# the whole reason it reads the wallpaper is so it can follow the wallpaper.
+#
+# GUARDED ON -x ON PURPOSE: the engine is an OPT-IN extra (install.sh stage 13b
+# asks, because the rust toolchain is ~295 MB), so on any machine that declined it
+# this block is a no-op and the fan-out behaves exactly as it did before. It also
+# only *writes a file*; whether DMS reads it is a separate user choice (Settings
+# -> Theme -> Custom, pointed at RIPE_CHROMA_THEME), so this cannot change
+# anyone's colours until they opt in.
+RIPE_CHROMA="$HOME/.local/bin/dankmango-ripe-chroma"
+DMS_SESSION_JSON="$HOME/.local/state/DankMaterialShell/session.json"
+# The control hub's Ripe Chroma section persists the user's choices here, under
+# the hub's own plugin id. An automatic regeneration MUST honour them: silently
+# regenerating at the built-in defaults would undo the user's Vibrant/7-colour
+# choice every single time they changed their wallpaper.
+DMS_PLUGIN_SETTINGS="$HOME/.config/DankMaterialShell/plugin_settings.json"
+# Written EXPLICITLY rather than letting the engine resolve its own default. The
+# engine's default is "whatever DMS currently has as customThemeFile", so if the
+# user has pointed DMS at somebody else's theme.json, the default would overwrite
+# THAT file. Same rule the control-hub section follows, for the same reason.
+RIPE_CHROMA_THEME="$HOME/.config/DankMaterialShell/dankmango-theme.json"
+# Fallbacks for when nothing has been saved yet (engine's own defaults).
+RIPE_CHROMA_MODE_DEFAULT="accurate"   # accurate | vibrant | muted
+RIPE_CHROMA_COUNT_DEFAULT=5
 # satty's annotation colour palette (screenshot.sh's editor). Generated inline
 # below rather than as its own script: it's one jq call with no other caller,
 # unlike the two above.
@@ -210,8 +251,65 @@ EOF
     return 0
 }
 
+# The wallpaper DMS is currently showing, straight from its own session state --
+# the same single source of truth the control hub's Generate button reads, so a
+# manual run and an automatic one can never disagree about which image is "the
+# wallpaper". Empty (not an error) when jq is missing or nothing is set yet.
+read_wallpaper_path() {
+    command -v jq >/dev/null 2>&1 || return 0
+    jq -r '.wallpaperPath // empty' "$DMS_SESSION_JSON" 2>/dev/null
+}
+
+# Regenerate the DankMango custom-theme palette from the current wallpaper,
+# honouring whatever the user last chose in the control hub's Ripe Chroma
+# section.
+#
+# READS THE SAVED PREFERENCES, DOES NOT ASSUME DEFAULTS. mode and count come from
+# plugin_settings.json, so an automatic run produces the same palette the Generate
+# button would produce right now. Anything missing or out of range falls back to
+# the engine's own defaults rather than failing.
+#
+# SKIPS ENTIRELY IN STATIC MODE. useSeed:true means the user deliberately pinned
+# the palette to one hand-picked colour; a wallpaper change must not silently
+# throw that away. Static is the documented opt-out from this whole block.
+#
+# NO RELOAD CALL AFTERWARDS, DELIBERATELY. DMS watches the file itself:
+# Common/Theme.qml's customThemeFileView is a FileView with
+# `watchChanges: currentTheme === "custom"` and `onFileChanged: reload()`, and the
+# engine writes atomically (temp + rename), so the shell only ever sees a complete
+# palette and picks it up live on its own. Verified on DMS's shipped Theme.qml --
+# re-check that FileView before adding a reload here, don't add one on a hunch.
+regen_ripe_chroma() {
+    [ -x "$RIPE_CHROMA" ] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local prefs mode count use_seed wp
+    prefs="$(jq -c '.controlHub.colorEngine // empty' "$DMS_PLUGIN_SETTINGS" 2>/dev/null)"
+
+    # Static / manual-colour mode -> hands off. Note this is checked BEFORE the
+    # wallpaper lookup: in static mode the wallpaper is irrelevant by definition.
+    use_seed="$(printf '%s' "$prefs" | jq -r '.useSeed // false' 2>/dev/null)"
+    [ "$use_seed" = "true" ] && return 1
+
+    mode="$(printf '%s' "$prefs" | jq -r '.mode // empty' 2>/dev/null)"
+    count="$(printf '%s' "$prefs" | jq -r '.count // empty' 2>/dev/null)"
+    case "$mode"  in accurate|vibrant|muted) ;; *) mode="$RIPE_CHROMA_MODE_DEFAULT"   ;; esac
+    case "$count" in 3|4|5|6|7|8)            ;; *) count="$RIPE_CHROMA_COUNT_DEFAULT" ;; esac
+
+    wp="$(jq -r '.wallpaperPath // empty' "$DMS_SESSION_JSON" 2>/dev/null)"
+    [ -n "$wp" ] && [ -f "$wp" ] || return 1
+
+    "$RIPE_CHROMA" --wallpaper "$wp" --count "$count" --mode "$mode" \
+        --output "$RIPE_CHROMA_THEME" >/dev/null 2>&1
+}
+
 last="$(stat -c %Y "$COLORS_FILE" 2>/dev/null)"
 last_json="$(stat -c %Y "$DMS_COLORS_JSON" 2>/dev/null)"
+# The colour engine is triggered off the WALLPAPER, not off DMS_COLORS_JSON like
+# everything else here -- see the branch below for why that distinction is
+# load-bearing rather than a style choice.
+last_session="$(stat -c %Y "$DMS_SESSION_JSON" 2>/dev/null)"
+last_wp="$(read_wallpaper_path)"
 while sleep "$POLL_SECONDS"; do
     # 1. DMS regenerated its palette -> rebuild COLORS_FILE if the template didn't.
     now_json="$(stat -c %Y "$DMS_COLORS_JSON" 2>/dev/null)"
@@ -237,5 +335,41 @@ while sleep "$POLL_SECONDS"; do
     if [ "$now" != "$last" ]; then
         last="$now"
         mango_reload_config
+    fi
+
+    # 3. The wallpaper itself changed -> regenerate the DankMango palette.
+    #
+    # WHY THIS HANGS OFF session.json AND NOT DMS_COLORS_JSON LIKE (1) DOES.
+    #   Measured 2026-08-23, and it is the whole reason the engine never updated
+    #   automatically: DMS only rewrites dms-colors.json when it re-runs matugen,
+    #   which it does for the DYNAMIC theme. Once you point DMS at a custom theme
+    #   file -- which is exactly what using this engine means -- matugen stops
+    #   being the source of the palette and dms-colors.json stops moving. A
+    #   wallpaper change then updates session.json and colors.conf while
+    #   dms-colors.json keeps its old mtime, so a colour-engine hook inside
+    #   branch (1) can never fire for the one audience that has the engine
+    #   installed. Watching the wallpaper is also just the honest trigger: the
+    #   wallpaper is the engine's actual input.
+    #
+    #   Re-test before "unifying" this back into branch (1): set DMS to a custom
+    #   theme, change the wallpaper, and compare dms-colors.json's mtime.
+    #
+    # COMPARES THE PATH, NOT THE MTIME. session.json is DMS's general session
+    # state -- do-not-disturb, night mode, light/dark, per-monitor wallpapers --
+    # so it is rewritten for plenty of reasons that are not a wallpaper change.
+    # Regenerating on mtime alone would re-run the engine every time the user
+    # toggled DND. The mtime is used only to skip the jq call on an idle poll.
+    now_session="$(stat -c %Y "$DMS_SESSION_JSON" 2>/dev/null)"
+    if [ -n "$now_session" ] && [ "$now_session" != "$last_session" ]; then
+        last_session="$now_session"
+        now_wp="$(read_wallpaper_path)"
+        if [ -n "$now_wp" ] && [ "$now_wp" != "$last_wp" ]; then
+            last_wp="$now_wp"
+            # Backgrounded like the accent/SDDM consumers: ~0.13s on a 4K
+            # wallpaper, small but not free, and the border reload above must
+            # never wait on it. Every guard (engine installed, static mode,
+            # saved prefs) lives inside the function.
+            regen_ripe_chroma &
+        fi
     fi
 done

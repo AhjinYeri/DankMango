@@ -26,6 +26,12 @@
 #      9. That the DankMango scripts you're actually running are the shipped
 #         ones -- update.sh only re-copies what changed in its commit range, so
 #         a file it ever misses stays stale until install.sh is run again
+#     10. Desktop presets (the sourced preset symlink mango reads in silence)
+#     11. The DMS keybind-injection guard
+#     12. Ripe Chroma, the wallpaper colour engine -- that the binary runs, that
+#         everything calling it still agrees where it is, that the LIVE watcher
+#         isn't running pre-rename code, and that the palette DMS is actually
+#         displaying is intact and still matches the current wallpaper
 #    ...plus it records the mango / dms-shell / quickshell versions and tells you
 #    which changed since the last run (a changed version = prime suspect for a break).
 #
@@ -1691,6 +1697,451 @@ Nothing is damaged and nothing was lost. You just need to pick a preset again.
              "Run ./update.sh from your DankMango folder (its 'register-shipped-plugins' step adds it), or turn it on in DMS Settings -> Plugins, then 'dms restart'."
     fi
 fi
+
+# =============================================================================
+# 11. DMS KEYBIND INJECTION GUARD
+# =============================================================================
+# config.conf used to end with "source = ./dms/binds.conf". That file is DMS-MANAGED:
+# `dms keybinds set`, `dms keybinds remove` and `dms setup binds` REGENERATE it from
+# DMS's stock defaults (~90 binds) rather than editing it line-by-line. Sourcing it
+# meant any of those commands silently queued a pile of foreign binds into the live
+# keymap at the next reload. Confirmed live: `dms keybinds remove` turned an 85-byte
+# file into 4310 bytes of defaults.
+#
+# The source line is now gone (see the comment block where it used to be, near the
+# bottom of config.conf) and the shipped dms/binds.conf is empty. But NEITHER of
+# those is self-defending: `dms setup binds` can re-add the source line -- the dms
+# binary carries the literal string "source=./dms/binds.conf" for exactly that -- and
+# any `dms keybinds` write refills the file. So check both halves, every run.
+#
+# Why this is a FAIL and not a warn: the damage is silent and arrives one reload
+# later, which is the same shape as the install.sh backup-then-overwrite bug. You
+# would find out by pressing a key and getting someone else's idea of what it does.
+#
+# Section 9 deliberately skips dms/*.conf when it compares deployed files against the
+# clone (they're runtime-regenerated, so a diff there is normal). That is precisely
+# the blind spot this section covers.
+section "11. DMS keybind injection guard"
+
+hb_conf="$MANGO_CFG"
+hb_binds="$HOME/.config/mango/dms/binds.conf"
+
+# ---- half 1: has a source line for binds.conf come back? --------------------
+# Matches both spellings mango accepts (source= and source-optional=) and both the
+# ./dms/ and ~/.config/mango/dms/ forms, with or without spaces around the '='.
+hb_src_line="$(grep -nE '^[[:space:]]*source(-optional)?[[:space:]]*=[[:space:]]*[^#]*binds\.conf' "$hb_conf" 2>/dev/null | head -1)"
+
+if [ -z "$hb_src_line" ]; then
+    pass "config.conf does not source DMS's binds.conf"
+else
+    fail "DMS keybind injection (config.conf sources binds.conf again)" \
+         "config.conf line ${hb_src_line%%:*} sources DMS's managed binds.conf — a 'dms keybinds' or 'dms setup binds' run can now inject ~90 stock binds into your keymap" \
+         "$hb_conf line ${hb_src_line%%:*}: ${hb_src_line#*:}" \
+         "Delete that source line from config.conf, then reload with SUPER+SHIFT+r. DankMango declares all of its binds in config.conf itself." \
+"A line has come back into MangoWM's settings file that lets DankMaterialShell
+add its own keyboard shortcuts to yours. That is almost certainly not something
+you did by hand - running \"dms setup binds\" puts this line back automatically.
+
+Nothing is broken this second. The risk is the NEXT time the desktop reloads:
+DMS's own set of shortcuts (about 90 of them) can be pulled in alongside yours.
+Where you and DMS both use a key, yours still wins. Where you DON'T use a key,
+DMS's version simply appears - so keys start doing things you never set up.
+
+1. Open MangoWM's settings file:
+     nano $hb_conf
+
+2. Press Ctrl+W, type binds.conf and press Enter. That jumps to the line:
+     ${hb_src_line#*:}
+
+3. Delete the whole line. In nano, put the cursor on it and press Ctrl+K.
+
+4. Save and exit: Ctrl+O, then Enter, then Ctrl+X.
+
+5. Reload the desktop so the change takes effect:
+     Press SUPER+SHIFT+r
+
+6. Re-run this check to confirm:
+     $SCRIPTS/post-update-health.sh
+
+You lose nothing by deleting it. Every shortcut DankMango gives you is written
+in this same file, further up - that line only ever added DMS's extras on top."
+fi
+
+# ---- half 2: has the managed file been regenerated? -------------------------
+# Any real bind line at all means DMS rewrote it; the shipped copy is comment-only.
+if [ ! -f "$hb_binds" ]; then
+    note "no ~/.config/mango/dms/binds.conf on this machine — fine, nothing sources it"
+else
+    hb_n="$(grep -cE '^[[:space:]]*(bind|gesturebind|mousebind|axisbind)[[:space:]]*=' "$hb_binds" 2>/dev/null || true)"
+    [ -n "$hb_n" ] || hb_n=0
+    if [ "$hb_n" -eq 0 ]; then
+        pass "dms/binds.conf is empty (declares no binds)"
+    elif [ -n "$hb_src_line" ]; then
+        # Both halves broken: the FAIL above already covers it, and its fix (delete
+        # the source line) defuses this too. Say so rather than raising a second
+        # PROBLEM entry for one situation.
+        note "dms/binds.conf also holds $hb_n regenerated bind(s) — deleting the source line above defuses them; ./install.sh then restores the empty file"
+    else
+        warn "DMS regenerated dms/binds.conf ($hb_n bind lines) — nothing sources it, so it is inert, but the file has drifted" \
+             "Put the empty shipped copy back: run ./install.sh from your DankMango folder. Do NOT re-add a source line for it in config.conf."
+    fi
+fi
+
+section "12. Ripe Chroma, the wallpaper colour engine (optional)"
+
+# Path is HARDCODED, not sourced. This script ships standalone (it is copied to
+# ~/.config/mango/scripts and must run on a machine with no clone reachable), so
+# it cannot read lib/common.sh. Keep this in sync with RIPE_CHROMA_BIN there --
+# same arrangement as the SNAPSHOT_DESC_PREFIX copy in section 8.
+RC_BIN="$HOME/.local/bin/dankmango-ripe-chroma"
+# The palette the fan-out tells the engine to write, and DMS's own session state
+# (where the current wallpaper lives). Both are only ever READ here.
+RC_THEME="$DMS_DIR/dankmango-theme.json"
+RC_SESSION="$HOME/.local/state/DankMaterialShell/session.json"
+# Guards 12b-12d below: only set once the binary is known present and runnable.
+RC_OK=0
+
+if [ ! -e "$RC_BIN" ]; then
+    # OPT-OUT IS NOT A PROBLEM. The engine is an opt-in extra (install.sh stage
+    # 13b) and everything downstream is guarded on the binary existing, so a
+    # machine without it is fully healthy. Say so as a note and move on rather
+    # than nagging someone about a feature they deliberately declined.
+    note "Ripe Chroma not installed — optional, and nothing depends on it (install.sh stage 13b offers it)"
+elif [ ! -x "$RC_BIN" ]; then
+    fail "Ripe Chroma is not executable" \
+         "$RC_BIN exists but has lost its execute bit" \
+         "$RC_BIN" \
+         "Most likely a restore-from-backup or a copy that dropped the mode bits." \
+"Ripe Chroma is installed but can't be run.
+
+1. Open a terminal (Super+Return) and put the execute bit back:
+     chmod +x $RC_BIN
+
+2. Confirm it runs:
+     $RC_BIN --help
+
+3. Re-run this check:
+     $SCRIPTS/post-update-health.sh"
+elif ! "$RC_BIN" --help >/dev/null 2>&1; then
+    # Exists and is executable but won't actually run -- the classic cause is a
+    # system library moving under a compiled binary (a glibc/gcc upgrade), which
+    # a mode-bit check alone would report as healthy.
+    fail "Ripe Chroma won't run" \
+         "$RC_BIN is executable but exits non-zero on --help" \
+         "$RC_BIN" \
+         "Usually a compiled binary left behind by a system library upgrade; rebuilding fixes it. Detail: $("$RC_BIN" --help 2>&1 | head -3)" \
+"Ripe Chroma is installed but won't start.
+
+This normally means the system libraries it was built against have been
+updated. Rebuilding it against the current ones fixes it.
+
+1. Go to the folder you cloned DankMango into (the one with install.sh in it):
+     cd ~/DankMango
+
+2. Rebuild and reinstall it:
+     cd tools/ripe-chroma
+     cargo build --release
+     install -m 755 target/release/dankmango-ripe-chroma $RC_BIN
+     cargo clean
+
+   If that says 'cargo: command not found', install the toolchain first:
+     sudo pacman -S rust
+
+3. Confirm it runs:
+     $RC_BIN --help
+
+4. Re-run this check:
+     $SCRIPTS/post-update-health.sh"
+else
+    RC_OK=1
+    pass "Ripe Chroma installed and runnable ($RC_BIN)"
+fi
+
+# Everything below only makes sense once the binary above is known good, so it
+# hangs off RC_OK (set in the `else` arm) rather than re-testing three times.
+if [ "$RC_OK" = 1 ]; then
+
+# ---- 12b. do the installed pieces still AGREE on where the engine is? -------
+# THE HARDCODED PATH IS THIS FEATURE'S SINGLE POINT OF FAILURE. Nothing
+# discovers the binary: the wallpaper fan-out, the control hub's Ripe Chroma
+# section and RC_BIN above each name it independently (they have to -- this
+# script ships standalone and cannot source lib/common.sh, and a QML plugin
+# cannot source anything at all). Every one of those call sites is guarded on
+# `[ -x ]` or an equivalent, so a file still holding a PRE-RENAME name does not
+# error: it silently does nothing. That is not a hypothetical failure mode --
+# it is exactly what a rename of this binary did, and it was only caught by
+# hand. Same reasoning for the output path: two files decide where the palette
+# is written, and if they ever disagree the hub's Generate button and the
+# automatic wallpaper run quietly write to two different files, so one of them
+# is always the file DMS isn't reading.
+RC_HUB_QML="$DMS_DIR/plugins/controlHub/RipeChromaSection.qml"
+# Match on the "$HOME/..."-spelled form the shipped files use, and on the fully
+# expanded form as well, so a hand-edited absolute path still counts as agreeing.
+rc_tok_bin="\$HOME/${RC_BIN#"$HOME"/}"
+rc_tok_theme="\$HOME/${RC_THEME#"$HOME"/}"
+rc_names() { # rc_names FILE LITERAL TOKEN -> is this path named in this file?
+    grep -qF -- "$2" "$1" 2>/dev/null || grep -qF -- "$3" "$1" 2>/dev/null
+}
+rc_drift=""
+for rc_f in "$BORDER_WATCHER" "$RC_HUB_QML"; do
+    if [ ! -f "$rc_f" ]; then
+        # Not a Ripe Chroma fault and not this section's business: a missing
+        # watcher is section 4's, and a machine without the control hub simply
+        # has no Generate button. Say so and check the ones that are here.
+        note "not installed, so nothing to cross-check there: $rc_f"
+        continue
+    fi
+    rc_names "$rc_f" "$RC_BIN"   "$rc_tok_bin"   || rc_drift="$rc_drift
+    $rc_f
+      never names the engine binary $RC_BIN"
+    rc_names "$rc_f" "$RC_THEME" "$rc_tok_theme" || rc_drift="$rc_drift
+    $rc_f
+      never names the palette file $RC_THEME"
+done
+if [ -n "$rc_drift" ]; then
+    fail "Ripe Chroma path drift (an installed file points somewhere else)" \
+         "the engine is fine, but something that calls it disagrees about where it is:$rc_drift" \
+         "$BORDER_WATCHER, $RC_HUB_QML, RC_BIN/RC_THEME at the top of section 12 here, and RIPE_CHROMA_BIN in the clone's lib/common.sh" \
+         "The path is deliberately hardcoded in several places (this script ships standalone; QML can't source shell). A rename or a half-finished update that misses one of them FAILS SILENTLY, because every call site is guarded on the file existing. Re-running ./install.sh recopies both the watcher and the plugin from the clone, which is the fix unless the CLONE is the thing that's out of date." \
+"Your wallpaper colour engine still works, but one of the two things that
+call it is looking for it in the wrong place, so that half quietly does
+nothing.
+
+1. Go to the folder you cloned DankMango into (the one with install.sh
+   in it) and make sure it's up to date. Open a terminal (Super+Return):
+     cd ~/DankMango
+     git pull
+
+2. Re-install from it. This recopies the wallpaper watcher and the
+   control-hub plugin over the out-of-date ones:
+     ./install.sh
+   (Answer the questions as you did before. Nothing is deleted.)
+
+3. Restart the shell so the recopied plugin is loaded:
+     dms restart
+
+4. Re-run this check:
+     $SCRIPTS/post-update-health.sh
+   If it still reports drift, the CLONE itself is the out-of-date copy -
+   report it at https://github.com/AhjinYeri/DankMango/issues"
+else
+    pass "the wallpaper fan-out and the control hub both point at the current $RC_BIN"
+fi
+
+# ---- 12c. is the RUNNING watcher running the CURRENT code? ------------------
+# A LONG-LIVED BASH SCRIPT DOES NOT PICK UP EDITS TO ITSELF. This watcher is
+# started once from config.conf's exec-once and then runs for the whole session,
+# so an update that rewrites it leaves the LIVE process executing the code it
+# was started with -- including the pre-rename path to a binary that no longer
+# exists. Nothing else in this system will ever mention that: the fan-out's
+# guard just goes quiet, and 12b above happily passes, because the file on disk
+# IS correct. The only observable difference is the one nobody watches for --
+# changing your wallpaper stops changing the palette.
+#
+# This was found once by hand, after a rename, on a live session. It is the
+# reason this check exists.
+#
+# HOW THE STALENESS IS ESTABLISHED, in order of certainty:
+#   1. fd 255 is the script file bash is executing (bash keeps the script open
+#      there). If that link reads "... (deleted)", the file it is running was
+#      replaced or renamed out from under it -- conclusive.
+#   2. If fd 255 names a DIFFERENT path, the running copy isn't the installed
+#      one at all (started straight out of a clone, say).
+#   3. Otherwise compare mtimes: /proc/PID's own mtime is the process start
+#      time, so an installed script NEWER than that has been rewritten since the
+#      process read it. install.sh/update.sh copy with `cp` (same inode, no
+#      "deleted" marker), so for a normal update this is the test that fires.
+#      This one is a "may", not a "did", and the wording says so: update.sh
+#      only re-copies files whose CONTENT changed, so there a bumped mtime does
+#      mean different code -- but install.sh re-copies its whole tree
+#      unconditionally, so a plain re-run bumps the mtime with identical
+#      content. Restarting the watcher is the right answer after either, so the
+#      advice holds; it just isn't proof that the code differs.
+if have fuser; then
+    rc_pid="$(fuser "$BORDER_LOCK" 2>/dev/null | tr -s ' ' '\n' | grep -m1 -E '^[0-9]+$')"
+    if [ -z "${rc_pid:-}" ]; then
+        # Section 4 already reports (and offers to start) a watcher that isn't
+        # running. Nothing to add here beyond what it means for the engine.
+        note "wallpaper watcher isn't running — see section 4; until it is, the palette only changes when you press Generate"
+    else
+        rc_exec="$(readlink "/proc/$rc_pid/fd/255" 2>/dev/null)"
+        rc_started="$(stat -c %Y "/proc/$rc_pid" 2>/dev/null)"
+        rc_ondisk="$(stat -c %Y "$BORDER_WATCHER" 2>/dev/null)"
+        rc_why=""
+        case "$rc_exec" in
+            *" (deleted)") rc_why="the file it is running was replaced or renamed while it was running (${rc_exec})" ;;
+            "")            : ;;   # not bash, or /proc unreadable -> fall through to mtimes
+            "$BORDER_WATCHER") : ;;
+            *)             rc_why="it is running $rc_exec, not the installed $BORDER_WATCHER" ;;
+        esac
+        if [ -z "$rc_why" ] && [ -n "${rc_started:-}" ] && [ -n "${rc_ondisk:-}" ] \
+           && [ "$rc_ondisk" -gt "$rc_started" ]; then
+            rc_why="$BORDER_WATCHER was rewritten $(( (rc_ondisk - rc_started) / 60 )) minute(s) after this process started, so the live copy may still be running the previous version"
+        fi
+        if [ -n "$rc_why" ]; then
+            # WARN, not FAIL, and deliberately: this is the same shape as "the
+            # watcher isn't running" in section 4 (strictly the worse problem,
+            # also a WARN), and it clears with one offered command. Being louder
+            # than the worse case would be inconsistent.
+            warn "the RUNNING wallpaper watcher (pid $rc_pid) is executing OLD code — $rc_why" \
+                 "Restart it:  kill $rc_pid; sleep 1; setsid '$BORDER_WATCHER' >/dev/null 2>&1 & disown
+         Then press Generate in the control hub's Ripe Chroma section — a restart
+         re-baselines and waits for the NEXT wallpaper change, so it will not
+         backfill the palette on its own."
+            offer "restart the wallpaper watcher (it is running out-of-date code)" \
+                  "kill $rc_pid; sleep 1; setsid '$BORDER_WATCHER' >/dev/null 2>&1 &"
+        else
+            pass "the running wallpaper watcher (pid $rc_pid) is the current $BORDER_WATCHER"
+        fi
+    fi
+fi
+
+# ---- 12d. if the palette IS the live theme, is it intact and current? -------
+# Only asked when DMS is actually reading Ripe Chroma's file. Pointing DMS at
+# the palette is a separate, manual choice (Settings -> Theme & Colors ->
+# Custom), so on a machine that generates it without displaying it there is
+# nothing here that can be wrong -- and saying so as a note keeps this section
+# quiet for someone who deliberately stayed on matugen's dynamic theme.
+if have jq && [ -f "$BAR_SETTINGS" ]; then
+    rc_cur="$(jq -r '.currentThemeName // empty' "$BAR_SETTINGS" 2>/dev/null)"
+    rc_live="$(jq -r '.customThemeFile // empty' "$BAR_SETTINGS" 2>/dev/null)"
+    case "$rc_live" in "~/"*) rc_live="$HOME/${rc_live#\~/}" ;; esac
+    if [ "$rc_cur" != custom ] || [ -z "$rc_live" ]; then
+        note "DMS is on the '${rc_cur:-dynamic}' theme, so the palette is generated but not displayed — a choice, not a fault (Settings -> Theme & Colors -> Custom turns it on)"
+    elif [ "$rc_live" != "$RC_THEME" ]; then
+        # Somebody else's theme file. The engine deliberately never writes to a
+        # file it wasn't told to (the fan-out passes --output explicitly for
+        # exactly this reason), so this is a working setup, just not ours.
+        note "DMS's custom theme is $rc_live, which isn't Ripe Chroma's palette — left alone"
+    elif [ ! -f "$rc_live" ]; then
+        # DMS is pointed at a file that isn't there. Visible and confusing:
+        # the shell falls back to defaults with no explanation of why.
+        fail "Ripe Chroma's palette is missing" \
+             "DMS's custom theme is set to $rc_live, but that file does not exist" \
+             "$rc_live, customThemeFile in $BAR_SETTINGS" \
+             "The palette is a generated file, not a shipped one, so nothing restores it on install — it is (re)created by pressing Generate in the control hub or by changing the wallpaper with the fan-out running. A deleted ~/.config/DankMaterialShell or a restore-from-backup is the usual cause." \
+"DankMaterialShell is set to use a colour palette file that isn't there,
+so your colours have fallen back to the defaults.
+
+1. Open the control hub (the DankMango panel on your bar) and find the
+   Ripe Chroma section.
+
+2. Press Generate. That writes the palette file again from your current
+   wallpaper, and the colours should change immediately.
+
+3. Re-run this check:
+     $SCRIPTS/post-update-health.sh
+
+   If there is no Ripe Chroma section in the hub, set your wallpaper
+   again instead (gear icon on the bar -> Wallpaper) - the wallpaper
+   watcher regenerates the palette on any wallpaper change."
+    elif ! jq -e '(.dark|type=="object") and (.light|type=="object")
+                  and (.dark.primary|type=="string")' "$rc_live" >/dev/null 2>&1; then
+        # DMS re-reads this file on every change (Theme.qml's customThemeFileView
+        # is a watching FileView), so a truncated or half-written one is a parse
+        # error and a toast in the user's face. The engine writes temp+rename
+        # precisely so it can't cause this -- which means if it IS malformed,
+        # something else did it, and no amount of re-running the engine explains
+        # the problem to the user.
+        fail "Ripe Chroma's palette is not a usable theme file" \
+             "$rc_live is DMS's live custom theme but doesn't parse as one (expected JSON with 'dark' and 'light' colour objects)" \
+             "$rc_live" \
+             "The engine writes this file atomically (temp + rename), so it does not produce half-written output — suspect a hand edit, a full disk, or a restore-from-backup. Regenerating overwrites it wholesale." \
+"The colour palette file DankMaterialShell is reading is damaged, so the
+shell can't load your colours from it.
+
+1. Open the control hub (the DankMango panel on your bar), find the
+   Ripe Chroma section, and press Generate. That rewrites the file
+   completely from your current wallpaper.
+
+2. Re-run this check:
+     $SCRIPTS/post-update-health.sh
+
+3. If it is still reported as damaged, your disk may be full. Check with:
+     df -h $HOME
+   If the 'Use%' column says 100%, free some space and try step 1 again."
+    else
+        pass "Ripe Chroma's palette is DMS's live theme and parses cleanly ($rc_live)"
+
+        # --- and does it still match the wallpaper it is supposed to follow? ---
+        # THE POINT OF THE ENGINE IS THAT THE PALETTE FOLLOWS THE WALLPAPER, and
+        # every way that stops happening (a stale watcher, a watcher that was
+        # down when the wallpaper changed, a regeneration that failed) is
+        # silent. The palette is deterministic -- extract.rs uses a FIXED k-means
+        # seed exactly so one wallpaper always gives one palette -- so this can
+        # be settled rather than guessed: regenerate to stdout with the same
+        # preferences the fan-out would use and compare. Nothing is written.
+        rc_prefs="$(jq -c '.controlHub.colorEngine // empty' "$PLUGIN_SETTINGS" 2>/dev/null)"
+        rc_seeded="$(printf '%s' "$rc_prefs" | jq -r '.useSeed // false' 2>/dev/null)"
+        if [ "$rc_seeded" = true ]; then
+            # Static mode is the documented opt-out from following the
+            # wallpaper, so a palette that doesn't match it is CORRECT here.
+            note "palette is pinned to a fixed seed colour (static mode) — it is meant to ignore the wallpaper, so there is nothing to compare"
+        else
+            rc_mode="$(printf '%s' "$rc_prefs" | jq -r '.mode  // empty' 2>/dev/null)"
+            rc_count="$(printf '%s' "$rc_prefs" | jq -r '.count // empty' 2>/dev/null)"
+            # Same validation the fan-out applies, so a comparison can never
+            # fail over a preference the fan-out would have ignored anyway.
+            case "$rc_mode"  in accurate|vibrant|muted) ;; *) rc_mode=accurate ;; esac
+            case "$rc_count" in 3|4|5|6|7|8)            ;; *) rc_count=5       ;; esac
+            rc_wp="$(jq -r '.wallpaperPath // empty' "$RC_SESSION" 2>/dev/null)"
+            if [ -z "$rc_wp" ] || [ ! -f "$rc_wp" ]; then
+                note "no readable wallpaper in DMS's session state — can't compare the palette against it"
+            else
+                rc_tmp="$(mktemp 2>/dev/null)" || rc_tmp=""
+                if [ -n "$rc_tmp" ] \
+                   && "$RC_BIN" --wallpaper "$rc_wp" --count "$rc_count" --mode "$rc_mode" \
+                                --output - >"$rc_tmp" 2>/dev/null && [ -s "$rc_tmp" ]; then
+                    if cmp -s "$rc_tmp" "$rc_live"; then
+                        pass "palette is current for the wallpaper ($rc_mode, $rc_count colours — regenerated and compared, byte for byte)"
+                    else
+                        # A MISMATCH ON ITS OWN DOES NOT MEAN THE PALETTE IS STALE,
+                        # and reporting it as if it did would nag people for using
+                        # the feature correctly. The hub's mode buttons and colour
+                        # slider persist the moment you touch them, but the palette
+                        # is only written when you press Generate -- that split is
+                        # deliberate (it's what makes the live PREVIEW a preview),
+                        # so "looked at a setting, didn't apply it" leaves saved
+                        # prefs that don't describe the file, with nothing wrong.
+                        #
+                        # The two cases are distinguishable, so distinguish them
+                        # rather than warning about both. Every setting is a
+                        # 3-mode x 6-count grid and the engine is deterministic, so
+                        # sweep it against THIS wallpaper: a hit means the palette
+                        # did come from the current wallpaper (just at other
+                        # settings) and only the settings are ahead of it; no hit
+                        # at all means it came from a different image, which is the
+                        # real failure -- a wallpaper change that never reached the
+                        # engine. The sweep is ~1s and only ever runs on a
+                        # mismatch, so the healthy path stays one run.
+                        rc_hit=""
+                        for rc_m in accurate vibrant muted; do
+                            for rc_c in 3 4 5 6 7 8; do
+                                "$RC_BIN" --wallpaper "$rc_wp" --count "$rc_c" --mode "$rc_m" \
+                                          --output - >"$rc_tmp" 2>/dev/null || continue
+                                if cmp -s "$rc_tmp" "$rc_live"; then rc_hit="$rc_m, $rc_c colours"; break 2; fi
+                            done
+                        done
+                        if [ -n "$rc_hit" ]; then
+                            note "palette matches your wallpaper but was made at $rc_hit, not the saved $rc_mode/$rc_count — you changed a setting without pressing Generate. Nothing is broken; Generate applies it (so does your next wallpaper change)"
+                        else
+                            warn "the live palette was NOT generated from your current wallpaper — a wallpaper change never reached the engine" \
+                                 "Press Generate in the control hub's Ripe Chroma section to bring it up to date.
+         Then check 12c above: a watcher running old code is what stops wallpaper
+         changes from reaching the engine in the first place. (If you hand-edited
+         the palette yourself, ignore this — Generate would overwrite your edits.)"
+                        fi
+                    fi
+                else
+                    note "couldn't regenerate the palette to compare against (wallpaper unreadable by the engine?) — the file itself is fine"
+                fi
+                [ -n "$rc_tmp" ] && rm -f "$rc_tmp"
+            fi
+        fi
+    fi
+fi
+
+fi   # RC_OK
 
 # =============================================================================
 # SUMMARY  --  manual fix steps first, optional Claude Code block second

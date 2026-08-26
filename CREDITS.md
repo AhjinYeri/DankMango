@@ -15,6 +15,10 @@ DankMango is a personal desktop configuration built on top of the work of others
 
   **Nothing is ported.** No ML4W code, file layout, or naming was copied — DankMango's implementation is its own (a symlink swapped atomically behind MangoWM's `source-optional=`, wired into this project's existing manifest/backup/dry-run lifecycle). The credit is for the concept, and it's here because a good idea deserves naming whether or not any of its code came with it.
 
+- **[pywal](https://github.com/dylanaraps/pywal)** by Dylan Araps and **[wallust](https://codeberg.org/explosion-mental/wallust)** by explosion-mental — Ripe Chroma's **Vibrant** mode is inspired by their direct-extraction philosophy: take the colours that are actually in the wallpaper and keep them saturated, rather than treating the image as a seed for a tonal system that then decides what the colours *should* be. Material You's approach is the opposite, and for a lot of wallpapers pywal's answer is simply the one people want.
+
+  **Nothing is ported.** No pywal or wallust code, palette maths, or output format was copied — Vibrant is DankMango's own generator run with different parameters (it pushes chroma toward the sRGB gamut cusp and accepts more lightness drift to get there). The credit is for the philosophy, which is theirs and which the Material-derived default genuinely does not serve.
+
 ## Tools & packages
 
 DankMango's install script sets up a number of third-party tools it didn't write, including:
@@ -38,6 +42,17 @@ DankMango's SDDM theme (`system/sddm/themes/dankmango/`) is written from scratch
 It deliberately has **no font or icon-set dependency**. No font family is named anywhere in the theme; it renders in whatever the system default is. The power and chevron icons are drawn as Canvas paths rather than set as glyphs, specifically so the login screen can't render a tofu box on a machine whose font fallback differs — see the header comments in `Components/PowerIcon.qml` and `Components/Chevron.qml`.
 
 The background it shows is **your own current wallpaper**, copied across the privilege boundary by `sddm-palette-sync.sh` — the theme ships no wallpaper of its own. The bundled wallpapers are credited in [`wallpapers/CREDITS.md`](wallpapers/CREDITS.md). Its colors are Material 3 roles produced by matugen (credited above); nothing else is drawn from.
+
+## Ripe Chroma (the colour engine)
+
+`tools/ripe-chroma/` is **Ripe Chroma**, DankMango's own wallpaper-to-palette generator, written from scratch for this project. It exists because Material You's tonal system picks a lightness per role first and asks for the seed hue at that lightness second — and sRGB cannot make a light, saturated red, so a red wallpaper reliably produces a salmon-pink accent no matter which Matugen scheme is selected (tested against all of them, including `fidelity` and `content`). The engine inverts that priority: hue is held exactly, and the target lightness is what gives way.
+
+The maths it does **not** do itself:
+
+- **[palette](https://github.com/Ogeon/palette)** by Ogeon — all Oklab/OKLCH ↔ sRGB colour-space conversion. Note for anyone touching this code: palette's `into_color()` *clamps* into the target type's range, so out-of-gamut colours come back looking valid; the gamut boundary search depends on `into_color_unclamped()` to tell the truth.
+- **[kmeans-colors](https://github.com/okaneco/kmeans-colors)** by okaneco — the k-means clustering that reduces a wallpaper to its handful of real colours. The crate ships `Calculate` implementations for palette's `Lab` and `Rgb` only, so the Oklab point type in `src/extract.rs` is DankMango's, written against the crate's own documented guidance to use the `Lab` implementation as the template for other colour spaces. The clustering algorithm itself is okaneco's.
+
+Everything else — seed selection, the lightness/chroma trade-off, the role targets, the three modes — is original to this project. The Vibrant mode's inspiration is credited above.
 
 ## Legacy assets
 

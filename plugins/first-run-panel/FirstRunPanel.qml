@@ -428,14 +428,26 @@ PluginComponent {
     // wallpaper dash. PopoutManager allows one popout per screen, they all draw
     // over this card anyway, and "the panel steps aside for DMS's own surfaces" is
     // a simpler rule to hold in your head than a special case for one of them.
-    Connections {
-        target: PopoutManager
-        function onPopoutChanged() {
+    //
+    // WHY .connect() AND NOT `Connections { target: PopoutManager }` (do not
+    // "tidy" this back): this is a DAEMON plugin, so DMS incubates it
+    // ASYNCHRONOUSLY, and a declarative Connections is wired up during Qt's
+    // incubation finalize pass. PopoutManager is a `pragma Singleton` QML file,
+    // created lazily on first reference -- so when we happen to be its first
+    // consumer, its construction is triggered re-entrantly from inside that
+    // finalize, and QQmlConnections::connectSignalsToMethods() walks a target
+    // that is not a valid object yet. That segfaults the whole shell. It is a
+    // race, so it only bites on some logins: it took down quickshell on 3 of the
+    // ~11 boots between 2026-08-11 (when the declarative version was added) and
+    // 2026-08-17, always four seconds into the session, always with the same
+    // backtrace. Connecting here instead runs strictly AFTER incubation, by
+    // which point the singleton is a real object.
+    Component.onCompleted: {
+        PopoutManager.popoutChanged.connect(function () {
             root.popoutActive = !!(root.panelScreen && PopoutManager.getActivePopout(root.panelScreen))
-        }
+        })
+        startupProbe.running = true
     }
-
-    Component.onCompleted: startupProbe.running = true
 
     // =========================================================================
     //  THE PANEL ITSELF

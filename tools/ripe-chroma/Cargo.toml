@@ -1,0 +1,25 @@
+[package]
+name = "dankmango-ripe-chroma"
+version = "0.1.0"
+edition = "2024"
+description = "Ripe Chroma -- DankMango's own wallpaper colour engine: hue-faithful Material role palettes for DankMaterialShell."
+license = "MIT"
+
+[dependencies]
+# Colour-space maths (Oklab/OKLCH <-> sRGB). Not hand-rolled -- see CREDITS.md.
+palette = "0.7"
+# k-means clustering. Used with our own Oklab point type (the crate ships
+# Calculate impls for Lab and Rgb only); default features off so we don't drag
+# in its CLI binary's deps (structopt, its own image copy).
+kmeans_colors = { version = "0.7", default-features = false }
+# rand must match kmeans_colors' rand, because Calculate::create_random takes
+# that crate's Rng trait. Bump both together.
+rand = { version = "0.9", default-features = false }
+# Decoding only -- no encoders, no filters we don't use.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "tiff"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
