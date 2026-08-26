@@ -1,8 +1,9 @@
 # DankMango Hub — plain-English guide
 
 One panel for the things DankMango adds to your desktop. Press the shortcut, it
-opens; it stays open until you close it. Right now it holds one section, **Desktop
-presets**, and it is built so the next one is two small edits away.
+opens; it stays open until you close it. Right now it holds two sections,
+**Desktop presets** and **Ripe Chroma**, and it is built so the next one is two
+small edits away.
 
 It is not a menu. Menus vanish the moment you look at something else — this is a
 surface you can sit and read, click around in, and leave open while you go and
@@ -89,7 +90,7 @@ when the panel is re-opened, as the presets section does) and `hub.closePanel()`
 ### What this deliberately isn't
 
 A plugin framework. Sections are files in this folder, loaded by name. That is
-the right amount of machinery for a panel with one section today, and the day it
+the right amount of machinery for a panel with two sections today, and the day it
 needs sections that ship separately is the day to build more — not before.
 
 ## The check-native-first finding
@@ -151,6 +152,9 @@ by construction — and it is DMS's own `DankOSD.qml` shape.
 * `mmsg` — for opening on the focused monitor. Missing it costs you the *right*
   monitor, never the panel.
 * `~/.config/mango/scripts/set-preset.sh` — the presets section's entire backend.
+* `~/.local/bin/dankmango-ripe-chroma` — the Ripe Chroma section's entire backend.
+  Missing it isn't a fault: the binary's existence *is* the opt-in record, so no
+  binary means the engine was declined at install time and the section says so.
 
 ## Troubleshooting
 

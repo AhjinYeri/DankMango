@@ -60,6 +60,8 @@ That's genuinely it. Everything install.sh does, how the tagrules get set up, up
 
 - A welcome panel on your first login that points you at the help hub and the handful of things worth doing on day one, then never bothers you again
 - Wallpaper-driven theming (change your wallpaper, everything recolors — borders, GTK, terminal, the bar)
+- Ripe Chroma, DankMango's own colour engine — it holds your wallpaper's real hue instead of drifting it, so a red wallpaper stops coming out salmon-pink. Three looks to choose from, previewed live before anything on screen changes. It's opt-in at install time; say no and theming carries on exactly as it did
+- `Super+d` for the DankMango hub — one panel for the things DankMango adds, holding Ripe Chroma and desktop presets today. It stays open until you close it, so you can leave it up while you go and check whether a change did what you wanted
 - Tap Super to open the launcher, no click needed
 - `Super+/` for a searchable keybinds cheatsheet, built from your actual config
 - Per-monitor layout, switchable from the bar
