@@ -1,0 +1,47 @@
+/*
+ * DankMango GTK3 live-theme shadow  --  GENERATED, do not edit by hand.
+ *
+ * Installed to: ~/.local/share/themes/@THEME@/gtk-3.0/@LEAF@
+ * Regenerate with: install.sh (stage 9)
+ *
+ * WHY THIS FILE EXISTS
+ * --------------------
+ * Changing the wallpaper used to require restarting Nemo (and every other GTK3
+ * app) before the new matugen colours showed up. This file is what removes that
+ * restart. It is not a cosmetic layer -- it is the whole mechanism.
+ *
+ * GTK3 has two separate CSS load paths and they behave completely differently:
+ *
+ *   1. The USER stylesheet, ~/.config/gtk-3.0/gtk.css, is read ONCE when the
+ *      process starts and is never re-read. Nothing -- no gsettings key, no
+ *      xdg-desktop-portal signal, no file-monitor inside GTK -- makes a running
+ *      app pick up an edit to it. (Verified on GTK 3.24 and 4.22.)
+ *
+ *   2. A NAMED THEME (this file) is re-loaded from disk every time the
+ *      org.gnome.desktop.interface gtk-theme key changes -- and the reload
+ *      follows @import, so an imported file that changed on disk comes back
+ *      fresh too.
+ *
+ * DMS already flips gtk-theme to "" and back on every wallpaper change (its
+ * refreshGTK() in core/internal/matugen/matugen.go). Historically that flip did
+ * nothing useful, because the colours lived in the user stylesheet at path 1.
+ * Moving the matugen palette down into path 2 turns that existing flip into a
+ * genuine live reload: no restart, no new daemon, no file watcher.
+ *
+ * The two imports below are ordered deliberately:
+ *   - the packaged adw-gtk3 theme first, for all the widget rules and its
+ *     relative assets .svg|png references (checkmarks, radio bullets, slider
+ *     handles -- they resolve against /usr/share/themes/..., where they live);
+ *   - dank-colors.css second, so its @define-color values win and recolour
+ *     everything the theme just defined.
+ *
+ * The counterpart to this file is ~/.config/gtk-3.0/gtk.css, which must NOT
+ * import dank-colors.css. The user stylesheet outranks the theme, so a stale
+ * copy of the palette at that level shadows the fresh values here and silently
+ * defeats the whole thing.
+ *
+ * NOT APPLICABLE TO GTK4: GTK4 ignores custom named themes at runtime entirely,
+ * so GTK4 apps (Celluloid, Loupe) still need a restart. See docs/GUIDE.md.
+ */
+@import url("file:///usr/share/themes/@THEME@/gtk-3.0/@LEAF@");
+@import url("file://@COLORS@");

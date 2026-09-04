@@ -1,15 +1,32 @@
 /*
- * gtk-3.0/gtk.css  (mirrors the gtk-4.0 import pattern)
+ * gtk-3.0/gtk.css
  *
- * Layer 1: DMS/matugen-managed colors. matugen regenerates dank-colors.css on
- *          every wallpaper change; importing it here keeps GTK3 apps following
- *          the wallpaper exactly as before.
- * Layer 2: user overrides (Nemo window transparency for compositor blur).
+ * Layer 2 ONLY: user overrides (Nemo window transparency for compositor blur).
  *
- * NOTE: clicking "Apply GTK Colors" in DMS Settings -> Theme runs gtk.sh, which
- *       resets this file back to a symlink (gtk.css -> dank-colors.css) and saves
- *       this file as gtk.css.backup.<timestamp>. If that happens, restore by
- *       recreating this file (and it re-imports nemo-transparency.css).
+ * The matugen palette is DELIBERATELY NOT imported here. It lives in the
+ * generated shadow themes at ~/.local/share/themes/adw-gtk3{,-dark}/gtk-3.0/
+ * instead -- see the long comment at the top of those files, or
+ * config/gtk-3.0/live-theme/shadow-theme.css.in in the repo.
+ *
+ * Short version: GTK3 reads this file once at process start and never again, so
+ * colours imported here go stale in every running app until it is restarted. A
+ * named theme IS re-read whenever gtk-theme-name changes, which DMS already does
+ * on every wallpaper change -- so putting the palette there makes the colours
+ * follow the wallpaper live, with no restart.
+ *
+ * DO NOT re-add `@import url("dank-colors.css");` here. The user stylesheet
+ * outranks the theme, so a stale copy at this level shadows the fresh theme
+ * colours and silently defeats the live reload.
+ *
+ * nemo-transparency.css stays here on purpose: its rules reference
+ * @window_bg_color and friends, which resolve against whatever the theme
+ * currently defines, so the frosting follows the wallpaper live without this
+ * file needing to be re-read.
+ *
+ * NOTE: clicking "Apply GTK Colors" in DMS Settings -> Theme runs DMS's gtk.sh,
+ *       which resets this file back to a symlink (gtk.css -> dank-colors.css)
+ *       and saves this file as gtk.css.backup.<timestamp>. That re-introduces
+ *       the stale-colour shadow described above. Re-run install.sh (or
+ *       post-update-health.sh) to put it back.
  */
-@import url("dank-colors.css");
 @import url("nemo-transparency.css");
