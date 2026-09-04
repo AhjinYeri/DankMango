@@ -70,6 +70,9 @@ COPY_FAILED=0
 # The login theme is reinstalled as a WHOLE TREE, so however many of its files changed
 # in this delta, the installer runs once. Guards apply_change's dankmango-sddm-theme arm.
 SDDM_THEME_REINSTALLED=0
+# Same once-per-run guard for the GTK3 live-theme shadows: one template generates
+# four files, so any number of template changes in a delta means one regeneration.
+GTK3_SHADOW_REGENERATED=0
 # Same idea, per plugin: a DMS plugin is deployed as a whole DIRECTORY, so a delta that
 # touches several of its files is still ONE deployment. Keyed by plugin id (the "id" from
 # its plugin.json), set the first time apply_change deploys it. Guards the `plugin` arm.
@@ -106,7 +109,7 @@ MIGRATIONS=(
     "sddm-dankmango-theme:install DankMango's own login theme (replaces the sddm-astronaut-theme AUR package) — deploys it, does NOT switch the login screen over"
     "register-shipped-plugins:register plugins DankMango has started shipping since your install (e.g. the first-run welcome panel) — only ADDS missing entries, never changes ones you already have"
     "seed-active-preset:activate the 'Default' desktop preset so the new preset switcher has something to mark as current (Default adds nothing, so your desktop does not change)"
-    "offer-ripe-chroma:offer Ripe Chroma, the wallpaper colour engine, to an install that predates it — asks once, builds it only if you say yes, and records the answer either way"
+    "offer-ripe-chroma:offer Ripe Chroma, the wallpaper colour engine, to an install that predates it — asks once, and only if you say yes builds it, generates a palette from your wallpaper and makes it the active DMS theme; records the answer either way"
 )
 
 # v1.x installs got their login screen from the sddm-astronaut-theme AUR package,
@@ -386,12 +389,22 @@ migrate_offer-ripe-chroma() {
     [ -d "$REPO_DIR/$RIPE_CHROMA_SRC" ] || {
         info "  this clone ships no $RIPE_CHROMA_SRC — nothing to offer"; return 0; }
 
+    # THIS BLOCK IS THE CONSENT, so it states the whole consequence -- not just what
+    # gets built, but that the desktop's colours change at the end of it. The old
+    # wording promised a build and stopped there, leaving the user to find Settings ->
+    # Theme & Colors -> Custom -> browse-for-a-file on their own. One prompt, one yes:
+    # there is deliberately no second confirmation, because this paragraph IS the ask.
     info "  Ripe Chroma is DankMango's own wallpaper -> palette engine (richer colours than"
-    info "  matugen's). It is OPT-IN because building it needs $RIPE_CHROMA_PKG: ~295 MB"
-    info "  installed, ~30 s to build. Saying no changes nothing and leaves nothing behind."
+    info "  matugen's). It is OPT-IN because building it needs $RIPE_CHROMA_PKG: ~295 MB installed,"
+    info "  and a build of under a minute on a fast desktop or several minutes on a laptop."
+    info "  Say yes and DankMango will also SET Ripe Chroma as your active DMS theme once"
+    info "  it has generated its first palette from your current wallpaper — replacing"
+    info "  whatever theme is active now, including matugen's dynamic one or a custom"
+    info "  theme of your own. You can switch back any time in DMS Settings -> Theme &"
+    info "  Colors. Saying no changes nothing and leaves nothing behind."
     # Dry-run: ask_tty reports the question and answers NO, so we describe and stop. The
     # runner does not record migrations during a dry run, so this is re-offered for real.
-    if ! ask_tty "Build Ripe Chroma, the wallpaper colour engine? (installs $RIPE_CHROMA_PKG, ~295 MB)"; then
+    if ! ask_tty "Build Ripe Chroma and make it your active theme?"; then
         [ "$DRY_RUN" = 1 ] && return 0
         info "  left it out — nothing was installed."
         MANUAL+=("Ripe Chroma: declined. Changed your mind? Build it any time with: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release && install -m 755 target/release/dankmango-ripe-chroma $RIPE_CHROMA_BIN")
@@ -413,23 +426,54 @@ migrate_offer-ripe-chroma() {
     fi
 
     # 2. Build + install the one binary, then reclaim the ~186 MB of intermediates.
-    info "  building $RIPE_CHROMA_SRC (this takes ~30 s the first time)..."
-    local built="$REPO_DIR/$RIPE_CHROMA_SRC/target/release/dankmango-ripe-chroma" rc=1
-    if (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo build --release --quiet) && [ -x "$built" ]; then
+    # No number here on purpose -- see ripe_chroma_build() in lib/common.sh. The
+    # "~30 s" this line used to promise was one desktop's measurement, and a laptop
+    # that took 3-4 minutes of dead-silent terminal got Ctrl+C'd, which is exactly
+    # the right reaction to a program that looks hung. The live counter below is
+    # what makes slow and hung distinguishable; the wording just stops overpromising.
+    info "  building $RIPE_CHROMA_SRC — under a minute on a fast desktop, several on a laptop."
+    info "  progress is shown below; it is not stuck as long as the counter moves."
+    local built rc=1
+    if ripe_chroma_build; then built="$RIPE_CHROMA_BUILT"; else built=""; fi
+    if [ -n "$built" ] && [ -x "$built" ]; then
         mkdir -p "$(dirname "$RIPE_CHROMA_BIN")"
         if install -m 755 "$built" "$RIPE_CHROMA_BIN"; then
             ok "  Ripe Chroma installed -> $RIPE_CHROMA_BIN"
             manifest_add_change user-file-installed "$CUR_STAGE" "$RIPE_CHROMA_BIN" \
                 "$(jq -nc --arg p "$RIPE_CHROMA_BIN" '{path:$p, preexisting:false, scope:"user", builtFrom:"tools/ripe-chroma"}')" \
                 "rm $RIPE_CHROMA_BIN"
-            MANUAL+=("Ripe Chroma is built. It themes from your next wallpaper change on its own; to make DMS actually display its palette, open the control hub's Ripe Chroma section (or Settings -> Theme -> Custom).")
+            # Generate the first palette NOW, from the wallpaper that is already set.
+            # An update has no equivalent of install.sh stage 16 -- there is no seed
+            # step to hang this off, because the wallpaper has been set for as long as
+            # this machine has been running. So the right moment is simply "the build
+            # succeeded", and the wallpaper to use is whatever session.json says now.
+            #
+            # WITHOUT THIS, opting in here leaves the engine built and idle until the
+            # next wallpaper change, which may be weeks away or never -- exactly the
+            # state health check 12d reports as "installed but has never produced a
+            # palette". The palette is then switched on, which the prompt above said
+            # in as many words this yes would do.
+            #
+            # The `&&` is the scope boundary, and the same one install.sh stage 16b
+            # uses: seed returns 0 ONLY when it wrote the palette itself, which can
+            # only be true at a first-time opt-in. See ripe_chroma_activate_theme()
+            # in lib/common.sh for why the pair can never be reached from a routine
+            # wallpaper change.
+            if ripe_chroma_seed_palette && ripe_chroma_activate_theme; then
+                MANUAL+=("Ripe Chroma is built, has generated a palette from your current wallpaper, and is now your active DMS theme — as the prompt said it would be. Not what you wanted? DMS Settings -> Theme & Colors puts you back on Auto.")
+            elif [ -s "$RIPE_CHROMA_THEME" ]; then
+                MANUAL+=("Ripe Chroma is built and has generated a palette, but DMS was not switched over to it. Open the control hub (SUPER+d) -> Ripe Chroma and press 'Set as active theme', or use Settings -> Theme & Colors -> Custom.")
+            else
+                MANUAL+=("Ripe Chroma is built. It themes from your next wallpaper change on its own; to make DMS actually display its palette, open the control hub's Ripe Chroma section (or Settings -> Theme -> Custom).")
+            fi
             rc=0
         else
             warn "  built OK but couldn't copy the binary to $RIPE_CHROMA_BIN — nothing recorded."
         fi
     else
-        warn "  cargo build failed — Ripe Chroma not installed."
-        MANUAL+=("Ripe Chroma: build by hand to see why: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release")
+        # ripe_chroma_build already printed the tail of cargo's own error output.
+        warn "  Ripe Chroma not installed."
+        MANUAL+=("Ripe Chroma: retry with: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release")
     fi
     (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo clean --quiet 2>/dev/null) || true
     return $rc
@@ -958,29 +1002,35 @@ apply_change() {  # apply_change REPO_REL
                 return
             fi
             PLUGIN_DEPLOYED[$pid]=1
-            tgt="$HOME/.config/DankMaterialShell/plugins/$pid"
+            tgt="$DMS_PLUGINS_DIR/$pid"
             [ "$DRY_RUN" = 1 ] && { info "would update plugin '$pid' -> $tgt"; UPDATED+=("plugin:$pid"); return; }
-            # Directory backup — prune_file_backups removes these as trees.
-            #
-            # Only when there is genuinely something to back up: a plugin that is NEW in this
-            # delta (firstRunPanel on a v1.3.0 -> v1.4.0 upgrade) has no installed version, and
-            # a .bak- of a directory that didn't exist is just litter in the plugins folder.
-            # The dedupe above is what makes this test meaningful — it now runs exactly once,
-            # BEFORE anything is written, so it reads the pre-update state rather than our own
-            # half-finished work.
-            #
-            # The `! -e` arm is the belt to that braces, and it is not theoretical: `cp -a DIR
-            # DEST` copies INTO DEST when DEST already exists, so any second backup of the same
-            # tree under the same stamp nests as plugins/foo.bak-<stamp>/foo/ instead of
-            # replacing. The dedupe stops that within one run; this also stops it across two
-            # runs that start in the same second (rewound manifest, scripted re-run), where
-            # STAMP is identical. One backup per path per run — and never delete the existing
-            # one to make room, since it is the copy of the state we are about to overwrite.
-            if [ -d "$tgt" ] && [ -n "$(ls -A "$tgt" 2>/dev/null)" ] && [ ! -e "$tgt.bak-$STAMP" ]; then
-                cp -a "$tgt" "$tgt.bak-$STAMP"; prune_file_backups "$tgt"
-            fi
+            # Directory backup — into $DMS_PLUGIN_BACKUPS_DIR, NOT beside the live plugin.
+            # The guards that used to sit here (empty tree, backup already taken this run)
+            # moved into plugin_backup_take with install.sh's copy, so both entry points
+            # get the stricter set; the reasoning for each is documented there. The
+            # dedupe above is still what makes the "is there anything to back up" test
+            # meaningful — it runs exactly once per plugin, BEFORE anything is written,
+            # so it reads the pre-update state rather than our own half-finished work.
+            plugin_backup_take "$pid" "$tgt" || true
             mkdir -p "$tgt"; cp -a "$pdir/." "$tgt/" && { ok "plugin '$pid' updated"; UPDATED+=("plugin:$pid"); }
             MANUAL+=("plugin '$pid' updated — a DMS reload/restart may be needed to pick it up")
+            ;;
+        gtk3-live-theme)
+            # One template generates four files under ~/.local/share/themes, each
+            # carrying an absolute path, so this is a REGENERATE, not a copy — and
+            # once per run no matter how many template files moved in the delta.
+            if [ "${GTK3_SHADOW_REGENERATED:-0}" = 1 ]; then
+                info "GTK3 live-theme shadows handled once per run — nothing further for: $rel"
+                return
+            fi
+            GTK3_SHADOW_REGENERATED=1
+            [ "$DRY_RUN" = 1 ] && { info "would regenerate the GTK3 live-theme shadows under $dst"; UPDATED+=("$dst"); return; }
+            if gtk3_shadow_install; then
+                UPDATED+=("$dst (GTK3 live-theme shadows)")
+            else
+                LEFT+=("$dst — GTK3 live-theme shadows not regenerated; run install.sh")
+                MANUAL+=("GTK3 apps may need a restart after a wallpaper change — re-run install.sh")
+            fi
             ;;
         sddm-theme)
             [ "$DRY_RUN" = 1 ] && { info "would refresh SDDM theme file: $dst (then sudo apply.sh)"; UPDATED+=("$dst"); return; }
@@ -1084,6 +1134,14 @@ else
     done
 fi
 
+# ---- plugin backups that earlier versions left in DMS's scan path ----------
+# UNCONDITIONAL, and not part of the delta loop above on purpose. The `plugin` route
+# only fires when a plugin actually changed in this commit range, but an old-style
+# backup sitting in ~/.config/DankMaterialShell/plugins/ is a same-id impostor DMS can
+# load on ANY restart, whether or not this update touches that plugin. It is a move,
+# never a delete, and silent when there is nothing to move.
+plugin_backups_relocate
+
 # ---- Ripe Chroma: rebuild if its source moved under an existing install -----
 # ONLY for people who opted in at install time. The binary's existence IS the
 # opt-in record -- no binary means the user declined (or predates the feature),
@@ -1114,13 +1172,32 @@ if [ -x "$RIPE_CHROMA_BIN" ]; then
             warn "Ripe Chroma source changed but cargo is gone — $RIPE_CHROMA_BIN is now STALE."
             MANUAL+=("$RIPE_CHROMA_BIN — stale; reinstall $RIPE_CHROMA_PKG and re-run install.sh")
         else
-            info "rebuilding Ripe Chroma (source changed)..."
-            if (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo build --release --quiet) \
-               && install -m 755 "$REPO_DIR/$RIPE_CHROMA_SRC/target/release/dankmango-ripe-chroma" "$RIPE_CHROMA_BIN"; then
+            # DELIBERATELY NO ripe_chroma_seed_palette() CALL HERE -- AND THEREFORE
+            # NO ripe_chroma_activate_theme() EITHER. This block only runs when the
+            # binary ALREADY EXISTS, which means the machine opted in at some earlier
+            # point and the wallpaper fan-out has been regenerating the palette on
+            # every wallpaper change since, honouring the control hub's saved
+            # mode/count. Seeding here would at best be a no-op (the helper refuses to
+            # overwrite an existing palette) and at worst would re-write those colours
+            # at the built-in defaults -- and activation chained onto it would repaint
+            # the desktop of someone who chose, deliberately, to generate without
+            # displaying. Nobody consented to that at this moment; the consent lives in
+            # the opt-in prompt, which this machine answered long ago and under the old
+            # wording. First-time opt-in -- the one case where no palette can exist yet
+            # -- belongs to the offer-ripe-chroma migration in stage 5, and it is the
+            # only caller here.
+            #
+            # The SECOND silent build in this file, and the one that surprises people
+            # more: nobody opted into it at this moment -- it fires because a source
+            # file moved -- so an unannounced multi-minute stall here reads as the
+            # updater having wedged. Same visible-build treatment as the migration.
+            info "rebuilding Ripe Chroma (its source changed) — a minute or several, depending on the machine."
+            if ripe_chroma_build \
+               && install -m 755 "$RIPE_CHROMA_BUILT" "$RIPE_CHROMA_BIN"; then
                 ok "Ripe Chroma rebuilt -> $RIPE_CHROMA_BIN"
             else
                 warn "Ripe Chroma rebuild FAILED — $RIPE_CHROMA_BIN is still the old build."
-                MANUAL+=("$RIPE_CHROMA_BIN — rebuild by hand: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release")
+                MANUAL+=("$RIPE_CHROMA_BIN — retry with: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release")
             fi
             (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo clean --quiet 2>/dev/null) || true
         fi

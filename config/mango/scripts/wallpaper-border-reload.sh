@@ -370,6 +370,56 @@ while sleep "$POLL_SECONDS"; do
             # never wait on it. Every guard (engine installed, static mode,
             # saved prefs) lives inside the function.
             regen_ripe_chroma &
+            # The login screen follows the WALLPAPER, so it belongs on this
+            # trigger as well -- not on branch (1) alone. Exactly the reasoning
+            # the engine above already uses, and leaving it out was the bug: on
+            # a custom theme matugen stops running, dms-colors.json stops
+            # moving, branch (1) never fires again, and the SDDM slots silently
+            # keep whatever wallpaper was current the last time matugen ran.
+            # Branch (1) KEEPS its own call on purpose -- a palette-only change
+            # (Generate, or a matugen scheme/contrast switch) re-tints the login
+            # screen's colours with no wallpaper change to carry.
+            # Two call sites are safe by design: the script is flock-serialised
+            # and short-circuits on its wallpaper fingerprint, so whichever runs
+            # second is a no-op rather than a competing write.
+            [ -x "$SDDM_PALETTE_SYNC" ] && "$SDDM_PALETTE_SYNC" >/dev/null 2>&1 &
+
+            # The cava accent pair follows the WALLPAPER too, and for the same
+            # reason as the two above it cannot live on branch (1) alone. This
+            # script extracts its colours from the wallpaper IMAGE (5 matugen
+            # --dry-run passes over it), so unlike satty below it genuinely does
+            # produce a fresh pair here: it never reads dms-colors.json, and
+            # therefore does not care that matugen has stopped moving it.
+            #
+            # Backgrounded like its branch-(1) twin: ~1.7s, and nothing on this
+            # loop may wait on it.
+            #
+            # SAFE FROM TWO CALL SITES ONLY AS OF THIS CHANGE. It was NOT
+            # flock-serialised or fingerprinted the way sddm-palette-sync.sh
+            # already was, and both instances wrote one shared "$OUT.tmp", so
+            # adding this second caller needed a lock + fingerprint added to
+            # wallpaper-accent-extract.sh first. See the "single instance" block
+            # there before removing either call site.
+            [ -x "$ACCENT_EXTRACT" ] && "$ACCENT_EXTRACT" >/dev/null 2>&1 &
+
+            # satty's annotation palette, for symmetry with the three above --
+            # but READ THIS BEFORE TRUSTING IT TO FIX A STALE PALETTE.
+            #
+            # regen_satty_palette's ONLY input is dms-colors.json. That is
+            # precisely the file this branch exists because it stops moving: on a
+            # custom theme matugen no longer runs, so re-deriving satty's palette
+            # here reads the same frozen JSON branch (1) last read and the
+            # function's own content-compare guard returns 1 without writing.
+            # So on a custom theme this call is a genuine no-op, NOT a fix -- it
+            # only helps on a dynamic theme, where it is redundant with branch
+            # (1) anyway. Kept because it is free, harmless (idempotent, inline,
+            # writes only on a real difference) and becomes correct the moment
+            # satty's palette is sourced from something that tracks the
+            # wallpaper. Making satty actually follow the wallpaper on a custom
+            # theme is a separate change: it needs a wallpaper-derived source
+            # (the Ripe Chroma theme file, or its own matugen pass) rather than
+            # another call site.
+            regen_satty_palette
         fi
     fi
 done

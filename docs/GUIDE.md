@@ -121,6 +121,31 @@ Within a second your borders, the login screen palette and the visualiser accent
 
 One thing not to lean on: `border-color-healthcheck.sh` checks that every link in the chain is *wired up*, not that your colours are *current*. It'll report "All links OK" while your borders are still showing last week's wallpaper — the wiring genuinely is fine, it's the contents that are stale. Use it to find a broken chain, not to confirm your colours are up to date.
 
+## If an app keeps its old colours until you restart it
+
+Different apps pick up a new wallpaper palette in completely different ways, and some genuinely can't do it without being restarted. Here's what actually happens, so you know which is which before you go looking for a fault.
+
+**Already live, nothing to do:** window borders, the login screen and the visualiser accents (DankMango's own watcher — see the section above); Nemo and other GTK3 apps (see below); kitty and ghostty, which DankMaterialShell signals directly; Qt apps via qt6ct; Alacritty, which watches its own config file.
+
+**Nemo and other GTK3 apps** used to need a restart and no longer do. The reason they needed one is worth knowing, because one button in the DankMaterialShell settings can bring the problem back. GTK3 reads your personal stylesheet, `~/.config/gtk-3.0/gtk.css`, exactly once when an app starts and never looks at it again — no setting, no signal and no file-watching makes a running app re-read it. A *named theme*, though, is re-read from disk every time the desktop's theme name changes, and DankMaterialShell already changes it on every wallpaper change. So DankMango puts the palette in a generated theme instead, at `~/.local/share/themes/adw-gtk3{,-dark}/`, and keeps your personal stylesheet for window transparency only. The colours then arrive through a path that genuinely reloads.
+
+Two things undo that, both silently:
+
+- **Pressing "Apply GTK Colors"** in DankMaterialShell's Settings → Theme & Colors. That replaces `~/.config/gtk-3.0/gtk.css` with a shortcut to the palette file. Your personal stylesheet outranks the theme, so the old palette wins again — and you also lose the see-through Nemo window. You don't need that button; DankMango already applies those colours. If you press it, re-run `./install.sh`.
+- **Losing the `dank-colors.css` line from `~/.config/gtk-4.0/gtk.css`.** DankMaterialShell checks for that exact line to decide whether to do the theme change at all. Without it nothing reloads, GTK3 included. Re-running `./install.sh` restores it.
+
+The health check catches both, under "4b. GTK apps following the wallpaper live".
+
+One expected quirk: an app that was **already open** when you first installed this needs closing and reopening once. It's still holding the stylesheet it read at startup. After that one restart it follows the wallpaper live.
+
+**Celluloid and Loupe (GTK4) still need a restart, and that isn't fixable here.** GTK4 dropped runtime support for custom named themes entirely, so the trick above has nothing to hook into — the theme is chosen once and a later change is ignored. There's no setting, portal signal or file watcher that makes a running GTK4 app re-read either your stylesheet or a theme. Reopening the window is the only way, and that's a GTK limitation rather than something DankMango is missing.
+
+**Zen and Firefox need a full restart, and that also isn't fixable here.** DankMango's part works correctly: the palette is regenerated and `userChrome.css` imports it. The block is in Firefox itself — `userChrome.css` is parsed once during startup, before the browser can be scripted, and nothing re-parses it afterwards. The only live paths are developer tooling: the Browser Toolbox's Style Editor with devtools open, or a script run in the Browser Console. Neither is something to automate against a browser you actually use. Restart Zen after a wallpaper change and it comes up in the new palette.
+
+Zen isn't *quite* identical to Firefox here, and it's worth knowing why the difference doesn't rescue us. Zen has its own stylesheet layer for Zen Mods — one generated file, `chrome/zen-themes.css` in your profile — and unlike `userChrome.css`, that file genuinely is re-read from disk and re-applied to windows that are already open. Nothing watches it, though: the re-read only happens when a new browser window is created. So even if DankMango's palette were moved into that file, "live" would mean "next time you open a window, and a window has to visibly open" — and it would still leave `userChrome.css`-level styling behind. Restarting Zen is the simpler honest answer.
+
+**Discord clients, VS Code, Zed, Emacs and Neovim** get their palette written correctly but have no reload hook from DankMaterialShell — restart them, or use whatever "reload theme" command they ship.
+
 ## If your borders thin out or flicker (Nvidia)
 
 If your window borders look uneven — thinner down one edge, or flickering as windows move — and you're on the Nvidia proprietary driver, that isn't DankMango. It's a known bug in scenefx, the rendering library mango draws borders with: it asks for `mediump` fragment shader precision, Nvidia's GLES implementation honours that literally, and the resulting rounding error is enough to eat a pixel off a border.

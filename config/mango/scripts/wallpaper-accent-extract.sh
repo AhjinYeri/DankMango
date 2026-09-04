@@ -21,6 +21,10 @@
 #
 #  COST  up to 5 matugen runs per wallpaper change. All --dry-run, so matugen
 #        writes nothing itself; the only output is this script's small JSON.
+#
+#  CALLED FROM TWO PLACES, so it is serialised and idempotent -- see the
+#  "single instance" block below. Re-running it for an input it has already
+#  scored is a cheap no-op, not 5 more matugen runs.
 # =============================================================================
 set -uo pipefail
 
@@ -60,6 +64,44 @@ mkdir -p "$OUT_DIR" 2>/dev/null
 SCHEME="$(jq -r '.matugenScheme // "scheme-tonal-spot"' "$SETTINGS" 2>/dev/null)"
 [ -n "$SCHEME" ] && [ "$SCHEME" != "null" ] || SCHEME="scheme-tonal-spot"
 
+# --- single instance -------------------------------------------------------
+# WHY THIS IS HERE (not boilerplate -- this script has two callers now):
+#   wallpaper-border-reload.sh fires this in the BACKGROUND from two separate
+#   branches: the palette branch (dms-colors.json moved) and the wallpaper
+#   branch (session.json's wallpaper path changed). On a dynamic theme ONE
+#   wallpaper change trips both, and they are not simultaneous -- measured
+#   ~0.65s apart, i.e. different watcher polls -- while a run takes ~1.7s. So
+#   the two instances genuinely overlap.
+#
+#   Unserialised that is a corrupting race, not merely wasted work: both
+#   instances wrote the SAME "$OUT.tmp" path, so one truncated the other's
+#   half-written JSON and whichever `mv` ran second could find no file at all.
+#   The cava widget watches the output with FileView and would see either
+#   garbage (it try/catches to a fallback palette) or a stale pair.
+#
+# WAIT, don't skip -- same reasoning as sddm-palette-sync.sh. This is a one-shot
+# fired by an edge that has already been consumed, so an instance that exits
+# early drops that change on the floor. Queued runs are cheap: whichever goes
+# first scores the newest wallpaper and the rest fall through the fingerprint
+# check below as no-ops.
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/dankmango-accent-extract.lock"
+LOCK_WAIT="${DANKMANGO_ACCENT_EXTRACT_LOCK_WAIT:-30}"
+exec 9>"$LOCK" 2>/dev/null || true
+flock -w "$LOCK_WAIT" 9 2>/dev/null || exit 0
+
+# Fingerprint short-circuit, same idiom (and same stat fields) as
+# sddm-palette-sync.sh's WallpaperFingerprint. Covers the SCHEME too, not just
+# the image: the seeds below are extracted with -t "$SCHEME", so a scheme switch
+# with an unchanged wallpaper is a real input change and must NOT be skipped.
+FP="$(printf '%s@%s' "$(stat -c '%n:%Y:%s' "$WP" 2>/dev/null)" "$SCHEME" | md5sum | cut -d' ' -f1)"
+if [ "$FP" = "$(jq -r '.fp // empty' "$OUT" 2>/dev/null)" ]; then
+    exit 0
+fi
+
+# Per-process temp name as well as the lock, so the two never collide even on a
+# machine where the lock could not be taken (the `|| true` above).
+TMP="$OUT.tmp.$$"
+
 cands=()
 for i in 0 1 2 3 4; do
     c="$(matugen image "$WP" --dry-run -j hex -q -t "$SCHEME" --source-color-index "$i" 2>/dev/null \
@@ -69,13 +111,13 @@ for i in 0 1 2 3 4; do
 done
 
 if [ "${#cands[@]}" -lt 2 ]; then
-    printf '{"ok":false,"reason":"fewer than 2 candidates","wallpaper":"%s"}\n' "$WP" > "$OUT"
+    printf '{"ok":false,"reason":"fewer than 2 candidates","wallpaper":"%s","fp":"%s"}\n' "$WP" "$FP" > "$OUT"
     exit 0
 fi
 
 # Same scoring the widget already used for dank16: wrap-aware hue distance
 # dominates, lightness/saturation break near-ties, greys fall back to lightness.
-printf '%s\n' "${cands[@]}" | WP="$WP" python3 -c '
+printf '%s\n' "${cands[@]}" | WP="$WP" FP="$FP" python3 -c '
 import sys, os, json, colorsys, itertools
 cands = [l.strip() for l in sys.stdin if l.strip()]
 def hsl(h):
@@ -90,6 +132,7 @@ pairs = list(itertools.combinations(range(len(cands)), 2))
 i, j = max(pairs, key=lambda p: score(cands[p[0]], cands[p[1]]) - (p[0] + p[1]) * 0.001)
 print(json.dumps({"ok": True, "a": cands[i], "b": cands[j],
                   "score": round(score(cands[i], cands[j]), 4),
-                  "candidates": cands, "wallpaper": os.environ.get("WP", "")}))
-' > "$OUT.tmp" 2>/dev/null && mv "$OUT.tmp" "$OUT" || { rm -f "$OUT.tmp"; exit 1; }
+                  "candidates": cands, "wallpaper": os.environ.get("WP", ""),
+                  "fp": os.environ.get("FP", "")}))
+' > "$TMP" 2>/dev/null && mv "$TMP" "$OUT" || { rm -f "$TMP"; exit 1; }
 exit 0

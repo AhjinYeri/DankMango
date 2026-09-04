@@ -972,6 +972,8 @@ stage "9/18  Layering GTK theming (gtk-3.0 / gtk-4.0)"
 # settings.ini is deliberately NOT touched here (icon theme is set via DMS
 # settings.json). user_copy backs up any existing destination (.bak-<timestamp>)
 # and warns (rather than fails) if a source file is unexpectedly missing.
+gtk_unlink_dms_symlinks
+
 gtk_found=0
 for pair in \
     "$REPO_DIR/config/gtk-3.0/gtk.css:$HOME/.config/gtk-3.0/gtk.css" \
@@ -986,8 +988,46 @@ if [ "$gtk_found" -eq 0 ]; then
     warn "GTK frosted-glass theming is NOT applied — check the repo, then re-run."
 fi
 
+# ---- 9b. GTK3 live-theme shadow (the no-restart wallpaper refresh) ----------
+# Generates the four shadow theme files that make running GTK3 apps (Nemo above
+# all) pick up new wallpaper colours WITHOUT being restarted. The full reasoning
+# lives with gtk3_shadow_install() in lib/common.sh; update.sh calls the same
+# function so a change to the template reaches an already-installed system.
+gtk3_shadow_install || true
+
 # =============================================================================
 # 10. DMS popupTransparency = 0.75
+# =============================================================================
+# WHY BOTH THIS STAGE AND 10b GUARD THEIR BACKUP WITH `! -e`.
+#   $STAMP is computed ONCE per run, in lib/common.sh, and every writer in the run
+#   shares it. Stages 10 and 10b both edit the SAME file (settings.json) and both
+#   name their backup "$SETTINGS.bak-$STAMP" -- the identical path. A plain `cp -a`
+#   in the second one therefore did not make a second backup, it OVERWROTE the first.
+#
+#   That is a silent data loss, not untidiness, and it costs exactly one user value
+#   per collision. Reproduced against these two stages: a machine with
+#   popupTransparency 0.55 and keybindsFloatingWindow false runs both stages, and
+#   afterwards 0.55 exists NOWHERE -- the live file holds stage 10's 0.75, and the
+#   backup that should have held 0.55 holds 0.75 as well, because stage 10b copied
+#   the already-edited file over it. Only the LAST writer's pre-state survives.
+#
+#   The manifest made it worse by being confidently wrong: manifest_add_backup
+#   dedupes by original path, so the record still reads stage "10" and still points
+#   at that filename, describing a pre-stage-10 snapshot that no longer exists. Every
+#   config-edit here records the reversal "restore $SETTINGS from its .bak-*", so the
+#   file has to actually mean "before this run" for that instruction to be true.
+#
+#   SKIP, RATHER THAN PICK A NEW NAME. The existing backup is strictly the better
+#   restore point -- it predates every edit in the run, which is what the reversal
+#   hint promises -- so a second one would only add a worse copy. Same `! -e`
+#   reasoning as plugin_backup_take() in lib/common.sh, and the same one-backup-per-
+#   file-per-run rule ripe_chroma_activate_theme() follows as this file's third
+#   writer of settings.json.
+#
+#   NOTHING CHANGES IN THE ORDINARY CASE. When only one of the two stages needs to
+#   edit anything -- which includes every fresh install, where the shipped file
+#   already carries popupTransparency 0.75 -- there is no existing backup to collide
+#   with and the `cp -a` runs exactly as before.
 # =============================================================================
 stage "10/18  Checking DMS popupTransparency"
 SETTINGS="$HOME/.config/DankMaterialShell/settings.json"
@@ -996,7 +1036,9 @@ if [ -f "$SETTINGS" ] && grep -q '"popupTransparency"[[:space:]]*:[[:space:]]*0.
 elif [ -f "$SETTINGS" ] && have jq; then
     tmp="$(mktemp)"
     if jq '.popupTransparency = 0.75' "$SETTINGS" > "$tmp" && [ -s "$tmp" ]; then
-        cp -a "$SETTINGS" "$SETTINGS.bak-$STAMP"; mv "$tmp" "$SETTINGS"
+        # ONE BACKUP PER FILE PER RUN — see the note below on why `! -e` and not `cp -a`.
+        [ -e "$SETTINGS.bak-$STAMP" ] || cp -a "$SETTINGS" "$SETTINGS.bak-$STAMP"
+        mv "$tmp" "$SETTINGS"
         ok "set popupTransparency = 0.75"
         manifest_add_backup "$SETTINGS" "$SETTINGS.bak-$STAMP" user "$CUR_STAGE"
         prune_file_backups "$SETTINGS"
@@ -1046,7 +1088,13 @@ if [ -f "$SETTINGS" ] && grep -q '"keybindsFloatingWindow"[[:space:]]*:[[:space:
 elif [ -f "$SETTINGS" ] && have jq; then
     tmp="$(mktemp)"
     if jq '.keybindsFloatingWindow = true' "$SETTINGS" > "$tmp" && [ -s "$tmp" ]; then
-        cp -a "$SETTINGS" "$SETTINGS.bak-$STAMP"; mv "$tmp" "$SETTINGS"
+        # THE OTHER HALF OF THE COLLISION described above stage 10. This is the stage
+        # that used to do the clobbering: it runs second, and its `cp -a` overwrote the
+        # backup stage 10 had just taken. Skipping when one already exists is what keeps
+        # that file meaning "before this run" — it is a better restore point than
+        # anything this stage could take, because it predates stage 10's edit too.
+        [ -e "$SETTINGS.bak-$STAMP" ] || cp -a "$SETTINGS" "$SETTINGS.bak-$STAMP"
+        mv "$tmp" "$SETTINGS"
         ok "set keybindsFloatingWindow = true (SUPER+/ descriptions stop truncating)"
         manifest_add_backup "$SETTINGS" "$SETTINGS.bak-$STAMP" user "$CUR_STAGE"
         prune_file_backups "$SETTINGS"
@@ -1141,8 +1189,10 @@ fi
 # 13b. Ripe Chroma, the wallpaper colour engine (opt-in; builds tools/ripe-chroma)
 #
 # WHY THIS IS OPT-IN AND NOT A STANDARD DEPENDENCY.
-#   The engine itself is tiny (a 1.8 MB binary, ~24 s to build, 60 unremarkable
-#   crates). The COST IS THE TOOLCHAIN: `rust` is 77 MiB to download and ~295 MiB
+#   The engine itself is tiny: a 1.8 MB binary from 60 unremarkable crates. How
+#   long that takes to build is entirely down to the machine -- tens of seconds on
+#   a fast desktop, minutes on a laptop -- which is why nothing here quotes a
+#   figure. The COST IS THE TOOLCHAIN: `rust` is 77 MiB to download and ~295 MiB
 #   installed, and it is not part of a base CachyOS install. That is by a wide
 #   margin the largest thing DankMango would ever put on a machine, and it would
 #   land on every user including everyone perfectly happy with matugen's palettes.
@@ -1163,9 +1213,24 @@ fi
 # offers it again.
 # =============================================================================
 stage "13b/18 Ripe Chroma, the wallpaper colour engine (optional)"
+# THE PROMPT IS THE CONSENT FOR ALL OF IT, so it has to describe all of it -- the
+# cost, and the fact that saying yes ends with DankMango's colours on screen rather
+# than merely on disk. It used to promise only a build, which left the last step
+# (Settings -> Theme & Colors -> Custom -> browse to a JSON file) as a chore nobody
+# knew was coming. Details go in info lines above the question rather than growing
+# the [y/N] line into a paragraph you have to re-read to find the verb.
+if [ -d "$REPO_DIR/$RIPE_CHROMA_SRC" ]; then
+    info "Ripe Chroma is DankMango's own wallpaper -> palette engine — richer colours than"
+    info "matugen's. Building it needs $RIPE_CHROMA_PKG (~295 MB installed) and takes under a"
+    info "minute on a fast desktop, several minutes on a laptop."
+    info "Say yes and DankMango will also SET Ripe Chroma as your active DMS theme once"
+    info "it has generated its first palette — replacing whatever theme is active now,"
+    info "including matugen's dynamic one or a custom theme of your own. You can switch"
+    info "back any time in DMS Settings -> Theme & Colors. Saying no changes nothing."
+fi
 if [ ! -d "$REPO_DIR/$RIPE_CHROMA_SRC" ]; then
     warn "$RIPE_CHROMA_SRC missing from this clone — skipping Ripe Chroma."
-elif ask_yn "Build Ripe Chroma, the wallpaper colour engine? (needs $RIPE_CHROMA_PKG, ~295 MB installed; ~30 s to build)"; then
+elif ask_yn "Build Ripe Chroma and make it your active theme?"; then
     # 1. Toolchain. `have cargo` first so an existing toolchain is honoured --
     #    a rustup user already has cargo on PATH and does not need the pacman
     #    package as well. Same AUR-helper invocation as the easyeffects step
@@ -1187,9 +1252,15 @@ elif ask_yn "Build Ripe Chroma, the wallpaper colour engine? (needs $RIPE_CHROMA
     #    to its fixed path; `cargo clean` afterwards reclaims the ~186 MB of
     #    intermediates, which have no value once the binary is out.
     if [ "$CE_TOOLCHAIN" = 1 ]; then
-        info "building $RIPE_CHROMA_SRC (this takes ~30 s the first time)..."
-        if (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo build --release --quiet); then
-            RC_BUILT="$REPO_DIR/$RIPE_CHROMA_SRC/target/release/dankmango-ripe-chroma"
+        # NO SPECIFIC NUMBER HERE ON PURPOSE. This line used to promise "~30 s",
+        # measured on one desktop; the same build took 3-4 minutes on a laptop and
+        # the silence made it look hung. A range that is honest about hardware beats
+        # a precise figure that is wrong on the next machine -- and ripe_chroma_build
+        # keeps a live elapsed counter on screen, so the number stops mattering.
+        info "building $RIPE_CHROMA_SRC — under a minute on a fast desktop, several on a laptop."
+        info "progress is shown below; it is not stuck as long as the counter moves."
+        if ripe_chroma_build; then
+            RC_BUILT="$RIPE_CHROMA_BUILT"
             if [ -x "$RC_BUILT" ]; then
                 mkdir -p "$(dirname "$RIPE_CHROMA_BIN")"
                 if install -m 755 "$RC_BUILT" "$RIPE_CHROMA_BIN"; then
@@ -1209,7 +1280,9 @@ elif ask_yn "Build Ripe Chroma, the wallpaper colour engine? (needs $RIPE_CHROMA
             # of intermediates worth keeping in the user's clone.
             (cd "$REPO_DIR/$RIPE_CHROMA_SRC" && cargo clean --quiet 2>/dev/null) || true
         else
-            warn "cargo build failed — Ripe Chroma not installed. Build it by hand to see why: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release"
+            # ripe_chroma_build has already printed the tail of cargo's own output,
+            # so this is the "what now", not the "what happened".
+            warn "Ripe Chroma not installed. To retry: cd $REPO_DIR/$RIPE_CHROMA_SRC && cargo build --release"
         fi
     fi
 else
@@ -1227,18 +1300,23 @@ fi
 #     (step 7), so we only copy files and verify — no duplicates.
 # =============================================================================
 stage "14/18  Installing DMS plugins"
-PLUGINS_DST="$HOME/.config/DankMaterialShell/plugins"
+PLUGINS_DST="$DMS_PLUGINS_DIR"
 mkdir -p "$PLUGINS_DST"
+# BEFORE anything is copied: sweep any backup an older DankMango left INSIDE this
+# directory out to $DMS_PLUGIN_BACKUPS_DIR. A <id>.bak-<stamp>/ here is a second valid
+# plugin directory declaring the same id, in the directory DMS scans -- see the block
+# above plugin_backup_take() in lib/common.sh for what that actually caused. Silent
+# and instant when there is nothing to move.
+plugin_backups_relocate
 for pdir in "$REPO_DIR"/plugins/*/; do
     [ -f "$pdir/plugin.json" ] || continue
     pid="$(grep -oP '"id"\s*:\s*"\K[^"]+' "$pdir/plugin.json" | head -1)"
     [ -n "$pid" ] || { warn "no id in $pdir/plugin.json — skipping"; continue; }
     tgt="$PLUGINS_DST/$pid"
-    if [ -d "$tgt" ]; then
-        cp -a "$tgt" "$tgt.bak-$STAMP" && info "backed up existing plugin -> $tgt.bak-$STAMP"
-        # Directory backups, so these are the ones the prune has to remove as trees.
-        prune_file_backups "$tgt"
-    fi
+    # Backs up into the sibling backups directory, not beside the live plugin, and
+    # prunes that set to DANKMANGO_PLUGIN_BACKUP_RETAIN. Quiet no-op if there is
+    # nothing installed to back up yet.
+    plugin_backup_take "$pid" "$tgt" || true
     mkdir -p "$tgt"
     cp -a "$pdir." "$tgt/" && ok "plugin '$pid' -> $tgt"
     have jq && manifest_add_change owned-tree "$CUR_STAGE" "$tgt" \
@@ -1414,7 +1492,34 @@ else
     info "DMS not running yet — wallpaper was seeded into session.json above; DMS themes on first login."
 fi
 
-# Push that freshly-generated palette to the LOGIN screen too. This has to happen
+# ---- 16b. Ripe Chroma's first palette (generated, then switched on) --------
+# HAS TO BE HERE, not back at stage 13b where the engine was built. The engine
+# reads a wallpaper, and until the block directly above ran there was no wallpaper
+# to read -- stage 13b happens three stages before the seed. Generating there would
+# either fail or, worse, extract from whatever the machine happened to have set
+# already, which on a fresh install is nothing.
+#
+# WHAT THIS DOES. It writes ~/.config/DankMaterialShell/dankmango-theme.json, and
+# then -- only if that write actually happened -- points DMS at it. Leaving the
+# engine built-but-never-run was what made a genuinely fresh install report
+# "installed but has never produced a palette" (health check 12d); leaving the
+# palette generated-but-never-shown was what made stage 13b's yes end in a manual
+# trip through Settings -> Theme & Colors -> Custom -> browse-for-a-file.
+#
+# THE `&&` IS THE SCOPE BOUNDARY, not a tidy way to write two statements.
+# ripe_chroma_seed_palette returns 0 ONLY when it wrote a palette itself, and it is
+# called from exactly two places, both of them first-time opt-in moments (here, and
+# update.sh's offer-ripe-chroma accept path). Every later generation goes through
+# wallpaper-border-reload.sh's regen_ripe_chroma, a standalone script that does not
+# source this library and so cannot reach either function -- which is what makes
+# "activate on a wallpaper change six months from now" structurally impossible
+# rather than merely unintended. Every no-op reason (declined at 13b, a palette
+# already on disk, no wallpaper) returns non-zero, and each one is a case where
+# activation would be acting on something that is not this install's doing.
+ripe_chroma_seed_palette "$seed_wall" && ripe_chroma_activate_theme || true
+
+# Push matugen's freshly-generated palette to the LOGIN screen too (matugen's, not
+# Ripe Chroma's above -- this reads ~/.cache/DankMaterialShell/dms-colors.json). This has to happen
 # here, not in stage 5b: the theme install runs before stage 7 deploys the script and
 # before matugen has ever produced ~/.cache/DankMaterialShell/dms-colors.json, so at
 # that point there is simply no palette to sync. Best-effort and silent-on-skip by
@@ -1447,6 +1552,23 @@ fi
 # every existing-install case — it applies immediately.
 stage "17/18  Zen browser theming"
 zen_apply_theming || true
+
+# =============================================================================
+# 17b. Leftovers from earlier versions
+# =============================================================================
+# THE ONE THING THIS INSTALLER STRUCTURALLY CANNOT DO ANYWHERE ELSE. Every stage above
+# overlays: it copies what the repo ships now, and a file the repo has STOPPED shipping
+# is simply never mentioned again. update.sh has a deletion path (retire_file, driven by
+# the LAST..HEAD diff); install.sh has none, and yet it ends with manifest_finalize,
+# which moves lastAppliedCommit to HEAD -- consuming the very delta window update.sh
+# would have used to retire those files. After that no run of anything can see them.
+#
+# So the check happens HERE, against the current repo rather than a commit range, which
+# is what makes it immune to whatever the pointer did. Report first; removal is opt-in
+# and backed up. See manifest_orphans() in lib/common.sh for the three candidate
+# sources and the kinds it deliberately never touches.
+stage "17b/18 Leftovers from earlier versions"
+manifest_orphans_offer || true
 
 # =============================================================================
 # 18. Done — next steps

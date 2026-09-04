@@ -325,7 +325,7 @@ seed_active_preset() {
 # two in sync.
 DANKMANGO_BACKUP_RETAIN=10
 
-# prune_file_backups ORIGINAL [NEED_SUDO] — never returns non-zero, by design.
+# prune_file_backups ORIGINAL [NEED_SUDO] [RETAIN] — never returns non-zero, by design.
 #
 # Every overwrite leaves ORIGINAL.bak-<stamp> beside the original, so a file touched
 # by twenty updates ends up with twenty copies that nothing ever removed. This keeps
@@ -347,8 +347,12 @@ DANKMANGO_BACKUP_RETAIN=10
 # preserves the ORIGINAL's mtime — so a backup's mtime is the age of its CONTENT, not
 # the moment the backup was taken, and sorting by it would delete the wrong files. The
 # stamp format sorts lexicographically in chronological order, so plain `sort` is right.
+# The optional third argument is a RETAIN OVERRIDE, and it exists for exactly one
+# caller: the relocated plugin backups, which are trees in a directory of their own
+# and carry their own DANKMANGO_PLUGIN_BACKUP_RETAIN knob. Everything else omits it
+# and gets the shared cap, so there is still one number for ordinary file backups.
 prune_file_backups() {
-    local orig="${1:-}" need_sudo="${2:-0}" f total cut
+    local orig="${1:-}" need_sudo="${2:-0}" retain="${3:-$DANKMANGO_BACKUP_RETAIN}" f total cut
     local -a found=() doomed=() rm_cmd=(rm -rf)
     [ -n "$orig" ] || return 0
     [ "$need_sudo" = 1 ] && rm_cmd=(sudo rm -rf)
@@ -358,19 +362,163 @@ prune_file_backups() {
     done < <(compgen -G "$orig.bak-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]" 2>/dev/null | sort)
 
     total=${#found[@]}
-    [ "$total" -gt "$DANKMANGO_BACKUP_RETAIN" ] || return 0   # under the cap — stay quiet
-    cut=$(( total - DANKMANGO_BACKUP_RETAIN ))
+    [ "$total" -gt "$retain" ] || return 0                    # under the cap — stay quiet
+    cut=$(( total - retain ))
     doomed=( "${found[@]:0:cut}" )                            # the oldest $cut, and only those
 
     if [ "${DRY_RUN:-0}" = 1 ]; then
-        info "(dry-run) would tidy $cut older backup(s) of $(basename "$orig"), keeping the most recent $DANKMANGO_BACKUP_RETAIN"
+        info "(dry-run) would tidy $cut older backup(s) of $(basename "$orig"), keeping the most recent $retain"
         return 0
     fi
     if "${rm_cmd[@]}" "${doomed[@]}" 2>/dev/null; then
-        info "tidied $cut older backup(s) of $(basename "$orig") — the most recent $DANKMANGO_BACKUP_RETAIN are kept."
+        info "tidied $cut older backup(s) of $(basename "$orig") — the most recent $retain are kept."
     else
         warn "couldn't tidy $cut older backup(s) of $orig — left in place. Harmless; they only take up space."
     fi
+    return 0
+}
+
+# =============================================================================
+# DMS plugin trees — and why their backups live somewhere else
+# =============================================================================
+# ~/.config/DankMaterialShell/plugins/ IS DMS'S SCAN PATH. PluginService walks it at
+# every shell start, reads each subdirectory's plugin.json, and registers what it
+# finds. A backup made the obvious way -- plugins/<id>.bak-<stamp>/ -- is therefore
+# not an inert copy sitting beside the live plugin: it is a FULLY VALID SECOND PLUGIN
+# DIRECTORY DECLARING THE SAME id, inside the directory that gets scanned.
+#
+# PluginService resolves a same-id collision by first-registered-wins (its shouldReplace
+# is false for user-vs-user), and directory scan order is not guaranteed stable across
+# process restarts. So whichever of {live, backup-from-June, backup-from-July, ...}
+# the scan happens to reach first is the one that runs. That is not theoretical: it is
+# what made Monitor Mode "regress to an old variant" after nothing more than a
+# quickshell restart -- no install, no update, no manifest run recorded between the bad
+# state and the good one. Five monitorMode.bak-* dirs had accumulated over ~6 weeks,
+# each one a valid candidate.
+#
+# THE FIX IS THE LOCATION, NOT THE COUNT. Capping the backups at 10 would still leave
+# up to 10 same-id impostors in the scan path. So backups move to a SIBLING directory
+# DMS does not scan, and the cap comes along on top of that, because "no unbounded
+# growth by default" is the standard everywhere else in this project
+# (DANKMANGO_BACKUP_RETAIN, DANKMANGO_SNAPSHOT_RETAIN, DANKMANGO_RESCUE_RETAIN).
+DMS_PLUGINS_DIR="$HOME/.config/DankMaterialShell/plugins"
+DMS_PLUGIN_BACKUPS_DIR="$HOME/.config/DankMaterialShell/plugin-backups"
+# Its own number rather than DANKMANGO_BACKUP_RETAIN, for the same reason uninstall.sh
+# keeps DANKMANGO_RESCUE_RETAIN separate: these are whole plugin TREES in a directory
+# of their own, so someone tuning how many old plugin versions to keep should not have
+# to change the cap on every ordinary file backup as well. Same value, separate knob.
+DANKMANGO_PLUGIN_BACKUP_RETAIN=10
+
+# plugin_backup_take PID LIVE_TREE — back up the currently-installed plugin tree
+# before it is overwritten. Returns 0 only when a backup was actually made (or would
+# be, under --dry-run); every "nothing to back up" case returns non-zero silently so
+# callers do not have to re-test the conditions.
+#
+# Shared by install.sh (stage 14) and update.sh (the `plugin` route), which had two
+# copies of this with different guards -- update.sh's the stricter of the two. The
+# guards are all here now, and each one is load-bearing:
+#   * empty/absent tree  : a .bak- of a directory that did not exist is pure litter.
+#   * backup already there: `cp -a DIR DEST` copies INTO DEST when DEST exists, so a
+#     second backup under the same stamp nests as <id>.bak-<stamp>/<id>/ instead of
+#     replacing. Happens within one run, and across two runs that start in the same
+#     second (rewound manifest, scripted re-run). Never delete the existing one to
+#     make room -- it is the copy of the state we are about to overwrite.
+plugin_backup_take() {
+    # dest on its own line, NOT folded into the `local` above: bash makes every name in
+    # a single `local` local (and unset) before assigning any of them, so referencing
+    # $pid there expands to nothing -- and to an "unbound variable" abort under set -u.
+    local pid="$1" tgt="$2" dest
+    dest="$DMS_PLUGIN_BACKUPS_DIR/$pid.bak-$STAMP"
+    [ -n "$pid" ] && [ -n "$tgt" ] || return 1
+    [ -d "$tgt" ] && [ -n "$(ls -A "$tgt" 2>/dev/null)" ] || return 1
+    if [ -e "$dest" ]; then
+        info "plugin '$pid' is already backed up for this run -> $dest"
+        return 1
+    fi
+    if [ "${DRY_RUN:-0}" = 1 ]; then
+        info "(dry-run) would back up plugin '$pid' -> $dest"
+        return 0
+    fi
+    mkdir -p "$DMS_PLUGIN_BACKUPS_DIR" 2>/dev/null || {
+        warn "couldn't create $DMS_PLUGIN_BACKUPS_DIR — plugin '$pid' will be overwritten with no backup."
+        return 1
+    }
+    if cp -a "$tgt" "$dest"; then
+        info "backed up existing plugin -> $dest"
+        prune_file_backups "$DMS_PLUGIN_BACKUPS_DIR/$pid" 0 "$DANKMANGO_PLUGIN_BACKUP_RETAIN"
+        return 0
+    fi
+    warn "couldn't back up plugin '$pid' to $dest — leaving the installed copy alone."
+    return 1
+}
+
+# plugin_backups_relocate — move plugin backups that earlier versions left INSIDE the
+# scan path out to $DMS_PLUGIN_BACKUPS_DIR, then cap what is there.
+#
+# THIS IS THE MIGRATION, and it is deliberately not written as one. A manifest
+# migration runs once and is then marked applied forever; this has to keep running,
+# because a machine can pick up an old-style backup at any time -- an older DankMango
+# clone, a hand-made copy, a half-finished run. It is idempotent and silent when there
+# is nothing to move, so running it on every install/update costs nothing.
+#
+# MOVES, NEVER DELETES. Everything here is somebody's copy of a working plugin; the
+# problem is only WHERE it is. The retention cap below then applies the normal rules to
+# the relocated set -- and prune_file_backups matches the .bak-<stamp> form strictly,
+# so a hand-labelled backup (presetSwitcher.bak-widget-20260816-121959 on the dev box)
+# is moved to safety but never deleted.
+#
+# The plugin.json test is what makes this safe to point at a glob: only a directory
+# that DMS would actually register as a plugin can hijack an id, and only those are
+# touched. Anything else in the plugins folder is left exactly where it is.
+plugin_backups_relocate() {
+    local d base dest pid moved=0 skipped=0
+    local -A ids=()
+    [ -d "$DMS_PLUGINS_DIR" ] || return 0
+    for d in "$DMS_PLUGINS_DIR"/*.bak*; do
+        [ -d "$d" ] || continue
+        [ -f "$d/plugin.json" ] || continue
+        base="$(basename "$d")"
+        dest="$DMS_PLUGIN_BACKUPS_DIR/$base"
+        if [ "${DRY_RUN:-0}" = 1 ]; then
+            info "(dry-run) would move stale plugin backup out of DMS's scan path: $base"
+            moved=$((moved+1)); continue
+        fi
+        mkdir -p "$DMS_PLUGIN_BACKUPS_DIR" 2>/dev/null || {
+            warn "couldn't create $DMS_PLUGIN_BACKUPS_DIR — old plugin backups stay in the scan path."
+            return 1
+        }
+        if [ -e "$dest" ]; then
+            warn "$dest already exists — leaving $d in place (move or delete one of them by hand)."
+            skipped=$((skipped+1)); continue
+        fi
+        if mv "$d" "$dest"; then
+            ok "moved plugin backup out of DMS's scan path: $base"
+            moved=$((moved+1))
+        else
+            warn "couldn't move $d — DMS may still load it as a duplicate of '${base%%.bak*}'."
+            skipped=$((skipped+1))
+        fi
+    done
+    if [ "$moved" -gt 0 ]; then
+        if [ "${DRY_RUN:-0}" = 1 ]; then
+            info "(dry-run) $moved plugin backup(s) would move to $DMS_PLUGIN_BACKUPS_DIR, which DMS does not scan."
+        else
+            info "$moved plugin backup(s) now live in $DMS_PLUGIN_BACKUPS_DIR, which DMS does not scan."
+        fi
+        info "  That removes the same-id collision that could make DMS load an old plugin version."
+    fi
+    # Cap the relocated set per plugin id. Done here (not only in plugin_backup_take)
+    # because a machine can arrive with more than the cap already, for a plugin this
+    # run never redeploys.
+    [ -d "$DMS_PLUGIN_BACKUPS_DIR" ] || return 0
+    for d in "$DMS_PLUGIN_BACKUPS_DIR"/*.bak-*; do
+        [ -d "$d" ] || continue
+        pid="$(basename "$d")"; pid="${pid%%.bak-*}"
+        ids["$pid"]=1
+    done
+    for pid in "${!ids[@]}"; do
+        prune_file_backups "$DMS_PLUGIN_BACKUPS_DIR/$pid" 0 "$DANKMANGO_PLUGIN_BACKUP_RETAIN"
+    done
     return 0
 }
 
@@ -468,6 +616,100 @@ user_copy() {
             "$( [ "$existed" = 1 ] && printf 'preexisting; restore its .bak-* if one was made' || printf 'rm %s' "$dst" )"
     fi
     return 0
+}
+
+
+# ---- GTK3 live-theme shadow -------------------------------------------------
+# THE POINT: without this, changing the wallpaper leaves every running GTK3 app
+# (Nemo above all) showing the OLD colours until you close and reopen it.
+#
+# GTK3 reads the user stylesheet ~/.config/gtk-3.0/gtk.css exactly once, at
+# process start, and never re-reads it -- no gsettings key, portal signal or
+# internal file monitor changes that. A NAMED THEME, however, IS re-read from
+# disk (following its @imports) every time org.gnome.desktop.interface gtk-theme
+# changes -- and DMS already flips that key on every wallpaper change, in its
+# refreshGTK(). So we shadow the packaged adw-gtk3 themes with generated copies
+# that import the packaged CSS *and then* the matugen palette, and keep the
+# palette import OUT of the user stylesheet (config/gtk-3.0/gtk.css does that).
+# DMS's existing flip then becomes a real live reload -- no daemon, no watcher.
+#
+# ~/.local/share/themes wins over /usr/share/themes in GTK's theme lookup, which
+# is what makes the shadow take effect without touching the pacman-owned files.
+# The two theme NAMES are not a choice: DMS's refreshGTK() sets gtk-theme to a
+# hardcoded adw-gtk3 / adw-gtk3-dark, so those are the names that must be shadowed.
+# GTK4 is NOT covered: it ignores custom named themes at runtime (see GUIDE.md).
+#
+# Shared by install.sh (stage 9b) and update.sh (kind: gtk3-live-theme).
+# Reports the number of files written in GTK3_SHADOW_COUNT and returns non-zero if
+# that is 0. NOT via stdout -- ok()/info() print there, so a command substitution
+# would capture the progress lines along with the number.
+GTK3_SHADOW_MARK="DankMango GTK3 live-theme shadow"
+GTK3_SHADOW_COUNT=0
+gtk3_shadow_install() {
+    local tpl="$REPO_DIR/config/gtk-3.0/live-theme/shadow-theme.css.in"
+    local colors="$HOME/.config/gtk-3.0/dank-colors.css"
+    local n=0 theme leaf base dst
+    GTK3_SHADOW_COUNT=0
+    if [ ! -f "$tpl" ]; then
+        warn "missing $tpl -> GTK3 apps will still need a restart after a wallpaper change."
+        return 1
+    fi
+    for theme in adw-gtk3 adw-gtk3-dark; do
+        for leaf in gtk.css gtk-dark.css; do
+            base="/usr/share/themes/$theme/gtk-3.0/$leaf"
+            dst="$HOME/.local/share/themes/$theme/gtk-3.0/$leaf"
+            # Only shadow a file that exists upstream -- importing a missing file
+            # would leave every GTK3 app with an unstyled fallback.
+            [ -f "$base" ] || { info "no $base -> skipping that shadow"; continue; }
+            # Never silently replace a real user-installed theme of the same name.
+            if [ -f "$dst" ] && ! grep -q "$GTK3_SHADOW_MARK" "$dst"; then
+                warn "$dst exists and is NOT ours -> leaving it alone"
+                warn "  (move it aside and re-run install.sh for the live wallpaper refresh)"
+                continue
+            fi
+            mkdir -p "$(dirname "$dst")"
+            if sed -e "s|@THEME@|$theme|g" -e "s|@LEAF@|$leaf|g" -e "s|@COLORS@|$colors|g" \
+                   "$tpl" > "$dst.tmp" && mv "$dst.tmp" "$dst"; then
+                ok "installed GTK3 live-theme shadow: $dst"
+                n=$((n+1))
+                manifest_add_change files-generated "$CUR_STAGE" "$dst" \
+                    "$(jq -nc --arg f "$dst" --arg t "$theme" '{file:$f, theme:$t, generator:"gtk3_shadow_install", note:"shadow theme that makes GTK3 apps pick up wallpaper colours without a restart"}')" \
+                    "rm $dst (GTK3 apps then need a restart after a wallpaper change)"
+            else
+                rm -f "$dst.tmp"
+                warn "couldn't write $dst -> GTK3 live refresh incomplete."
+            fi
+        done
+    done
+    if [ "$n" -gt 0 ]; then
+        [ -f "$colors" ] || info "$colors doesn't exist yet — DMS writes it on the next wallpaper change."
+        # Make the running session pick the shadow up now, the same way DMS does.
+        if have gsettings; then
+            local cur; cur="$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null | tr -d "'")"
+            if [ -n "$cur" ]; then
+                gsettings set org.gnome.desktop.interface gtk-theme "" 2>/dev/null || true
+                gsettings set org.gnome.desktop.interface gtk-theme "$cur" 2>/dev/null || true
+                ok "nudged gtk-theme so running GTK3 apps load the shadow now"
+            fi
+        fi
+        info "already-running GTK3 apps need ONE restart to cross over; after that"
+        info "  they follow the wallpaper live."
+    fi
+    GTK3_SHADOW_COUNT="$n"
+    [ "$n" -gt 0 ]
+}
+
+# Break the symlink DMS's own gtk.sh leaves at ~/.config/gtk-3.0/gtk.css (it points
+# at dank-colors.css). user_copy would otherwise cp straight THROUGH that link and
+# clobber the matugen palette with our layer file.
+gtk_unlink_dms_symlinks() {
+    local l
+    for l in "$HOME/.config/gtk-3.0/gtk.css" "$HOME/.config/gtk-4.0/gtk.css"; do
+        if [ -L "$l" ]; then
+            info "$l is a symlink (DMS gtk.sh) -> removing it before writing our layer file"
+            rm -f "$l"
+        fi
+    done
 }
 
 # ---- install manifest -------------------------------------------------------
@@ -620,6 +862,254 @@ manifest_finalize() {
     '
 }
 
+# =============================================================================
+# Orphan detection — files DankMango installed that it no longer ships
+# =============================================================================
+# THE HOLE THIS FILLS. update.sh can retire a removed file: it diffs LAST..HEAD, sees
+# a `D`, and calls retire_file. install.sh cannot -- it only ever overlays, has no
+# deletion path at all, and yet it finishes with manifest_finalize, which advances
+# lastAppliedCommit to HEAD. So an install.sh re-run silently CONSUMES the delta window
+# that update.sh would have used, and every file deleted from the repo inside that
+# window is orphaned on disk permanently: no future update can see it, because the
+# commit that removed it is now behind LAST. That is not hypothetical -- e7af04c
+# ("Remove Float mode from public repo") is an ancestor of this dev box's
+# lastAppliedCommit while ~/.config/mango/scripts/dp2-floatsize.sh is still on disk.
+#
+# WHY THIS IS NOT A COMMIT-RANGE FIX. Comparing two commits is the thing that broke;
+# doing it more carefully would still lose to any run that advances the pointer. So
+# this compares DISK AGAINST THE CURRENT REPO instead, and the commit range never
+# enters into it. Whatever happened to the pointer, the question "is this file still
+# something DankMango ships?" has the same answer.
+#
+# THREE SOURCES OF CANDIDATES, each deliberately narrow. Nothing is a candidate unless
+# DankMango has positive evidence it put it there:
+#
+#   1. HISTORY. Every path this repo has EVER tracked (all of `git log --name-only`,
+#      not a window), minus what HEAD tracks, routed through route_dest. Catches the
+#      dp2-floatsize.sh class: files that live inside a coarse `owned-tree` manifest
+#      record (~/.config/mango is ONE entry, not one per script), which no per-file
+#      manifest lookup can ever see. A shallow clone truncates history and weakens
+#      this source -- sources 2 and 3 still work.
+#   2. THE MANIFEST. Per-file `*-file-installed` records whose path HEAD no longer
+#      installs. preexisting==true entries are skipped, the same rule update.sh's
+#      is_ours applies: we overwrote a file that was already the user's, so it is
+#      theirs to keep.
+#   3. PLUGIN TREES. `owned-tree` records directly under the plugins directory whose
+#      id is not one this repo ships any more, i.e. a retired plugin. Keyed on the
+#      manifest, so third-party plugins the user installed themselves (catWidget,
+#      cavaVisualizer ...) are invisible to it, which is the point.
+#
+# EXISTENCE ON DISK IS REQUIRED IN ALL THREE. This never reports something that is
+# already gone, and it needs no state of its own: once an orphan is removed it simply
+# stops being found, so there is no list to keep in sync and no manifest schema change.
+#
+# route KINDS THAT ARE DELIBERATELY NOT CANDIDATES:
+#   dms-state  : settings.json / plugin_settings.json are the user's live state. If the
+#                repo stops shipping a copy, that changes nothing about theirs.
+#   wallpaper  : may well be the wallpaper they are looking at right now, and
+#                retire_file already declines to remove these (they are recorded as one
+#                files-copied directory, so is_ours says no). Same answer here.
+#   plugin     : route_dest returns the REPO path for these, not a destination. Handled
+#                as whole trees by source 3.
+#   gtk3-live-theme : destination is a directory that four generated files share.
+#
+# Output: one orphan per line, "PATH<TAB>SCOPE<TAB>WHAT" (WHAT = file|tree), sorted.
+# Nothing else goes to stdout, so callers can capture it.
+# Returns 0 if orphans were found, 1 if none, 2 if the check could not run.
+manifest_orphans() {
+    local rel route dst scope kind base pid line
+    local -A expected=() shipped=() ids=() seen=()
+    local -a out=()
+
+    have git || return 2
+    [ -n "${REPO_DIR:-}" ] && [ -d "$REPO_DIR/.git" ] || return 2
+
+    # ---- what THIS repo installs (the reference set) -------------------------
+    while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        shipped["$rel"]=1
+        route="$(route_dest "$rel")" || continue
+        IFS=$'\t' read -r dst scope kind <<<"$route"
+        expected["$dst"]=1
+    done < <(git -C "$REPO_DIR" ls-files 2>/dev/null)
+    # A CLONE THAT LISTS NOTHING MUST NOT MEAN "EVERYTHING IS AN ORPHAN". An empty
+    # reference set would make every installed file a candidate at once, which is the
+    # one way this could do real damage. Refuse to answer instead.
+    [ "${#shipped[@]}" -gt 0 ] || return 2
+
+    # ---- source 1: paths this repo used to ship ------------------------------
+    while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        [ -n "${shipped[$rel]:-}" ] && continue
+        route="$(route_dest "$rel")" || continue
+        IFS=$'\t' read -r dst scope kind <<<"$route"
+        case "$kind" in dms-state|wallpaper|plugin|gtk3-live-theme) continue ;; esac
+        # A path another, still-shipped repo file installs to is not an orphan --
+        # that is what a rename looks like from this side.
+        [ -n "${expected[$dst]:-}" ] && continue
+        [ -e "$dst" ] || continue
+        [ -n "${seen[$dst]:-}" ] && continue
+        seen["$dst"]=1; out+=("$dst"$'\t'"$scope"$'\t'file)
+    done < <(git -C "$REPO_DIR" log --pretty=format: --name-only HEAD 2>/dev/null | sort -u)
+
+    # ---- source 2: per-file manifest records --------------------------------
+    if have jq && [ -f "$MANIFEST" ]; then
+        while IFS=$'\t' read -r dst scope; do
+            [ -n "$dst" ] || continue
+            [ -n "${expected[$dst]:-}" ] && continue
+            [ -e "$dst" ] || continue
+            [ -n "${seen[$dst]:-}" ] && continue
+            seen["$dst"]=1; out+=("$dst"$'\t'"$scope"$'\t'file)
+        done < <(jq -r '
+            .systemChanges[]?
+            | select((.type // "") | endswith("-file-installed"))
+            | select((.detail.preexisting // false) == false)
+            | ((.detail.path // .key) // empty) as $p
+            | "\($p)\t\(if ((.type // "")|startswith("system")) then "system" else "user" end)"
+        ' "$MANIFEST" 2>/dev/null)
+
+        # ---- source 3: retired plugin trees ---------------------------------
+        # Needs the ids THIS repo ships; without a plugins/ directory to read them
+        # from, every installed plugin would look retired, so skip the source
+        # entirely rather than guess.
+        if [ -d "$REPO_DIR/plugins" ]; then
+            for rel in "$REPO_DIR"/plugins/*/plugin.json; do
+                [ -f "$rel" ] || continue
+                pid="$(grep -oP '"id"\s*:\s*"\K[^"]+' "$rel" | head -1)"
+                [ -n "$pid" ] && ids["$pid"]=1
+            done
+            if [ "${#ids[@]}" -gt 0 ]; then
+                while IFS= read -r dst; do
+                    [ -n "$dst" ] || continue
+                    case "$dst" in "$DMS_PLUGINS_DIR"/*) ;; *) continue ;; esac
+                    base="${dst#"$DMS_PLUGINS_DIR"/}"
+                    case "$base" in */*) continue ;; esac      # direct children only
+                    [ -n "${ids[$base]:-}" ] && continue
+                    [ -d "$dst" ] || continue
+                    [ -n "${seen[$dst]:-}" ] && continue
+                    seen["$dst"]=1; out+=("$dst"$'\t'user$'\t'tree)
+                done < <(jq -r '.systemChanges[]? | select(.type == "owned-tree") | .key // empty' \
+                              "$MANIFEST" 2>/dev/null)
+            fi
+        fi
+    fi
+
+    [ "${#out[@]}" -gt 0 ] || return 1
+    printf '%s\n' "${out[@]}" | sort
+    return 0
+}
+
+# manifest_orphans_offer — print what manifest_orphans found and, only if the user
+# says so, back it up and remove it.
+#
+# REPORT FIRST, AND NEVER A SILENT DELETE. Everything found here is a file the user did
+# not ask to have removed, on a machine where the previous version of this code left it
+# behind; deleting it unannounced would be the same class of mistake in the other
+# direction. So the default is to print, and the removal is opt-in twice over: nothing
+# happens without an answer, and "one by one" is offered because choosing is the point
+# -- an orphan that is inert (dp2-floatsize.sh was, nothing referenced it) is a
+# perfectly reasonable thing to keep.
+#
+# Backups follow retire_file's pattern exactly (<path>.bak-<stamp>, pruned to the usual
+# cap), with retire_file's one exception carried over: nothing is left inside the
+# root-owned SDDM theme directory the greeter loads from pre-auth. Those files are in
+# git history if they are ever wanted back.
+manifest_orphans_offer() {
+    local rc dst scope what ans n=0
+    local -a orphans=()
+    local listing listing_line
+    listing="$(manifest_orphans)"; rc=$?
+    case "$rc" in
+        1) ok "no orphaned files — everything installed is still shipped by this version."; return 0 ;;
+        2) info "couldn't check for orphaned files (needs git and this clone's history) — skipping."; return 0 ;;
+    esac
+    while IFS= read -r listing_line; do
+        [ -n "$listing_line" ] && orphans+=("$listing_line")
+    done <<<"$listing"
+    n="${#orphans[@]}"
+
+    warn "$n file(s)/folder(s) here came from DankMango but are no longer part of it:"
+    for listing_line in "${orphans[@]}"; do
+        IFS=$'\t' read -r dst scope what <<<"$listing_line"
+        info "  $dst$( [ "$what" = tree ] && printf ' (whole folder)' )$( [ "$scope" = system ] && printf ' (system file — needs sudo)' )"
+    done
+    info "They are leftovers from an earlier version. Keeping them is harmless in itself;"
+    info "  a stale script that something still calls is the case worth clearing."
+
+    if [ "${DRY_RUN:-0}" = 1 ]; then
+        info "(dry-run) would offer to back these up and remove them — nothing asked, nothing changed."
+        return 0
+    fi
+    if [ ! -t 0 ]; then
+        info "not on a terminal — leaving them in place. Re-run install.sh interactively to clear them."
+        return 0
+    fi
+
+    read -r -p "    Back these up and remove them? [a]ll / [s]ome, one by one / [k]eep all (default) " ans
+    case "$ans" in
+        [aA]*) ;;
+        [sS]*) ;;
+        *) info "left in place — nothing was removed."; return 0 ;;
+    esac
+    for listing_line in "${orphans[@]}"; do
+        IFS=$'\t' read -r dst scope what <<<"$listing_line"
+        # A file orphan can sit INSIDE a folder orphan (sorted order puts the folder
+        # first), so by now it may already be gone. Say so rather than failing to
+        # remove something that was never there.
+        [ -e "$dst" ] || { info "already gone (removed with its folder): $dst"; continue; }
+        case "$ans" in [sS]*) ask_yn "remove $dst ?" || { info "kept $dst"; continue; } ;; esac
+        _orphan_retire "$dst" "$scope" "$what"
+    done
+    return 0
+}
+
+# _orphan_retire PATH SCOPE WHAT — back up (where a backup makes sense) and remove one
+# orphan. Split out so manifest_orphans_offer reads as the decision it is.
+_orphan_retire() {
+    local dst="$1" scope="$2" what="$3" sudo_needed=0 rm_cmd=(rm -rf)
+    [ "$scope" = system ] && { sudo_needed=1; rm_cmd=(sudo rm -rf); }
+    case "$dst" in
+        "$SDDM_THEME_DEST"/*)
+            # No .bak- copy, exactly as retire_file argues: the file came from the repo,
+            # so git still has it, and a stray backup inside a root-owned directory the
+            # greeter executes from pre-auth is the one place not to leave litter.
+            if sudo rm -rf "$dst"; then ok "removed $dst (still in git history if you want it back)"
+            else warn "couldn't remove $dst"; fi
+            return ;;
+    esac
+    # A RETIRED PLUGIN'S BACKUP MUST NOT LAND BESIDE THE LIVE PLUGINS. Backing a plugin
+    # tree up as plugins/<id>.bak-<stamp>/ would put a valid, same-id plugin directory
+    # back into DMS's scan path -- so "retiring" the plugin would leave DMS still able to
+    # load it, which is Bug B recreated by the fix for Bug A. Route it through the same
+    # sibling directory every other plugin backup now uses.
+    case "$dst" in
+        "$DMS_PLUGINS_DIR"/*)
+            if plugin_backup_take "$(basename "$dst")" "$dst"; then
+                if rm -rf "$dst"; then
+                    ok "removed $dst (backup in $DMS_PLUGIN_BACKUPS_DIR)"
+                else
+                    warn "couldn't remove $dst — the backup is safe to delete."; return 1
+                fi
+            else
+                warn "couldn't back up $dst — leaving it alone rather than removing it unbacked."
+                return 1
+            fi
+            return ;;
+    esac
+    if [ "$sudo_needed" = 1 ]; then sudo cp -a "$dst" "$dst.bak-$STAMP" 2>/dev/null
+    else cp -a "$dst" "$dst.bak-$STAMP" 2>/dev/null; fi || {
+        warn "couldn't back up $dst — leaving it alone rather than removing it unbacked."
+        return 1
+    }
+    prune_file_backups "$dst" "$sudo_needed"
+    if "${rm_cmd[@]}" "$dst"; then
+        ok "removed $dst (backup: $dst.bak-$STAMP)"
+    else
+        warn "couldn't remove $dst — the backup beside it is safe to delete."
+        return 1
+    fi
+}
+
 # ---- package sets (moved verbatim from install.sh stage 3) ------------------
 # Official-repo packages (the AUR helper pulls these straight from the repos).
 # rsync: NOT part of a base CachyOS install. It's no longer needed by the SDDM
@@ -688,6 +1178,266 @@ RIPE_CHROMA_BIN="$HOME/.local/bin/dankmango-ripe-chroma"
 # (cachyos-extra-v3/rust) and on Arch (extra/rust) -- NO AUR build, matching this
 # project's posture of keeping AUR to the one package that genuinely needs it.
 RIPE_CHROMA_PKG="rust"
+
+# ---- the FIRST palette (generation only -- never activation) ----------------
+# WHY THIS EXISTS: building the engine and never running it leaves a machine in a
+# state that is installed, wired up, and producing nothing. The engine is
+# event-driven off the WALLPAPER (wallpaper-border-reload.sh's regen_ripe_chroma),
+# and on a fresh install the build happens at stage 13b while the wallpaper is not
+# set until stage 16 -- so the first trigger is whenever the user next changes
+# wallpaper, which may be never. Health check section 12d now reports exactly that
+# hole ("installed but has never produced a palette"), and it is right to: the only
+# observable symptom of it is the absence of a file.
+#
+# THIS FUNCTION WRITES A FILE. THAT IS ALL IT DOES.
+# It does NOT touch settings.json, and specifically never sets currentThemeName or
+# customThemeFile. Generate and Activate stay separate FUNCTIONS -- the engine's own
+# output.rs says so ("pointing DMS at the palette is the user's call, not ours") and
+# the control hub exposes them as two buttons, which is the behaviour anyone who has
+# already opted in depends on. Activation lives next door in
+# ripe_chroma_activate_theme(), and the ONLY thing allowed to chain the two together
+# is a first-time opt-in, where the prompt said in as many words that it would.
+#
+# NO HEARTBEAT, UNLIKE ripe_chroma_build(). That one wraps a build that can run for
+# minutes; this is a single extraction. Measured on the largest wallpaper this repo
+# ships (2912x1632 PNG, 9.3 MiB): 52-59 ms across five runs. There is nothing to
+# watch, so a progress counter would be noise.
+#
+# Callers: install.sh stage 16 (right after the wallpaper is seeded/applied) and
+# update.sh's offer-ripe-chroma migration (accept path, using whatever wallpaper is
+# already set). Both are FIRST-TIME opt-in moments; update.sh's stage-4
+# rebuild-on-source-drift block is NOT a caller and must not become one -- it fires
+# for a machine that already has the binary, where the fan-out has been generating
+# on every wallpaper change all along.
+RIPE_CHROMA_THEME="$HOME/.config/DankMaterialShell/dankmango-theme.json"
+RIPE_CHROMA_SESSION="${XDG_STATE_HOME:-$HOME/.local/state}/DankMaterialShell/session.json"
+
+# ripe_chroma_seed_palette [FALLBACK_WALLPAPER]
+# Returns 0 only when a palette was actually written. Every "nothing to do" reason
+# (not opted in, palette already there, no wallpaper) returns non-zero, so callers
+# can stay quiet without having to re-test the conditions themselves.
+ripe_chroma_seed_palette() {
+    local fallback="${1:-}" wp
+
+    # 1. Opt-in check. The BINARY'S EXISTENCE IS THE OPT-IN RECORD -- the same
+    #    convention the fan-out, the control hub and the health check all use. A
+    #    machine that declined stage 13b has no binary, so this is a silent no-op
+    #    and nothing about Ripe Chroma happens on it.
+    [ -x "$RIPE_CHROMA_BIN" ] || return 1
+
+    # 2. NEVER CLOBBER A FILE THAT IS ALREADY THERE. Two very different things can
+    #    occupy this path and we must not overwrite either: a palette from an
+    #    earlier generation (the user's colours, possibly hand-edited), or somebody
+    #    else's custom theme parked at our default name. Non-empty is the test --
+    #    a 0-byte leftover from an interrupted write is not content worth keeping,
+    #    and regenerating over it is the repair, not the damage.
+    if [ -s "$RIPE_CHROMA_THEME" ]; then
+        info "a palette already exists at $RIPE_CHROMA_THEME — left exactly as it is."
+        return 1
+    fi
+
+    # 3. The wallpaper. session.json is DMS's own record of what is actually set,
+    #    which is what makes one function serve both callers: on a fresh install
+    #    stage 16 has just written it, and on an update it has been true all along.
+    #    The fallback covers the one case where it can be unreadable here -- no jq,
+    #    which is also what stops stage 16 seeding it in the first place.
+    if have jq; then
+        wp="$(jq -r '.wallpaperPath // empty' "$RIPE_CHROMA_SESSION" 2>/dev/null)"
+    fi
+    [ -n "${wp:-}" ] && [ -f "$wp" ] || wp="$fallback"
+    if [ -z "$wp" ] || [ ! -f "$wp" ]; then
+        info "no wallpaper set yet — Ripe Chroma writes its first palette on your next wallpaper change."
+        return 1
+    fi
+
+    # 4. Generate, at the CLI's own documented defaults (accurate / 5 colours).
+    #    Not read from the control hub's saved preferences the way the fan-out does,
+    #    and that is correct rather than an omission: this only ever runs at the
+    #    moment of first opt-in, when the hub's colorEngine settings cannot exist yet
+    #    (nothing has been able to write them -- there was no engine). From the next
+    #    wallpaper change onwards the fan-out takes over and honours them.
+    #
+    #    --output IS PASSED EXPLICITLY, always. Left to itself the engine resolves
+    #    its output to DMS's currently configured customThemeFile, so on a machine
+    #    already pointed at a third-party theme the default would write into THAT
+    #    file. Same rule the fan-out and the control hub follow, for the same reason.
+    if "$RIPE_CHROMA_BIN" --wallpaper "$wp" --count 5 --mode accurate \
+                          --output "$RIPE_CHROMA_THEME" >/dev/null 2>&1; then
+        ok "Ripe Chroma generated its first palette -> $RIPE_CHROMA_THEME"
+        # Recorded as files-generated so uninstall.sh removes it: nothing pre-existed
+        # at this path (step 2 guarantees that), so it is unambiguously ours.
+        manifest_add_change files-generated "$CUR_STAGE" "$RIPE_CHROMA_THEME" \
+            "$(jq -nc --arg f "$RIPE_CHROMA_THEME" --arg w "$wp" \
+                '{file:$f, wallpaper:$w, mode:"accurate", count:5, generator:"ripe_chroma_seed_palette",
+                  note:"first palette; generation only — any activation is recorded separately"}')" \
+            "rm $RIPE_CHROMA_THEME"
+        return 0
+    fi
+    warn "Ripe Chroma couldn't generate a palette from $wp — it retries on your next wallpaper change."
+    return 1
+}
+
+# ---- switching DMS over to that palette (FIRST-TIME OPT-IN ONLY) ------------
+# WHAT PROBLEM THIS SOLVES. Generating the palette leaves the machine one step
+# short: nothing is displaying it. Until you know the control hub has a button for
+# it, the only route is DMS Settings -> Theme & Colors -> flip Auto to Custom ->
+# browse to a JSON file by hand, which is a lot of ceremony to finish something you
+# already said yes to. So the FIRST activation -- and only the first -- is folded
+# into that yes.
+#
+# THE CONSENT IS THE OPT-IN PROMPT, AND IT IS THE ONLY GATE. Both prompts (install.sh
+# stage 13b, update.sh's offer-ripe-chroma) now say plainly that accepting also makes
+# Ripe Chroma the active theme, replacing whatever is active now. A second "are you
+# sure" after that would be asking the same question twice.
+#
+# INCLUDING WHEN SOMETHING ELSE IS ALREADY ACTIVE. There is deliberately NO
+# already-on-a-custom-theme guard here. If you were on a third-party custom theme and
+# you accept a prompt that says this replaces it, it replaces it. The old value is in
+# the .bak- beside settings.json and in the manifest either way.
+#
+# WHY THIS CANNOT LITERALLY REUSE THE CONTROL HUB'S activate(). That one is QML
+# running INSIDE DMS (RipeChromaSection.qml): SettingsData.set(...) then
+# Theme.switchTheme("custom"). A shell script has no handle on a live QML singleton,
+# and DMS is not even running during a fresh install. What it does instead is write
+# the exact state those two calls persist -- verified against Theme.qml's switchTheme,
+# which on the "custom" branch saves currentThemeCategory and currentThemeName, and
+# against SettingsData.qml, whose settings.json FileView has watchChanges: true and
+# calls applyStoredTheme() on an external edit. So on a running DMS this write IS the
+# button press, and on a not-yet-running one it is what the button would have left
+# behind. Three keys, and all three matter:
+#     customThemeFile      the path to parse                     (nothing watches it alone)
+#     currentThemeName     "custom" — what switchTheme reacts to (the one that repaints)
+#     currentThemeCategory "custom" — what the Settings UI shows (else the panel lies)
+#
+# ONE EXCEPTION, TAKEN STRAIGHT FROM switchTheme: it leaves currentThemeCategory alone
+# when it is already "registry". Same here, for the same reason -- clobbering it would
+# strand the Settings panel on a category with no matching selection.
+#
+# ripe_chroma_activate_theme
+# Returns 0 only when settings.json was actually changed.
+ripe_chroma_activate_theme() {
+    local settings="$HOME/.config/DankMaterialShell/settings.json" tmp cat_now
+
+    # Guarded on the palette, not on the binary: activating DMS onto a file that
+    # is not there yet paints the desktop with a parse failure. Callers only reach
+    # this after ripe_chroma_seed_palette returned 0, so this is the belt to that.
+    [ -s "$RIPE_CHROMA_THEME" ] || return 1
+    [ -f "$settings" ] || { warn "no settings.json yet — switch DMS to the Ripe Chroma theme from the control hub (SUPER+d)."; return 1; }
+    have jq || { warn "jq unavailable — couldn't point DMS at $RIPE_CHROMA_THEME; do it from the control hub (SUPER+d)."; return 1; }
+
+    cat_now="$(jq -r '.currentThemeCategory // empty' "$settings" 2>/dev/null)"
+    [ "$cat_now" = registry ] || cat_now=custom
+
+    tmp="$(mktemp)"
+    if jq --arg f "$RIPE_CHROMA_THEME" --arg c "$cat_now" \
+          '.customThemeFile = $f | .currentThemeName = "custom" | .currentThemeCategory = $c' \
+          "$settings" > "$tmp" && [ -s "$tmp" ]; then
+        # ONE BACKUP PER FILE PER RUN, and it must be the OLDEST state, not the
+        # newest. install.sh has already edited settings.json twice by the time it
+        # gets here (stages 10 and 10b), and every writer in a run shares one $STAMP
+        # -- so a plain `cp -a` would overwrite the .bak- those stages took and quietly
+        # advance the restore point past their edits. The manifest's recorded reversal
+        # says "restore from its .bak-*", so that file has to still mean "before this
+        # run". Same `! -e` reasoning as update.sh's plugin_backup_take. On update.sh's
+        # migration path nothing has backed it up yet, so this takes the backup itself.
+        [ -e "$settings.bak-$STAMP" ] || cp -a "$settings" "$settings.bak-$STAMP"
+        mv "$tmp" "$settings"
+        ok "DMS is now using the Ripe Chroma palette (Settings -> Theme & Colors -> Custom)."
+        manifest_add_backup "$settings" "$settings.bak-$STAMP" user "$CUR_STAGE"
+        prune_file_backups "$settings"
+        manifest_add_change config-edit "$CUR_STAGE" "settings.json:ripe-chroma-activation" \
+            "$(jq -nc --arg f "$settings" --arg t "$RIPE_CHROMA_THEME" --arg c "$cat_now" \
+                '{file:$f, keys:["customThemeFile","currentThemeName","currentThemeCategory"],
+                  customThemeFile:$t, currentThemeName:"custom", currentThemeCategory:$c,
+                  reason:"first-time Ripe Chroma opt-in — disclosed in the opt-in prompt"}')" \
+            "restore $settings from its .bak-*"
+        return 0
+    fi
+    rm -f "$tmp"
+    warn "couldn't point DMS at $RIPE_CHROMA_THEME — switch it on from the control hub (SUPER+d) -> Ripe Chroma."
+    return 1
+}
+
+# ---- building the engine, visibly ------------------------------------------
+# WHY THIS EXISTS: `cargo build --release --quiet` prints NOTHING. On the machine
+# this was first measured on the build took ~24 s, so nobody minded. On a laptop
+# it took 3-4 minutes of a completely still terminal, and the person running it
+# did the only reasonable thing with a program that looks hung -- pressed Ctrl+C.
+# That is not a user error. A step with no output and no clock is indistinguishable
+# from a hang, and no wording on the ETA line fixes that, because the ETA is
+# printed BEFORE the silence starts and hardware varies by an order of magnitude.
+#
+# So the fix is structural: never let this step be silent. A 1-second heartbeat
+# runs off a timer, NOT off cargo's output, which matters because cargo's own
+# quiet stretches are the long ones -- the final link can sit for 30+ seconds
+# saying nothing even at full tilt. An always-advancing elapsed counter plus a
+# crate count means "slow" and "hung" can never look the same.
+#
+# Streaming cargo's real progress (rather than a bare spinner) is also what the
+# rest of this project already does: every other long step here -- the pacman /
+# AUR-helper transactions -- shows the underlying tool's own output. This keeps
+# that convention while folding it into the indented house style.
+#
+# Full output always goes to a log, so a FAILED build can show the actual error
+# instead of the "build by hand to see why" that the silent version could only offer.
+#
+# Sets RIPE_CHROMA_BUILT to the binary path on success. Returns cargo's exit status.
+RIPE_CHROMA_BUILT=""
+ripe_chroma_build() {
+    local dir="$REPO_DIR/$RIPE_CHROMA_SRC"
+    local log rcfile bg rc start now el crates last shown line
+    RIPE_CHROMA_BUILT=""
+    log="$(mktemp -t dankmango-cargo.XXXXXX)"   || { warn "couldn't make a build log — building without progress output."; ( cd "$dir" && cargo build --release ); return $?; }
+    rcfile="$(mktemp -t dankmango-cargo-rc.XXXXXX)" || rcfile="$log.rc"
+
+    # --color never so the progress line we re-print stays plain; the log is read
+    # back by grep/sed and ANSI escapes in it would only get in the way.
+    ( cd "$dir" && cargo build --release --color never >"$log" 2>&1; echo $? >"$rcfile" ) &
+    bg=$!
+
+    # A Ctrl+C here kills cargo along with the script (same process group), so the
+    # only thing worth doing is saying what that leaves behind. It leaves a partial
+    # target/ directory and NOTHING installed -- cargo resumes an interrupted build
+    # from where it stopped, and nothing outside the clone has been touched yet.
+    trap 'printf "\r\033[K"; printf "    %s[warn]%s build interrupted — nothing was installed. Re-running picks the build up where it stopped.\n" "$c_yel" "$c_off"; kill '"$bg"' 2>/dev/null; rm -f "'"$log"'" "'"$rcfile"'"; exit 130' INT
+
+    # shown=-15 so the non-TTY branch prints its first line immediately rather than
+    # 15 s into a build that has already started.
+    start="$(date +%s)"; shown=-15
+    while kill -0 "$bg" 2>/dev/null; do
+        now="$(date +%s)"; el=$(( now - start ))
+        crates="$(grep -c '^[[:space:]]*Compiling ' "$log" 2>/dev/null || echo 0)"
+        last="$(grep '^[[:space:]]*Compiling ' "$log" 2>/dev/null | tail -1 | awk '{print $2}')"
+        if [ -t 1 ]; then
+            # One line, rewritten in place: real progress without 60 lines of scroll.
+            printf '\r\033[K    %sbuilding Ripe Chroma — %ss elapsed, %s crate(s) compiled%s%s' \
+                   "$c_dim" "$el" "$crates" "${last:+, now: $last}" "$c_off"
+        elif [ "$el" -ge $(( shown + 15 )) ]; then
+            # Not a terminal (piped to a log/CI): no \r tricks, one line every 15 s.
+            shown="$el"
+            printf '    %sbuilding Ripe Chroma — %ss elapsed, %s crate(s) compiled%s\n' \
+                   "$c_dim" "$el" "$crates" "$c_off"
+        fi
+        sleep 1
+    done
+    wait "$bg" 2>/dev/null
+    trap - INT
+    [ -t 1 ] && printf '\r\033[K'
+
+    rc="$(cat "$rcfile" 2>/dev/null)"; [ -n "$rc" ] || rc=1
+    el=$(( $(date +%s) - start ))
+    if [ "$rc" = 0 ]; then
+        ok "Ripe Chroma built in ${el}s ($(grep -c '^[[:space:]]*Compiling ' "$log" 2>/dev/null || echo '?') crates)"
+        RIPE_CHROMA_BUILT="$dir/target/release/dankmango-ripe-chroma"
+    else
+        warn "cargo build failed after ${el}s — the last lines of its output:"
+        # The whole point of keeping the log: say WHY, here, instead of asking the
+        # user to reproduce the failure by hand to find out.
+        while IFS= read -r line; do printf '           %s\n' "$line"; done < <(tail -12 "$log")
+    fi
+    rm -f "$log" "$rcfile"
+    return "$rc"
+}
 # NOTE: intentionally NOT installed here (CachyOS + MangoWM base already ships
 # them): sddm, alacritty, the pipewire stack, wireplumber, networkmanager,
 # power-profiles-daemon, bluez, fonts (noto / meslo-nerd), jq, libnotify, gawk,
@@ -859,6 +1609,14 @@ route_dest() {
             printf '%s\tuser\tuser_copy\n' "$HOME/.config/mango/dms/${p#config/dms/}" ;;
         config/mango/*)
             printf '%s\tuser\tuser_copy\n' "$HOME/.config/mango/${p#config/mango/}" ;;
+        config/gtk-3.0/live-theme/*)
+            # NOT a file to copy into ~/.config. This is the TEMPLATE the GTK3
+            # live-theme shadows are generated FROM (install.sh stage 9b): the
+            # generated copies carry an absolute path to dank-colors.css and land
+            # in ~/.local/share/themes, four files from this one source. So a
+            # change here means "regenerate", not "cp". Must come before the
+            # generic config/gtk-3.0/* rule below or it'd be copied verbatim.
+            printf '%s\tuser\tgtk3-live-theme\n' "$HOME/.local/share/themes" ;;
         config/gtk-3.0/*|config/gtk-4.0/*|config/alacritty/*)
             printf '%s\tuser\tuser_copy\n' "$HOME/.config/${p#config/}" ;;
         config/applications/*.nemo_action)

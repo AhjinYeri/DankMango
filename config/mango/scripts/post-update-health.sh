@@ -32,18 +32,51 @@
 #         everything calling it still agrees where it is, that the LIVE watcher
 #         isn't running pre-rename code, and that the palette DMS is actually
 #         displaying is intact and still matches the current wallpaper
+#     13. The control hub (SUPER+d), the front door the fix advice routes through
 #    ...plus it records the mango / dms-shell / quickshell versions and tells you
 #    which changed since the last run (a changed version = prime suspect for a break).
 #
-#  WHAT IT DOES NOT DO
-#    It NEVER edits your configs. New-version breakage can't be predicted, so this
-#    only DETECTS and REPORTS. The one exception: at the very end it may OFFER to
-#    re-apply a fix you've used before that recurs identically (restart a background
-#    watcher, or `dms restart`) -- and only after asking y/N. Those restart processes
-#    only; they touch no config files.
+#  THE SCAN NEVER CHANGES ANYTHING
+#    Every section above is read-only, and that is not negotiable: a health check
+#    you cannot run because you are not sure what it will do is not a health check.
+#    New-version breakage can't be predicted, so the scan only DETECTS and REPORTS.
+#
+#  ...AND THEN OFFERS TO FIX WHAT IT SAFELY CAN
+#    Some findings have a repair that is entirely mechanical -- re-applying a patch
+#    the dispatcher already owns, putting a shipped file back from your clone,
+#    starting a watcher that should be running. Those are tagged [FIX!] in the scan
+#    (one line, like every other finding) and collected at the END of the report,
+#    where they are walked through ONE AT A TIME. Each one shows what broke, what
+#    the fix will do, the command to type instead, and a Claude Code prompt, and
+#    then asks y/N. There is no "fix everything" shortcut, on purpose.
+#
+#    The default is always no. Run this piped, redirected or from cron and the
+#    walkthrough prints as a plain report: nothing is asked, and nothing is changed.
+#    Anything that overwrites a file backs it up into ~/.config/mango/backups first,
+#    and every repair verifies the machine actually changed before saying "fixed."
+#
+#    A finding whose repair needs a judgement call, a package install, a password
+#    for something other than an existing patch, or a reboot is NOT tagged [FIX!].
+#    It reports exactly as it always did, with step-by-step manual instructions.
 #
 #  USAGE
 #    ~/.config/mango/scripts/post-update-health.sh
+#
+#  TWO MACHINE-READABLE MODES (for the control hub's Health & Repair section)
+#    --json            print the whole scan as JSON on stdout and exit, printing
+#                      none of the report above. Every finding is in there, and
+#                      every [FIX!] finding carries its full walkthrough text
+#                      plus a STABLE ID.
+#    --apply-fix <id>  re-run the scan, then apply the one [FIX!] remedy with
+#                      that id -- the same function, with the same
+#                      did-it-actually-change guard, that pressing y in the
+#                      walkthrough calls. Exit 0 applied, 1 the remedy failed,
+#                      4 no finding with that id (most often: already fixed).
+#
+#    Both exist so the GUI can be a WRAPPER. No check and no repair is
+#    reimplemented in QML; this file stays the only thing that knows what is
+#    broken and how to put it right. Neither mode changes a byte of the report
+#    the no-flag run prints.
 #
 #  MAINTENANCE
 #    Every version-sensitive command / path lives in the "EDIT HERE" block just
@@ -68,6 +101,39 @@ set -uo pipefail
 # instead of describing it.
 self_help() { awk 'NR>2 && !/^#/{exit} NR>2 && sub(/^#[ ]?/,"")' "$0"; }
 case "${1:-}" in -h|--help) self_help; exit 0 ;; esac
+
+# ---- which mode are we in? --------------------------------------------------
+# report   the only mode that existed before, and still the default. Unchanged.
+# json     emit the scan as JSON, print no report.
+# applyfix apply exactly one remedy by id, print only what that remedy prints.
+#
+# An UNKNOWN argument is now an error rather than being ignored. That is a
+# deliberate consequence of there being flags at all: a mistyped "--jsno" used to
+# fall through and silently run the interactive walkthrough, which is the last
+# thing a caller that meant to ask for JSON should get.
+HEALTH_MODE=report
+HEALTH_FIX_ID=""
+case "${1:-}" in
+    "")   : ;;
+    --json) HEALTH_MODE=json ;;
+    --apply-fix)
+        HEALTH_MODE=applyfix
+        HEALTH_FIX_ID="${2:-}"
+        [ -n "$HEALTH_FIX_ID" ] || { printf '%s: --apply-fix needs the id of a [FIX!] finding (see --json).\n' "${0##*/}" >&2; exit 2; }
+        ;;
+    *)    printf '%s: unknown option "%s". Try --help.\n' "${0##*/}" "$1" >&2; exit 2 ;;
+esac
+
+# THE SCAN IS MUTED, NOT SKIPPED, in both machine modes. Every check still runs --
+# the registries below are what --json reads and what --apply-fix looks an id up
+# in, and they only exist as a side effect of running the scan. Real stdout is
+# parked on fd 3 and restored at the dispatch point near the end of this file, so
+# a caller's stdout carries the JSON (or the remedy's own output) and nothing else.
+# stderr is left exactly where it was: a diagnostic has somewhere to go, and it
+# cannot pollute the JSON, which goes to stdout.
+if [ "$HEALTH_MODE" != report ]; then
+    exec 3>&1 1>/dev/null
+fi
 
 # ------ ########## EDIT HERE AFTER A MANGO / DMS UPDATE ########## ------------
 MANGO_CFG="$HOME/.config/mango/config.conf"
@@ -98,6 +164,9 @@ DANKMANGO_MANIFEST="${XDG_STATE_HOME:-$HOME/.local/state}/dankmango/manifest.jso
 
 COLORS_FILE="$HOME/.config/mango/dms/colors.conf"
 BORDER_CHECK="$SCRIPTS/border-color-healthcheck.sh"       # delegated colour-chain check
+GTK3_USER_CSS="$HOME/.config/gtk-3.0/gtk.css"             # layer 2: user overrides only
+GTK3_PALETTE="$HOME/.config/gtk-3.0/dank-colors.css"     # layer 1: matugen palette (DMS writes it)
+GTK3_SHADOW_MARK="DankMango GTK3 live-theme shadow"      # marker inside our generated themes
 BORDER_WATCHER="$SCRIPTS/wallpaper-border-reload.sh"
 BORDER_LOCK="/tmp/mango-wallpaper-border-reload.lock"
 
@@ -155,13 +224,39 @@ STATE_FILE="$STATE_DIR/last-versions.env"
 
 # ---- output + failure-collection helpers ------------------------------------
 c_grn=$'\033[32m'; c_red=$'\033[31m'; c_yel=$'\033[33m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
+c_cyn=$'\033[36m'               # reserved for [FIX!] -- nothing else uses it
 US=$'\037'                      # unit separator to pack 5 fields per failure
 FAILS=()                        # each entry: component US symptom US where US fix US manual
-OFFERS=()                       # each entry: label US command-string (safe re-applies)
+# FIXES -- findings that have a genuine, mechanical, reversible remedy. These are
+# NOT a severity: a fixable finding is still a warning or still a failure, and the
+# sev field below is what preserves that. What makes an entry belong here is only
+# that pressing "y" can put it right without asking the user to decide anything.
+FIXES=()                        # each entry: 10 US-separated fields (see fixable())
+PASS_N=0                        # how many checks passed, for the walkthrough header
 
-section() { printf '\n%s— %s —%s\n' "$c_dim" "$1" "$c_off"; }
-pass()    { printf '  %s[PASS]%s %s\n' "$c_grn" "$c_off" "$1"; }
-warn()    { printf '  %s[WARN]%s %s\n         %s\n' "$c_yel" "$c_off" "$1" "$2"; }
+# FINDINGS -- every row the scan prints, in the order it printed them, kept for
+# --json alone. Nothing in the terminal path reads it, and adding to it is why
+# the five functions below each grew one line and no other behaviour.
+#
+# Each entry: tag US section US id US message US detail US manual US where
+#   tag   PASS | WARN | NOTE | FAIL | FIX   (NOTE is the "[ -- ]" row)
+#   id    a FIX row carries the STABLE id its author gave it -- that is the id
+#         --apply-fix takes. Every other row gets a positional "auto:N", which is
+#         honest about what it is: those rows are display-only, there is nothing
+#         to act on, and inventing stable ids for the ~90 pass() calls would be a
+#         maintenance burden bought with nothing.
+FINDINGS=()
+CUR_SECTION=""                  # set by section(), stamped onto each finding
+FINDING_N=0                     # ordinal behind the "auto:N" ids
+
+# add_finding TAG ID MESSAGE DETAIL MANUAL WHERE
+add_finding() { FINDINGS+=("$1${US}$CUR_SECTION${US}$2${US}$3${US}${4:-}${US}${5:-}${US}${6:-}"); }
+# auto_id -> the next positional id, for a row nobody can act on
+auto_id() { FINDING_N=$((FINDING_N+1)); printf 'auto:%d' "$FINDING_N"; }
+
+section() { CUR_SECTION="$1"; printf '\n%s— %s —%s\n' "$c_dim" "$1" "$c_off"; }
+pass()    { PASS_N=$((PASS_N+1)); add_finding PASS "$(auto_id)" "$1"; printf '  %s[PASS]%s %s\n' "$c_grn" "$c_off" "$1"; }
+warn()    { add_finding WARN "$(auto_id)" "$1" "$2"; printf '  %s[WARN]%s %s\n         %s\n' "$c_yel" "$c_off" "$1" "$2"; }
 # wrap WIDTH INDENT TEXT -- fold a string that came from a registry into the
 # hand-wrapped prose around it. Everything else in this script is wrapped to ~72
 # columns by hand; a patch's blurb/verify text arrives as one long line and would
@@ -171,7 +266,7 @@ wrap() { printf '%s' "$3" | fold -s -w "$1" | awk -v i="$2" 'NR==1{print;next}{p
 # note -- neither pass nor fail: a thing that is deliberately switched off. Used for
 # opt-in patches the user declined, which are NOT problems and must not be counted
 # as failures (the old code reported one as FAIL on every single run).
-note()    { printf '  %s[ -- ]%s %s\n' "$c_dim" "$c_off" "$1"; }
+note()    { add_finding NOTE "$(auto_id)" "$1"; printf '  %s[ -- ]%s %s\n' "$c_dim" "$c_off" "$1"; }
 # fail COMPONENT SYMPTOM WHERE-TO-LOOK KNOWN-FIX MANUAL-STEPS
 #   MANUAL-STEPS is the plain-English, numbered, no-AI-needed fix shown to the
 #   user as the PRIMARY output. Keep it literal: exact commands, one line of
@@ -182,9 +277,246 @@ fail() {
 \"Where to look\" in the Claude Code block below, and check the DankMango
 Issues page: https://github.com/AhjinYeri/DankMango/issues}"
     FAILS+=("$1${US}$2${US}$3${US}$4${US}$manual")
+    add_finding FAIL "$(auto_id)" "$1" "$2" "$manual" "$3"
 }
-# offer LABEL COMMAND  (queued; asked at the very end, only on a TTY)
-offer() { OFFERS+=("$1${US}$2"); }
+# =============================================================================
+#  fixable -- the [FIX!] tag, and the registry behind it
+# =============================================================================
+#  fixable ID SEVERITY HEADLINE BROKE DOES MANUAL PROMPT REMEDY [CLASS] [NEEDSPW]
+#
+#    ID        a STABLE identifier for this finding, chosen by whoever wrote the
+#              check. It is what `--apply-fix <id>` takes, so it must survive the
+#              headline being reworded -- that is the whole reason it is written
+#              out here rather than derived from the text. Findings raised inside
+#              a loop take the loop variable ("script-stale:scripts/foo.sh",
+#              "patch:combined-audio-osd"), so one file drifting does not renumber
+#              the others. It is never shown to anyone.
+#    SEVERITY  "warn" or "fail": what this finding WOULD have been reported as
+#              before it was fixable. It does NOT change the printed tag; it
+#              decides the exit code, so a fixable FAIL that the user skips still
+#              exits non-zero exactly as it did when it was a plain fail().
+#    HEADLINE  the one-line scan text. Same discipline as pass/note: ONE line,
+#              no explanation, no wrapped second line. The explanation is the
+#              walkthrough's job, and repeating it inline would print it twice.
+#    BROKE     plain English -- what has actually gone wrong, no jargon
+#    DOES      plain English -- what pressing y does to this machine, including
+#              anything it will ask for (a password) or anything left to do after
+#    MANUAL    the exact command(s) to type instead, for doing it by hand
+#    PROMPT    a request to paste into Claude Code. Write it as a REQUEST, not as
+#              the manual command restated -- the point of this third option is
+#              that it can look at the file and explain the difference first.
+#    REMEDY    shell evaluated when the user says y. It MUST verify the machine
+#              actually changed and return non-zero if it did not: this project
+#              has been bitten before by a deploy layer that reported success it
+#              never checked, and a "fixed." that fixed nothing is worse than a
+#              warning, because the next run's report is the only thing that
+#              would have caught it.
+#    CLASS     "routine" (the default) or "userconfig". Only one finding in this
+#              file is "userconfig" -- the one whose remedy edits config.conf,
+#              the user's OWN file -- and it is marked so a front-end can give it
+#              its own treatment WITHOUT keeping a list of ids. The terminal path
+#              does not read this: it already says so in the headline and spends
+#              its first paragraph on it.
+#    NEEDSPW   1 if the remedy will ask for a sudo password, 0 (the default)
+#              otherwise. Also for front-ends: a GUI has no terminal to type a
+#              password into, so it must offer the manual command instead of a
+#              button that would hang on an invisible prompt. It does not change
+#              what the remedy does, and the terminal path ignores it.
+#
+#  A finding only belongs here if the repair is fully mechanical and reversible.
+#  Anything needing a judgement call ("is this drift yours, or an update's?" is
+#  a judgement call the WALKTHROUGH puts to the user, which is fine; "which of
+#  your two audio profiles is the headphones one?" is not), a reboot, or a
+#  decision about which of several right answers you want, stays a plain warn().
+fixable() {
+    printf '  %s[FIX!]%s %s\n' "$c_cyn" "$c_off" "$3"
+    FIXES+=("$1${US}$2${US}$3${US}$4${US}$5${US}$6${US}$7${US}$8${US}${9:-routine}${US}${10:-0}")
+    add_finding FIX "$1" "$3"
+}
+
+# Where every remedy that overwrites a file puts the old copy first. Same folder
+# the patch scripts already back up into, so there is one place to look.
+FIX_BACKUP_DIR="$HOME/.config/mango/backups"
+
+# fix_backup FILE -> 0 and prints the backup path; 1 if it could not be made.
+# A remedy that cannot back up must not proceed: "reversible" is the whole basis
+# on which these are allowed to run at all.
+fix_backup() {
+    local f="$1" bk
+    mkdir -p "$FIX_BACKUP_DIR" 2>/dev/null || { printf '    cannot create %s — nothing changed.\n' "$FIX_BACKUP_DIR"; return 1; }
+    bk="$FIX_BACKUP_DIR/$(basename "$f").$(date +%Y%m%d-%H%M%S)"
+    cp -a "$f" "$bk" 2>/dev/null || { printf '    could not back up %s — nothing changed.\n' "$f"; return 1; }
+    printf '    your copy is saved at %s\n' "$bk"
+}
+
+# ---- remedies ---------------------------------------------------------------
+# remedy_recopy SRC DST -- the "installed file is not the shipped file" repair.
+# Backs DST up, then copies with -a so the executable bit comes from the repo
+# copy rather than being invented here, then proves it with cmp.
+remedy_recopy() {
+    local src="$1" dst="$2"
+    [ -f "$src" ] || { printf '    the repo copy has gone: %s\n' "$src"; return 1; }
+    [ -e "$dst" ] && { fix_backup "$dst" || return 1; }
+    mkdir -p "$(dirname "$dst")" 2>/dev/null || { printf '    cannot create %s\n' "$(dirname "$dst")"; return 1; }
+    cp -a "$src" "$dst" 2>/dev/null || { printf '    the copy failed — %s is unchanged.\n' "$dst"; return 1; }
+    cmp -s "$src" "$dst" || { printf '    the copy did not take — %s still differs.\n' "$dst"; return 1; }
+    printf '    installed the shipped copy at %s\n' "$dst"
+}
+
+# remedy_recopy_dir SRCDIR DSTDIR -- install a whole DMS plugin directory from the
+# clone, the way install.sh stage 14 deploys one (`cp -a "$pdir." "$tgt/"`). A
+# plugin is deployed as a DIRECTORY, not as a list of named files, so this walks
+# what the repo actually ships rather than carrying its own idea of the contents.
+#
+# Every file still goes through remedy_recopy, so each one is backed up if it is
+# already there and each one is verified with cmp -- this adds the walk, nothing
+# else. One file failing fails the WHOLE remedy: a part-copied plugin directory is
+# precisely the state sections 7 and 13 exist to catch, and reporting it as "fixed"
+# would hand the user a plugin that loads and comes up empty.
+remedy_recopy_dir() {
+    local src="$1" dst="$2" f rc=0 n=0
+    [ -d "$src" ] || { printf '    the repo copy has gone: %s\n' "$src"; return 1; }
+    mkdir -p "$dst" 2>/dev/null || { printf '    cannot create %s\n' "$dst"; return 1; }
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        remedy_recopy "$src/$f" "$dst/$f" || rc=1
+        n=$((n+1))
+    done < <(cd "$src" && find . -type f -printf '%P\n' 2>/dev/null | sort)
+    if [ "$n" -eq 0 ] || [ "$rc" != 0 ]; then
+        [ "$n" -eq 0 ] && printf '    %s holds no files to install.\n' "$src" \
+                       || printf '    not every file arrived — the plugin is only part-installed.\n'
+        # Take the directory back out if we made it and nothing landed in it. rmdir
+        # refuses a non-empty directory, so this can only ever remove the empty shell
+        # this function created -- never a plugin that was already there, and never a
+        # partial copy, which the user needs to be able to see. Without it a failed
+        # remedy leaves an empty plugins/<id>/ behind, and "nothing was changed" is
+        # then not quite true.
+        rmdir "$dst" 2>/dev/null
+        return 1
+    fi
+    printf '    installed %d file(s) into %s\n' "$n" "$dst"
+}
+
+# repo_plugin_dir REPO ID -> the directory in the clone whose plugin.json declares
+# ID, or nothing. Resolved rather than hardcoded because that is how install.sh
+# stage 14 finds it too: it walks plugins/*/ and reads the id, so the folder name
+# and the plugin id are deliberately allowed to differ (preset-switcher ->
+# presetSwitcher). A hardcoded path here would be a second, drifting answer.
+repo_plugin_dir() {
+    local d
+    for d in "$1"/plugins/*/; do
+        [ -f "$d/plugin.json" ] || continue
+        grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$2\"" "$d/plugin.json" 2>/dev/null || continue
+        printf '%s\n' "${d%/}"; return 0
+    done
+    return 1
+}
+
+# remedy_start_watcher SCRIPT LOCK -- start a background watcher the way
+# config.conf's exec-once does. The lock test is the verification: without it
+# this would report success for a watcher that started and immediately died.
+remedy_start_watcher() {
+    local sh="$1" lock="$2" i
+    execu "$sh" || { printf '    %s is missing or not executable.\n' "$sh"; return 1; }
+    setsid "$sh" >/dev/null 2>&1 &
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        sleep 0.5
+        if have fuser && [ -n "$(fuser "$lock" 2>/dev/null)" ]; then
+            printf '    started — it is holding %s\n' "$lock"
+            return 0
+        fi
+    done
+    printf '    it was started, but nothing holds %s five seconds later, so it\n' "$lock"
+    printf '    did not stay up. Run it in a terminal to see why.\n'
+    return 1
+}
+
+# remedy_restart_watcher PID SCRIPT LOCK -- replace a running watcher with the
+# installed copy. Killed BY PID, never by name: killing on a name match has taken
+# unrelated windows down on this machine before, and a watcher's name is generic.
+remedy_restart_watcher() {
+    local pid="$1" sh="$2" lock="$3"
+    kill "$pid" 2>/dev/null
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+        printf '    pid %s did not exit, so it was left alone and nothing changed.\n' "$pid"
+        return 1
+    fi
+    printf '    stopped the old process (pid %s)\n' "$pid"
+    remedy_start_watcher "$sh" "$lock"
+}
+
+# remedy_restore_binary BACKUP DST -- put a COMPILED binary back from a backup
+# sitting beside it. Deliberately NOT remedy_recopy: that one repairs an installed
+# file by copying the repo's copy over it, and the repo has no copy of this to
+# give -- tools/ripe-chroma ships Rust source, and the binary only exists once
+# something has built it. There is nothing to cmp against either, for the same
+# reason.
+#
+# The last guard is the one that earns this a place in the registry. A backup can
+# exist, copy cleanly and still be a binary built against libraries that have
+# since moved underneath it -- exactly what section 12's own "won't run" check
+# below exists to catch. Copying it back and calling that "fixed" would hand the
+# user a file that satisfies every cheap test and still does nothing, which is the
+# false success this file's remedies are written to refuse. So it is actually run.
+#
+# The backup is COPIED, not moved: if the restore turns out to be the wrong call
+# the original is still sitting there to go back to.
+remedy_restore_binary() {
+    local bk="$1" dst="$2"
+    [ -e "$bk" ] || { printf '    the backup has gone: %s\n' "$bk"; return 1; }
+    [ -e "$dst" ] && { fix_backup "$dst" || return 1; }
+    mkdir -p "$(dirname "$dst")" 2>/dev/null || { printf '    cannot create %s\n' "$(dirname "$dst")"; return 1; }
+    cp -a "$bk" "$dst" 2>/dev/null || { printf '    the copy failed — %s is unchanged.\n' "$dst"; return 1; }
+    chmod +x "$dst" 2>/dev/null
+    execu "$dst" || { printf '    %s is in place but not executable — not fixed.\n' "$dst"; return 1; }
+    "$dst" --help >/dev/null 2>&1 || {
+        printf '    the backup copied into place but will not run — it was built against\n'
+        printf '    system libraries that have since moved. NOT fixed, and reported as\n'
+        printf '    failed rather than repaired.\n'
+        printf '    The restored copy is left at %s on purpose: the next run of this\n' "$dst"
+        printf '    check will now say "Ripe Chroma will not run" instead of "gone", which\n'
+        printf '    is the truer finding and carries the rebuild steps you actually need.\n'
+        return 1
+    }
+    printf '    restored %s from %s, and it runs.\n' "$dst" "$bk"
+}
+
+# remedy_patch ID RESTART -- hand the repair to apply-patches.sh, which owns every
+# patch's backup, its sudo write and its marker. Nothing about HOW a patch is
+# applied is duplicated here; naming the id is the documented way to apply one,
+# and afterwards we ask the dispatcher again rather than assuming it worked.
+remedy_patch() {
+    local id="$1" st
+    "$PATCH_DISPATCH" "$id" || { printf '    the patch script reported a failure — see its output above.\n'; return 1; }
+    st="$("$PATCH_DISPATCH" status --porcelain 2>/dev/null | awk -F'\t' -v i="$id" '$1==i{print $2}')"
+    [ "$st" = ok ] || { printf '    the dispatcher still calls this patch "%s" — not fixed.\n' "${st:-unknown}"; return 1; }
+    printf '    the dispatcher now reports this patch as applied and current.\n'
+    printf '    Restart the shell to start using it:  %s\n' "$2"
+}
+
+# remedy_drop_binds_source FILE -- delete the source line(s) for DMS's managed
+# binds.conf. The line is re-matched HERE rather than trusting the line number
+# the scan found: this edits the user's own config.conf, and a file that changed
+# between the scan and this prompt must not have the wrong line cut out of it.
+BINDS_SRC_RE='^[[:space:]]*source(-optional)?[[:space:]]*=[[:space:]]*[^#]*binds\.conf'
+remedy_drop_binds_source() {
+    local f="$1" bk n
+    n="$(grep -cE "$BINDS_SRC_RE" "$f" 2>/dev/null)" || n=0
+    [ "${n:-0}" -gt 0 ] || { printf '    that line is no longer in %s — nothing to do.\n' "$f"; return 1; }
+    bk="$FIX_BACKUP_DIR/$(basename "$f").$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$FIX_BACKUP_DIR" 2>/dev/null || { printf '    cannot create %s — nothing changed.\n' "$FIX_BACKUP_DIR"; return 1; }
+    cp -a "$f" "$bk" 2>/dev/null || { printf '    could not back up %s — nothing changed.\n' "$f"; return 1; }
+    printf '    your copy is saved at %s\n' "$bk"
+    sed -i -E "/$BINDS_SRC_RE/d" "$f" 2>/dev/null || {
+        printf '    the edit failed. Put your copy back with:  cp %s %s\n' "$bk" "$f"; return 1; }
+    if grep -qE "$BINDS_SRC_RE" "$f" 2>/dev/null; then
+        printf '    the line is still there. Put your copy back with:  cp %s %s\n' "$bk" "$f"
+        return 1
+    fi
+    printf '    removed %s line(s) from %s\n' "$n" "$f"
+    printf '    Press SUPER+SHIFT+r to reload MangoWM so the change takes effect.\n'
+}
 
 # indent a possibly-multi-line block by 4 spaces, for the report body
 indent4() { printf '%s\n' "$1" | sed 's/^./    &/'; }   # blank lines stay truly blank
@@ -311,9 +643,16 @@ report_ver "mango:"      "$mango_ver" mango
 report_ver "dms-shell:"  "$dms_ver"   dms
 report_ver "quickshell:" "$qs_ver"    qs
 [ "$VERSION_CHANGED" = 1 ] && echo "  ${c_yel}A version changed — if anything below FAILs, the update is the likely cause.${c_off}"
-# persist current versions for next time
-mkdir -p "$STATE_DIR" 2>/dev/null
-printf 'mango=%s\ndms=%s\nqs=%s\n' "$mango_ver" "$dms_ver" "$qs_ver" > "$STATE_FILE" 2>/dev/null
+# Persist current versions for next time -- BUT ONLY ON A REPORT RUN. "Which
+# version changed since you last looked?" is a question about the last time a
+# PERSON looked. The hub re-scans every time its section is opened, and if those
+# runs moved the baseline they would quietly eat the answer: you would update
+# mango, open the hub, close it, and the next terminal run would tell you nothing
+# had changed. --json and --apply-fix therefore read this file and never write it.
+if [ "$HEALTH_MODE" = report ]; then
+    mkdir -p "$STATE_DIR" 2>/dev/null
+    printf 'mango=%s\ndms=%s\nqs=%s\n' "$mango_ver" "$dms_ver" "$qs_ver" > "$STATE_FILE" 2>/dev/null
+fi
 
 # live quickshell log (needed by a couple of checks); empty if qs isn't running
 QS_PID="$(pgrep -x qs | head -1)"
@@ -421,9 +760,22 @@ if execu "$MONITOR_WATCHER"; then
     if have fuser && [ -n "$(fuser "$MONITOR_WATCHER_LOCK" 2>/dev/null)" ]; then
         pass "monitor hotplug watcher is running"
     else
-        warn "monitor hotplug watcher is NOT running (autostarts on next login)" \
-             "Start now:  setsid '$MONITOR_WATCHER' >/dev/null 2>&1 & disown"
-        offer "start the monitor hotplug watcher" "setsid '$MONITOR_WATCHER' >/dev/null 2>&1 &"
+        fixable monitor-watcher-not-running warn \
+            "monitor hotplug watcher is NOT running (autostarts on next login)" \
+"The small background helper that notices monitors being plugged in and
+unplugged is not running. Nothing is broken while your monitors stay as
+they are. But plug one in now and it gets no per-monitor layout rules --
+windows land on it under plain tiling, and re-running the rule generator
+by hand to fix that resets every OTHER monitor to tile as well." \
+"Start that same helper in the background, exactly the way config.conf
+starts it for you at login. It writes nothing to disk and changes no
+settings, so it undoes itself: kill it, or just log out and back in." \
+"setsid '$MONITOR_WATCHER' >/dev/null 2>&1 & disown" \
+"The monitor hotplug watcher isn't running. Start
+$MONITOR_WATCHER in the background the way
+config.conf's exec-once line does, then confirm it is actually holding
+$MONITOR_WATCHER_LOCK rather than having exited." \
+"remedy_start_watcher '$MONITOR_WATCHER' '$MONITOR_WATCHER_LOCK'"
     fi
     # Is it actually wired to autostart? A running-but-unwired watcher passes the
     # check above today and silently vanishes at the next login.
@@ -791,32 +1143,32 @@ else
             note "$p_title not applied here (optional; take it with: $PATCH_DISPATCH $p_id)"
             ;;
         stale)
-            fail "$p_title" \
-                 "the $p_pkg package overwrote the file this patches, so the change is gone" \
-                 "$p_target; state from: $PATCH_DISPATCH status" \
-                 "One command, idempotent, backs up first, needs sudo:  $PATCH_DISPATCH   then '$p_restart'." \
-"This is expected after a $p_pkg update and is a one-command fix.
-$(wrap 72 0 "DankMango $p_blurb. It does that by editing a file $p_pkg itself owns, so every $p_pkg update overwrites the file and wipes the change.")
+            # The one state this section can put right on the spot. It stays
+            # fail-severity: a wiped patch is a real regression, and skipping the
+            # offer must leave the exit code exactly where a plain fail() left it.
+            # The repair is handed straight to the dispatcher by id -- naming a
+            # patch IS the documented opt-in, and it already owns the backup, the
+            # sudo write, the marker and the re-check.
+            fixable "patch:$p_id" fail \
+                "$p_title — the $p_pkg package overwrote the file this patches, so the change is gone" \
+"$(wrap 72 0 "DankMango $p_blurb. It does that by editing a file the $p_pkg package itself owns, so every $p_pkg update replaces the file wholesale and takes the change with it.")
 
-1. Re-apply it. Open a terminal (Super+Return) and type:
-     $PATCH_DISPATCH
-   (That one command checks every patch DankMango applies and re-applies only
-   the ones that have been wiped - you don't need to know their names. It backs
-   each file up first and is safe to run as many times as you like.)
+This is the expected consequence of a $p_pkg update, not damage. Nothing
+else on your system is affected -- you have simply lost what this patch
+added back until it is re-applied.
 
-2. It'll ask for your password, because the file it edits belongs to the system
-   rather than to you. Type your password and press Enter - nothing appears on
-   screen as you type it, which is normal.
+The file:  $p_target" \
+"$(wrap 72 0 "Run the patch dispatcher for this one patch. It copies $p_target to a dated backup first, re-applies the edit, and then checks the marker it leaves behind is really in the file before calling it done.")
 
-3. Restart the shell so the repaired file gets used:
-     $p_restart
-   (\"the shell\" means the bar, launcher and popups. This doesn't log you out
-   or close your open windows.)
-
-4. Test it: $(wrap 60 12 "$p_verify").
-
-If you'd rather not have this patch at all, it's entirely optional - ignore this
-warning and nothing else changes."
+It will ask for your password. That is because the file belongs to $p_pkg
+rather than to you; nothing appears on screen while you type. Afterwards
+you still need to restart the shell yourself with '$p_restart' -- the
+running shell keeps the old file open until then." \
+"$PATCH_DISPATCH $p_id
+$p_restart" \
+"$(wrap 72 0 "A $p_pkg update wiped DankMango's \"$p_title\". Re-apply it with ~/.config/mango/scripts/apply-patches.sh $p_id, show me what the patch actually changes in $p_target before you run it, and tell me afterwards how to check it worked.")" \
+"remedy_patch '$p_id' '$p_restart'" \
+                routine 1
             ;;
         target-missing)
             fail "$p_title" \
@@ -1120,9 +1472,24 @@ Everything still works normally - this is purely how it looks.
     if have fuser && [ -n "$(fuser "$BORDER_LOCK" 2>/dev/null)" ]; then
         pass "wallpaper-border reload watcher is running"
     elif execu "$BORDER_WATCHER"; then
-        warn "wallpaper-border watcher is NOT running (autostarts on next login)" \
-             "Start now:  setsid '$BORDER_WATCHER' >/dev/null 2>&1 & disown"
-        offer "start the wallpaper-border reload watcher" "setsid '$BORDER_WATCHER' >/dev/null 2>&1 &"
+        fixable border-watcher-not-running warn \
+            "wallpaper-border watcher is NOT running (autostarts on next login)" \
+"The helper that watches for wallpaper changes is not running, so your
+window borders and app colours have stopped following your wallpaper.
+They are not wrong -- they are just frozen on whatever they were when the
+watcher stopped, and they will stay there until it is running again." \
+"Start that same helper in the background, exactly the way config.conf
+starts it for you at login. It writes nothing to disk and changes no
+settings. Note that it starts by taking a reading of where things are NOW
+and then waits for the NEXT wallpaper change, so it will not backfill the
+colours on its own -- change your wallpaper once afterwards." \
+"setsid '$BORDER_WATCHER' >/dev/null 2>&1 & disown" \
+"The wallpaper-border reload watcher isn't running. Start
+$BORDER_WATCHER in the background the way
+config.conf's exec-once line does, confirm it is holding
+$BORDER_LOCK, and remind me that it only reacts to the
+next wallpaper change." \
+"remedy_start_watcher '$BORDER_WATCHER' '$BORDER_LOCK'"
     fi
 else
     fail "border-color-healthcheck.sh" "missing or not executable — can't check colour chain" "$BORDER_CHECK" \
@@ -1132,6 +1499,126 @@ else
 What breaks meanwhile: nothing visible. This file is only a checker - its
 absence means this health check can't test your border colours, not that
 the colours themselves are broken."
+fi
+
+# =============================================================================
+# 4b. GTK3 LIVE THEME REFRESH (Nemo & friends recolouring without a restart)
+# =============================================================================
+# GTK3 reads ~/.config/gtk-3.0/gtk.css once per process and never re-reads it,
+# so colours imported THERE go stale until the app is restarted. A named theme
+# IS re-read whenever gtk-theme changes -- which DMS does on every wallpaper
+# change -- so DankMango puts the palette in generated shadow themes under
+# ~/.local/share/themes/adw-gtk3{,-dark}/ instead.
+#
+# Two things break this, both silently, and both are things DMS itself does:
+#   1. "Apply GTK Colors" in DMS Settings -> Theme runs DMS's gtk.sh, which
+#      re-symlinks ~/.config/gtk-3.0/gtk.css -> dank-colors.css. The user
+#      stylesheet outranks the theme, so that stale copy shadows the fresh
+#      theme colours and the live refresh stops working.
+#   2. DMS only calls refreshGTK() at all when isDMSGTKActive() is true, and
+#      that function tests for the string "dank-colors.css" inside
+#      ~/.config/gtk-4.0/gtk.css. Lose that GTK4 import and the theme flip
+#      never fires, so nothing reloads.
+section "4b. GTK apps following the wallpaper live"
+
+gtk3_shadow_n=0
+for _t in adw-gtk3 adw-gtk3-dark; do
+    for _l in gtk.css gtk-dark.css; do
+        _f="$HOME/.local/share/themes/$_t/gtk-3.0/$_l"
+        [ -f "$_f" ] && grep -q "$GTK3_SHADOW_MARK" "$_f" && gtk3_shadow_n=$((gtk3_shadow_n+1))
+    done
+done
+if [ "$gtk3_shadow_n" -eq 4 ]; then
+    pass "GTK3 live-theme shadows present (4/4)"
+elif [ "$gtk3_shadow_n" -gt 0 ]; then
+    warn "only $gtk3_shadow_n of 4 GTK3 live-theme shadow files present" \
+         "Re-run install.sh from your DankMango clone to regenerate them."
+else
+    fail "GTK3 live-theme shadows missing" \
+         "GTK3 apps (Nemo) will keep their old colours until you restart them" \
+         "$HOME/.local/share/themes/adw-gtk3{,-dark}/gtk-3.0/" \
+         "Re-run install.sh (stage 9b regenerates them from config/gtk-3.0/live-theme/)" \
+"Nemo and other GTK apps no longer change colour when you change your
+wallpaper - they only catch up when you close and reopen them.
+Nothing is damaged; this is only how they look.
+
+1. Open the folder you cloned DankMango into (the one with install.sh in
+   it) in a terminal (Super+Return), then type:
+     ./install.sh
+   (install.sh re-creates the four small theme files that make this work.
+   Re-running it is safe - it backs up anything it replaces.)
+
+2. Change your wallpaper once from the DankMaterialShell settings (the
+   gear icon on the bar) and watch a Nemo window. It should recolour
+   within about a second.
+
+3. Any Nemo window that was ALREADY open before step 1 needs closing and
+   reopening once. After that one restart it follows the wallpaper live."
+fi
+
+# The user stylesheet must NOT carry the palette, or it shadows the theme.
+if [ -L "$GTK3_USER_CSS" ]; then
+    fail "~/.config/gtk-3.0/gtk.css is a symlink (DMS gtk.sh reset it)" \
+         "the stale palette now outranks the live theme -- GTK3 colours are frozen until restart" \
+         "$GTK3_USER_CSS -> $(readlink "$GTK3_USER_CSS")" \
+         "Re-run install.sh; it removes the symlink and restores the layer file" \
+"Something (usually the \"Apply GTK Colors\" button in the DankMaterialShell
+theme settings) replaced one of DankMango's files with a shortcut to
+another file. That undoes the live wallpaper colouring for GTK apps, and
+it also drops the see-through Nemo window effect.
+
+1. Re-run the installer. In the folder you cloned DankMango into:
+     ./install.sh
+
+2. Avoid pressing \"Apply GTK Colors\" in the DankMaterialShell theme
+   settings from now on - DankMango already applies those colours, and
+   that button overwrites the file every time."
+elif [ -f "$GTK3_USER_CSS" ] && grep -qE '^[[:space:]]*@import[^;]*dank-colors\.css' "$GTK3_USER_CSS"; then
+    fail "~/.config/gtk-3.0/gtk.css imports dank-colors.css" \
+         "the user stylesheet outranks the theme, so GTK3 colours freeze until each app restarts" \
+         "$GTK3_USER_CSS" \
+         "Remove that @import line (install.sh ships the correct version)" \
+"GTK apps have stopped following your wallpaper colours live.
+
+1. Re-run the installer from the folder you cloned DankMango into:
+     ./install.sh
+   (It ships the correct version of this file.)
+
+2. If you edited that file yourself, open it:
+     nano $GTK3_USER_CSS
+   and delete the line that reads:
+     @import url(\"dank-colors.css\");
+   Save with Ctrl+O then Enter, quit with Ctrl+X. Leave the
+   nemo-transparency.css line alone - that one belongs there."
+elif [ -f "$GTK3_USER_CSS" ]; then
+    pass "user stylesheet is clean (no palette import shadowing the theme)"
+fi
+
+# DMS only fires its theme flip when it sees this import.
+if [ -f "$HOME/.config/gtk-4.0/gtk.css" ] && grep -qE '^[[:space:]]*@import[^;]*dank-colors\.css' "$HOME/.config/gtk-4.0/gtk.css"; then
+    pass "DMS refreshGTK() trigger intact (gtk-4.0/gtk.css imports dank-colors.css)"
+else
+    fail "gtk-4.0/gtk.css no longer imports dank-colors.css" \
+         "DMS's isDMSGTKActive() check fails, so it never flips gtk-theme -- nothing reloads" \
+         "$HOME/.config/gtk-4.0/gtk.css" \
+         "Re-run install.sh (stage 9 ships this file)" \
+"The part of DankMaterialShell that tells apps \"the colours changed\" has
+stopped running, because it looks for one specific line in a file and
+that line is gone.
+
+1. Re-run the installer from the folder you cloned DankMango into:
+     ./install.sh
+
+2. Then change your wallpaper once and check that a Nemo window
+   recolours. If it does, this is fixed."
+fi
+
+# The palette itself.
+if [ -f "$GTK3_PALETTE" ] && grep -q '@define-color' "$GTK3_PALETTE"; then
+    pass "matugen GTK palette present ($(basename "$GTK3_PALETTE"))"
+else
+    warn "$GTK3_PALETTE missing or has no colours" \
+         "Set your wallpaper once from the DMS settings — DMS regenerates it."
 fi
 
 # =============================================================================
@@ -1383,8 +1870,48 @@ load it. Only the welcome is affected.
             if [ -z "$frp_drift" ]; then
                 pass "welcome panel matches the repo copy"
             else
-                warn "welcome panel differs from the repo copy:$frp_drift" \
-                     "Expected if you're editing it. Otherwise take the repo's version: ./update.sh from $frp_repo, then 'dms restart'."
+                # ONE FINDING PER DRIFTED FILE, for the reason section 9 spells out:
+                # "you edited it" and "an update missed it" look identical from here,
+                # and only you can tell them apart -- per file, not per plugin.
+                #
+                # Both sides are known to exist at this point: the branch above
+                # established every FRP_FILES entry is present, and the clone's
+                # plugin folder is present. If the repo has since stopped shipping
+                # one of them, remedy_recopy refuses and says so rather than
+                # inventing a source.
+                for frp_f in $frp_drift; do
+                    fixable "firstrun-drift:$frp_f" warn \
+                        "welcome panel: $frp_f differs from the shipped copy — stale, unless you edited it yourself" \
+"The installed copy of this file is not the one the repo ships:
+    installed  $FRP_DIR/$frp_f
+    shipped    $frp_repo/$FRP_REPO_SUBDIR/$frp_f
+
+That is either an edit you made, or an update that went missing. Only the
+welcome panel is affected either way -- it is the small panel a brand new
+install shows once, so a stale copy costs you nothing until the next
+fresh install." \
+"Save your copy under a dated name in:
+    $FIX_BACKUP_DIR
+then put the repo's version in its place. Your copy is never deleted, so
+this is undoable with a single 'cp' back.
+
+Unlike the plain scripts in section 9, this is a file DankMaterialShell
+loads at startup, so run 'dms restart' afterwards for the shell to pick
+it up.
+
+If you know you edited this file on purpose, say no." \
+"cp -a '$FRP_DIR/$frp_f' '$FIX_BACKUP_DIR/'
+cp -a '$frp_repo/$FRP_REPO_SUBDIR/$frp_f' '$FRP_DIR/$frp_f'
+dms restart" \
+"Diff these two files and show me what actually differs:
+    mine  $FRP_DIR/$frp_f
+    repo  $frp_repo/$FRP_REPO_SUBDIR/$frp_f
+This is DankMango's first-run welcome panel. I want to tell whether it is
+an edit I made or an update that went missing. If it looks like the
+latter, back my copy up, replace it with the repo's, and remind me to
+restart the shell." \
+"remedy_recopy '$frp_repo/$FRP_REPO_SUBDIR/$frp_f' '$FRP_DIR/$frp_f'"
+                done
             fi
         else
             note "can't compare the welcome panel against the repo (no DankMango clone found) — normal if you deleted or moved it"
@@ -1516,10 +2043,125 @@ else
     if [ "${#dm_stale[@]}" -eq 0 ] && [ "${#dm_missing[@]}" -eq 0 ]; then
         pass "every installed script + doc matches the repo copy"
     else
-        [ "${#dm_missing[@]}" -gt 0 ] && warn "not installed at all: ${dm_missing[*]}" \
-            "Run install.sh from $dm_repo — it copies every file, where update.sh only copies what changed in its commit range."
-        [ "${#dm_stale[@]}" -gt 0 ] && warn "differs from the repo copy: ${dm_stale[*]}" \
-            "Expected if you edit these yourself. Otherwise they're STALE — an update missed them, and no later update will revisit them. Take the shipped versions: cd $dm_repo && ./install.sh"
+        # ONE FINDING PER FILE, deliberately, where the old code printed one
+        # warning listing them all. These are not one decision: the stale ones in
+        # particular may include a file you edited on purpose, and the only person
+        # who can tell that apart from an update that went missing is you. A single
+        # yes/no over the whole list would force you to answer for the whole list.
+        for rel in "${dm_missing[@]}"; do
+            fixable "file-missing:$rel" warn \
+                "$rel is not installed at all — the repo ships it, this machine doesn't have it" \
+"This file is missing:
+    $HOME/.config/mango/$rel
+The DankMango repo on this machine ships it, so either something removed
+it or an install never put it there.
+
+Whatever that file does is simply not happening. If it is a script that
+something else calls -- a keybind, a watcher, another script -- that
+caller fails silently, because nothing on the system announces a missing
+script." \
+"Copy it in from your DankMango clone, creating any folder it needs:
+    from  $dm_repo/config/mango/$rel
+    to    $HOME/.config/mango/$rel
+It is copied with 'cp -a', so it arrives with the runnable flag the repo
+gives it rather than one invented here. Nothing is overwritten -- there
+is nothing there to overwrite." \
+"cp -a '$dm_repo/config/mango/$rel' '$HOME/.config/mango/$rel'" \
+"This file is missing:
+    $HOME/.config/mango/$rel
+but my DankMango clone ships it at:
+    $dm_repo/config/mango/$rel
+Show me what that file does, then copy it into place with its executable
+bit intact, and tell me whether anything needs restarting to pick it up." \
+"remedy_recopy '$dm_repo/config/mango/$rel' '$HOME/.config/mango/$rel'"
+        done
+        for rel in "${dm_stale[@]}"; do
+            fixable "file-stale:$rel" warn \
+                "$rel differs from the shipped copy — stale, unless you edited it yourself" \
+"The installed copy of this file is not the one the repo ships:
+    installed  $HOME/.config/mango/$rel
+    shipped    $dm_repo/config/mango/$rel
+
+There are exactly two reasons for that, and this check cannot tell them
+apart. Either you edited it yourself -- in which case nothing is wrong and
+you should skip this -- or an update missed it. A missed file never heals
+on its own: update.sh only re-copies what changed between your last
+recorded commit and the newest one, so once a file drops out of that
+window, no later update ever looks at it again." \
+"Save your copy under a dated name in:
+    $FIX_BACKUP_DIR
+then put the repo's version in its place. Your copy is never deleted, so
+this is undoable with a single 'cp' back.
+
+If you know you edited this file on purpose, say no." \
+"cp -a '$HOME/.config/mango/$rel' '$FIX_BACKUP_DIR/'
+cp -a '$dm_repo/config/mango/$rel' '$HOME/.config/mango/$rel'" \
+"Diff these two files and show me what actually differs:
+    mine  $HOME/.config/mango/$rel
+    repo  $dm_repo/config/mango/$rel
+I want to tell whether it is an edit I made or an update that went
+missing. If it looks like the latter, back my copy up and replace it
+with the repo's." \
+"remedy_recopy '$dm_repo/config/mango/$rel' '$HOME/.config/mango/$rel'"
+        done
+    fi
+fi
+
+# =============================================================================
+# 9b. Leftovers from earlier DankMango versions
+# =============================================================================
+# Section 9 answers "is what's installed the same as what the repo ships?" for the
+# files that ARE still shipped. This is the other half: files DankMango installed and
+# then STOPPED shipping, which nothing on the machine will ever remove on its own.
+#
+# WHY THEY SURVIVE. Only update.sh can retire a file, and only for a deletion inside
+# its LAST..HEAD range. install.sh has no deletion path at all, but it does advance
+# lastAppliedCommit -- so an install.sh re-run eats the window in which the deletion
+# lived, and after that the file is invisible to every future run. The dev box has two
+# of these (dp2-floatsize.sh, set-monitor-mode.sh) from exactly that sequence.
+#
+# REPORT ONLY, ALWAYS. This is a health check; it does not remove anything, and the
+# note is a [ -- ] rather than a warning, because a leftover is usually inert. Removal
+# lives in install.sh's stage 17b, which asks first and backs up what it takes.
+#
+# THE CHECK ITSELF LIVES IN lib/common.sh, and is sourced in a SUBSHELL rather than
+# copied down here. Normally this script hardcodes its own copies (it ships standalone
+# and must run with no clone present), but route_dest is a 90-line routing table --
+# a second copy of it would drift, and a drifted routing table would report files as
+# orphans that are simply installed somewhere else. The subshell is what makes sourcing
+# safe: common.sh defines its own have/warn/ok, and they must not replace this script's.
+section "9b. Leftovers from earlier DankMango versions"
+if [ -z "$dm_repo" ] || [ ! -d "$dm_repo/.git" ]; then
+    note "no DankMango clone with its git history here — can't tell shipped files from leftovers"
+elif ! have git || ! have jq; then
+    note "needs git and jq to check for leftover files — skipping"
+elif [ ! -f "$dm_repo/lib/common.sh" ]; then
+    note "$dm_repo/lib/common.sh is missing — can't check for leftover files"
+else
+    # THE RETURN CODE IS THE ANSWER, NOT THE EMPTY OUTPUT. Empty output has three
+    # different meanings — nothing left over, the check refused to run, or this clone
+    # predates manifest_orphans entirely (127, command not found) — and treating them
+    # all as "clean" would print a green PASS for a check that never ran. That is the
+    # exact shape of the bug this whole section exists because of, so: 0 = orphans
+    # listed, 1 = genuinely clean, anything else = could not answer.
+    dm_orph_rc=0
+    dm_orphans="$( ( REPO_DIR="$dm_repo"; . "$dm_repo/lib/common.sh"; manifest_orphans ) 2>/dev/null )" \
+        || dm_orph_rc=$?
+    if [ "$dm_orph_rc" = 1 ]; then
+        pass "nothing left over — every DankMango file here is still part of DankMango"
+    elif [ "$dm_orph_rc" != 0 ] || [ -z "$dm_orphans" ]; then
+        note "couldn't check for leftover files (clone too old, or no git history) — nothing is wrong here"
+    else
+        dm_orph_n="$(printf '%s\n' "$dm_orphans" | grep -c .)"
+        note "$dm_orph_n leftover file(s)/folder(s) from an earlier version:"
+        printf '%s\n' "$dm_orphans" | while IFS=$'\t' read -r dm_o_path dm_o_scope dm_o_what; do
+            [ -n "$dm_o_path" ] || continue
+            printf '         %s%s\n' "$dm_o_path" \
+                "$( [ "$dm_o_what" = tree ] && printf ' (whole folder)' )"
+        done
+        printf '         %s\n' "Harmless in themselves. To clear them, run the installer and answer" \
+                               "the \"leftovers\" question near the end (it backs up what it removes):" \
+                               "    cd $dm_repo && ./install.sh"
     fi
 fi
 
@@ -1685,8 +2327,59 @@ Nothing is damaged and nothing was lost. You just need to pick a preset again.
         warn "the OLD bar-widget version of the Presets plugin is still installed" \
              "It became a launcher plugin. Re-run ./install.sh from your DankMango folder, then 'dms restart' — after that, open the launcher and type 'preset'."
     else
-        warn "the Presets launcher plugin isn't installed at $PRESET_PLUGIN_DIR" \
-             "Presets still work from the terminal ($PRESET_SETTER --list). To get them in the launcher, re-run ./install.sh from your DankMango folder, then 'dms restart'."
+        # NOT the same shape as section 9's per-file recopy, despite looking like it.
+        # A DMS plugin is deployed as a whole DIRECTORY (install.sh stage 14 does
+        # `cp -a "$pdir." "$tgt/"`), and the folder it comes from is found by reading
+        # the id out of each plugins/*/plugin.json -- the folder name and the plugin
+        # id differ on purpose here (preset-switcher -> presetSwitcher). So this is
+        # one finding covering one directory, resolved the way install.sh resolves it.
+        #
+        # Gated on a reachable clone, like every other "put the shipped copy back"
+        # finding: with no clone there is nothing to copy from, and the original
+        # advice (re-run install.sh) is still the right answer.
+        preset_repo_dir=""
+        [ -n "${dm_repo:-}" ] && preset_repo_dir="$(repo_plugin_dir "$dm_repo" "$PRESET_ID")"
+        if [ -n "$preset_repo_dir" ]; then
+            fixable preset-plugin-missing warn \
+                "the Presets launcher plugin isn't installed at $PRESET_PLUGIN_DIR" \
+"The plugin that lets you switch desktop presets from the launcher is not
+installed:
+    expected  $PRESET_PLUGIN_DIR
+    shipped   $preset_repo_dir
+
+Nothing is damaged and you have not lost any presets. They still work
+from the terminal:
+    $PRESET_SETTER --list
+What is missing is the way in from the launcher -- typing 'preset' there
+finds nothing, because DMS has no such plugin to offer." \
+"Copy in every file the repo ships in that folder, the same way install.sh
+stage 14 deploys a plugin:
+    from  $preset_repo_dir
+    to    $PRESET_PLUGIN_DIR
+Anything already there is backed up under a dated name in
+$FIX_BACKUP_DIR first, and every file is checked after it lands -- a
+partly-copied plugin is reported as a failure, not as a fix.
+
+Then restart the shell with 'dms restart' so DMS loads it.
+
+One thing this does NOT do: register the plugin with DMS. If section 10
+of the scan above also says the Presets plugin is missing from
+plugin_settings.json, that is a separate step and this will not settle
+it." \
+"cp -a '$preset_repo_dir/.' '$PRESET_PLUGIN_DIR/'
+dms restart" \
+"The Presets launcher plugin isn't installed. My DankMango clone ships it
+at:
+    $preset_repo_dir
+Copy it into $PRESET_PLUGIN_DIR the way
+install.sh stage 14 deploys a plugin, check it is registered and enabled
+in ~/.config/DankMaterialShell/plugin_settings.json, and tell me what to
+restart." \
+"remedy_recopy_dir '$preset_repo_dir' '$PRESET_PLUGIN_DIR'"
+        else
+            warn "the Presets launcher plugin isn't installed at $PRESET_PLUGIN_DIR" \
+                 "Presets still work from the terminal ($PRESET_SETTER --list). To get them in the launcher, re-run ./install.sh from your DankMango folder, then 'dms restart'."
+        fi
     fi
     if plugin_enabled "$PRESET_ID"; then
         pass "preset switcher enabled in plugin_settings.json (launcher trigger: type it in the launcher)"
@@ -1729,42 +2422,87 @@ hb_binds="$HOME/.config/mango/dms/binds.conf"
 # ---- half 1: has a source line for binds.conf come back? --------------------
 # Matches both spellings mango accepts (source= and source-optional=) and both the
 # ./dms/ and ~/.config/mango/dms/ forms, with or without spaces around the '='.
-hb_src_line="$(grep -nE '^[[:space:]]*source(-optional)?[[:space:]]*=[[:space:]]*[^#]*binds\.conf' "$hb_conf" 2>/dev/null | head -1)"
+# One regex, defined next to remedy_drop_binds_source: the line this FINDS and the
+# line that remedy DELETES must never be able to drift apart.
+hb_src_line="$(grep -nE "$BINDS_SRC_RE" "$hb_conf" 2>/dev/null | head -1)"
 
 if [ -z "$hb_src_line" ]; then
     pass "config.conf does not source DMS's binds.conf"
 else
-    fail "DMS keybind injection (config.conf sources binds.conf again)" \
-         "config.conf line ${hb_src_line%%:*} sources DMS's managed binds.conf — a 'dms keybinds' or 'dms setup binds' run can now inject ~90 stock binds into your keymap" \
-         "$hb_conf line ${hb_src_line%%:*}: ${hb_src_line#*:}" \
-         "Delete that source line from config.conf, then reload with SUPER+SHIFT+r. DankMango declares all of its binds in config.conf itself." \
-"A line has come back into MangoWM's settings file that lets DankMaterialShell
-add its own keyboard shortcuts to yours. That is almost certainly not something
-you did by hand - running \"dms setup binds\" puts this line back automatically.
+    # Fixable, and fail-severity: the repair is one line deleted from one file,
+    # matched by the same regex that found it and backed up before the edit, so
+    # it is as mechanical and as undoable as a repair gets. Severity does not
+    # move -- skip it and this still exits non-zero, exactly as it did as a fail().
+    # This is the only remedy in this script that writes to config.conf, which is
+    # the user's own file; that is why the walkthrough spells out what the line is
+    # and what deleting it costs (nothing) before it asks.
+    # THE ONE REMEDY IN THIS SCRIPT THAT EDITS config.conf. Every other fix works on
+    # a file DankMango owns outright -- a script recopied from the clone, a plugin
+    # directory, a patch on a package file, a watcher process. config.conf is the
+    # opposite: the guide actively tells people to edit it (bar position, gaps,
+    # binds), and section 9 deliberately refuses to compare it for that reason.
+    #
+    # So the finding is marked in the SCAN LINE ITSELF, not only in the walkthrough.
+    # Someone skimming a report full of [FIX!] lines has to be able to see that this
+    # one is a different kind of thing without reading any further. The marker is in
+    # the headline text; the tag stays [FIX!] like every other fixable finding.
+    #
+    # What is NOT added here is a second confirmation. One clear yes/no is the rule
+    # for this whole feature, and a fix nobody understands is not made safer by
+    # asking twice -- it is made safer by saying what it does, which is what the
+    # walkthrough below spends its first paragraph on.
+    fixable binds-source-line fail \
+        "${c_yel}⚠ EDITS YOUR config.conf${c_off} — a source line for DMS's binds.conf is back (line ${hb_src_line%%:*}): DMS can inject ~90 stock binds" \
+"READ THIS ONE FIRST. Of every fix this report offers, this is the only
+one that changes config.conf — MangoWM's own settings file, the file
+DankMango's guide tells you to edit by hand. Everything else on this list
+works on files DankMango owns and rewrites freely. This one does not, so
+it is worth a moment even though the change itself is a single deleted
+line.
 
-Nothing is broken this second. The risk is the NEXT time the desktop reloads:
-DMS's own set of shortcuts (about 90 of them) can be pulled in alongside yours.
-Where you and DMS both use a key, yours still wins. Where you DON'T use a key,
-DMS's version simply appears - so keys start doing things you never set up.
+A line has come back into that file that lets DankMaterialShell add its
+own keyboard shortcuts to yours:
 
-1. Open MangoWM's settings file:
-     nano $hb_conf
+    ${hb_src_line#*:}
 
-2. Press Ctrl+W, type binds.conf and press Enter. That jumps to the line:
-     ${hb_src_line#*:}
+That is almost certainly not something you typed. Running \"dms setup
+binds\" puts this line back automatically, and the dms binary carries the
+literal text for it.
 
-3. Delete the whole line. In nano, put the cursor on it and press Ctrl+K.
+Nothing is wrong this second. The risk is the NEXT time the desktop
+reloads: DMS's own set of shortcuts, about ninety of them, gets pulled in
+alongside yours. Where you and DMS both use a key, yours still wins.
+Where you DON'T use a key, DMS's version simply appears -- so keys start
+doing things you never set up." \
+"Delete just the line(s) that source binds.conf, and nothing else.
 
-4. Save and exit: Ctrl+O, then Enter, then Ctrl+X.
+Two things guard that, both already in place:
 
-5. Reload the desktop so the change takes effect:
-     Press SUPER+SHIFT+r
+  * Your whole config.conf is copied to $FIX_BACKUP_DIR
+    under a dated name BEFORE the edit. If any of this turns out wrong,
+    one 'cp' back and you have your file exactly as it is now.
+  * The line is searched for again at the moment you say yes, not taken
+    from the line number printed above. If you edit config.conf between
+    reading this and answering, the wrong line cannot be cut out — and
+    if the line has gone by then, nothing is changed at all.
 
-6. Re-run this check to confirm:
-     $SCRIPTS/post-update-health.sh
+Everything else in the file is left untouched, including every comment
+and every bind you have added.
 
-You lose nothing by deleting it. Every shortcut DankMango gives you is written
-in this same file, further up - that line only ever added DMS's extras on top."
+You lose nothing by deleting it: every shortcut DankMango gives you is
+written in this same file, further up. That line only ever added DMS's
+extras on top.
+
+Afterwards, press SUPER+SHIFT+r to reload MangoWM." \
+"cp -a '$hb_conf' '$FIX_BACKUP_DIR/'
+sed -i -E '/$BINDS_SRC_RE/d' '$hb_conf'
+# then press SUPER+SHIFT+r" \
+"Something has re-added a 'source = ./dms/binds.conf' line to
+$hb_conf, which lets DMS inject its own keybinds
+into mine. Show me the line, back the file up, and remove just that line
+-- leave everything else alone." \
+"remedy_drop_binds_source '$hb_conf'" \
+        userconfig 0
 fi
 
 # ---- half 2: has the managed file been regenerated? -------------------------
@@ -1782,8 +2520,39 @@ else
         # PROBLEM entry for one situation.
         note "dms/binds.conf also holds $hb_n regenerated bind(s) — deleting the source line above defuses them; ./install.sh then restores the empty file"
     else
-        warn "DMS regenerated dms/binds.conf ($hb_n bind lines) — nothing sources it, so it is inert, but the file has drifted" \
-             "Put the empty shipped copy back: run ./install.sh from your DankMango folder. Do NOT re-add a source line for it in config.conf."
+        # Fixable only when the clone is reachable -- the repair IS the shipped
+        # file, and there is nothing to copy from without it. No clone: the
+        # original warning, unchanged. ($dm_repo is set by section 9 above.)
+        if [ -n "$dm_repo" ] && [ -f "$dm_repo/config/dms/binds.conf" ]; then
+            fixable binds-regenerated warn \
+                "DMS regenerated dms/binds.conf ($hb_n bind lines) — inert today, because nothing sources it" \
+"DankMaterialShell has rewritten $hb_binds with $hb_n of its own keybinds
+in it. It does that whenever you run 'dms keybinds set', 'dms keybinds
+remove' or 'dms setup binds' -- those commands regenerate the whole file
+from DMS's defaults rather than editing a line.
+
+Right now this costs you nothing: config.conf does not source that file,
+so nothing reads it. It matters because the OTHER half of this guard --
+a source line coming back into config.conf -- would turn these $hb_n
+lines live at the next reload. The shipped version of this file is empty
+precisely so that there is nothing to go live." \
+"Save your copy into $FIX_BACKUP_DIR under a dated name, then put the
+shipped file back from $dm_repo/config/dms/binds.conf. The shipped file
+declares no binds at all -- it is comments explaining why it is empty.
+
+This does NOT add a source line to config.conf, and you should not add
+one either: that is the thing this guard exists to catch." \
+"cp -a '$hb_binds' '$FIX_BACKUP_DIR/'
+cp -a '$dm_repo/config/dms/binds.conf' '$hb_binds'" \
+"DMS has regenerated $hb_binds with $hb_n of its
+own keybinds. Back it up and restore the deliberately-empty version
+DankMango ships at $dm_repo/config/dms/binds.conf,
+and confirm nothing in config.conf sources that path." \
+"remedy_recopy '$dm_repo/config/dms/binds.conf' '$hb_binds'"
+        else
+            warn "DMS regenerated dms/binds.conf ($hb_n bind lines) — nothing sources it, so it is inert, but the file has drifted" \
+                 "Put the empty shipped copy back: run ./install.sh from your DankMango folder. Do NOT re-add a source line for it in config.conf."
+        fi
     fi
 fi
 
@@ -1801,12 +2570,114 @@ RC_SESSION="$HOME/.local/state/DankMaterialShell/session.json"
 # Guards 12b-12d below: only set once the binary is known present and runnable.
 RC_OK=0
 
-if [ ! -e "$RC_BIN" ]; then
+# DID THIS MACHINE EVER HAVE IT? A missing binary means two opposite things and
+# the file system cannot tell them apart: someone declined an opt-in (healthy), or
+# someone accepted it and the binary has since gone (a fault). The manifest is the
+# only thing that knows. install.sh stage 13b records a user-file-installed change
+# keyed on this exact path once the copy has succeeded, and nothing else ever
+# writes that key -- so its presence is the whole test.
+#
+# Absent manifest, or no jq: RC_RECORDED stays 0 and the old benign note is what
+# gets printed. Guessing "fault" from missing evidence would nag every machine
+# that legitimately said no.
+RC_RECORDED=0
+if [ -r "$DANKMANGO_MANIFEST" ] && have jq; then
+    jq -e --arg p "$RC_BIN" \
+       '[.systemChanges[]? | select(.type == "user-file-installed" and .key == $p)] | length > 0' \
+       "$DANKMANGO_MANIFEST" >/dev/null 2>&1 && RC_RECORDED=1
+fi
+
+# The newest DankMango-shaped backup beside the binary, if there is one. The glob
+# is the strict .bak-YYYYmmdd-HHMMSS form that lib/common.sh's prune_file_backups
+# matches, for the same reason it is strict there: a hand-labelled file next door
+# (.bak-old, .bak-mine) is somebody's own and must not be restored over anything
+# on their behalf. Sorted, so the last one is the most recent stamp.
+RC_BAK=""
+for _b in "$RC_BIN".bak-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]; do
+    [ -e "$_b" ] && RC_BAK="$_b"
+done
+unset _b
+
+if [ ! -e "$RC_BIN" ] && [ "$RC_RECORDED" = 0 ]; then
     # OPT-OUT IS NOT A PROBLEM. The engine is an opt-in extra (install.sh stage
     # 13b) and everything downstream is guarded on the binary existing, so a
     # machine without it is fully healthy. Say so as a note and move on rather
     # than nagging someone about a feature they deliberately declined.
     note "Ripe Chroma not installed — optional, and nothing depends on it (install.sh stage 13b offers it)"
+elif [ ! -e "$RC_BIN" ] && [ -n "$RC_BAK" ]; then
+    # Installed once, gone now, and a backup of it is lying beside the hole. This
+    # is the shape the Sep 2026 investigation actually found on a live machine.
+    fixable ripe-chroma-binary-lost fail \
+        "Ripe Chroma was installed but the binary has gone — a backup of it is sitting beside it" \
+"Ripe Chroma is recorded as installed on this machine:
+    $DANKMANGO_MANIFEST says install.sh stage 13b put it at
+    $RC_BIN
+but there is nothing at that path now. A backup of it is still there:
+    $RC_BAK
+
+Nothing removed it on DankMango's behalf -- no install or update path in
+the repo writes to that folder except the one line that installs it -- so
+it was moved aside from outside, by hand or by something else.
+
+The effect is silent. Every caller of the engine (the wallpaper fan-out,
+the control hub's Ripe Chroma section) is guarded on the binary existing,
+so they all just quietly stop doing anything. Your DMS theme keeps
+reporting a custom palette the whole time, because that palette is a JSON
+file that outlives the thing that wrote it -- so nothing anywhere tells
+you the colour engine stopped running." \
+"Copy the backup back over the missing binary, put its execute bit back,
+then RUN it. That last step is the point: a copy that lands cleanly can
+still be a binary whose system libraries moved under it, and this check
+would rather tell you the restore failed than call it fixed. Your existing
+copy, if there somehow is one, is saved first. The backup is copied, not
+moved, so it stays where it is either way." \
+"cp -a '$RC_BAK' '$RC_BIN' && chmod +x '$RC_BIN' && '$RC_BIN' --help" \
+"Ripe Chroma is recorded as installed in my DankMango manifest at:
+    $RC_BIN
+but the binary is missing and there is a backup of it at:
+    $RC_BAK
+Check whether that backup is a working build, restore it if it is, and
+tell me what would have moved the original aside." \
+"remedy_restore_binary '$RC_BAK' '$RC_BIN'"
+elif [ ! -e "$RC_BIN" ]; then
+    # Installed once, gone now, and nothing to restore from. Rebuilding needs the
+    # clone, the Rust toolchain and a few minutes that can fail -- nothing like
+    # the mechanical, reversible repair the [FIX!] registry is for, so this stays
+    # a plain fail with the commands to run.
+    fail "Ripe Chroma was installed but the binary has gone" \
+         "$DANKMANGO_MANIFEST records it at $RC_BIN; nothing is there now, and there is no .bak-* beside it to restore" \
+         "$RC_BIN" \
+         "Nothing in the repo removes this path, so it went from outside. Rebuilding is the only way back without a backup." \
+"Ripe Chroma is recorded as installed on this machine, but its binary is gone
+and there is no backup beside it to put back.
+
+Everything that uses it is guarded on the file existing, so it has been
+failing silently -- and DMS keeps reporting your custom palette either way,
+because that palette file outlives the engine that wrote it.
+
+Rebuilding it is the fix:
+
+1. Go to the folder you cloned DankMango into (the one with install.sh in it):
+     cd ~/DankMango
+
+2. Re-run the installer and say yes when it asks:
+     ./install.sh
+   at the question 'Build Ripe Chroma and make it your active theme?'
+
+   Or build it by hand, which does the same thing:
+     cd tools/ripe-chroma
+     cargo build --release
+     install -m 755 target/release/dankmango-ripe-chroma $RC_BIN
+     cargo clean
+
+   If that says 'cargo: command not found', install the toolchain first:
+     sudo pacman -S rust
+
+3. Confirm it runs:
+     $RC_BIN --help
+
+4. Re-run this check:
+     $SCRIPTS/post-update-health.sh"
 elif [ ! -x "$RC_BIN" ]; then
     fail "Ripe Chroma is not executable" \
          "$RC_BIN exists but has lost its execute bit" \
@@ -1983,13 +2854,26 @@ if have fuser; then
             # watcher isn't running" in section 4 (strictly the worse problem,
             # also a WARN), and it clears with one offered command. Being louder
             # than the worse case would be inconsistent.
-            warn "the RUNNING wallpaper watcher (pid $rc_pid) is executing OLD code — $rc_why" \
-                 "Restart it:  kill $rc_pid; sleep 1; setsid '$BORDER_WATCHER' >/dev/null 2>&1 & disown
-         Then press Generate in the control hub's Ripe Chroma section — a restart
-         re-baselines and waits for the NEXT wallpaper change, so it will not
-         backfill the palette on its own."
-            offer "restart the wallpaper watcher (it is running out-of-date code)" \
-                  "kill $rc_pid; sleep 1; setsid '$BORDER_WATCHER' >/dev/null 2>&1 &"
+            fixable border-watcher-stale-code warn \
+                "the RUNNING wallpaper watcher (pid $rc_pid) is executing OLD code — $rc_why" \
+"$(wrap 72 0 "The wallpaper watcher is running, but the copy of it living in memory is not the copy on disk: $rc_why.")
+
+A running script does not notice edits to its own file, so an update that
+rewrote this one left the old version still going. The file on disk is
+correct, which is why every other check here passes -- the only symptom is
+that changing your wallpaper quietly stops changing your colours." \
+"Stop that process by its process id (pid $rc_pid) and start the current
+$(basename "$BORDER_WATCHER") in its place. Nothing on disk is touched.
+Afterwards you still need to open the control hub (SUPER+d) and press
+Generate in the Ripe Chroma section: a freshly started watcher takes its
+reading and then waits for the NEXT wallpaper change, so it will not
+catch up the palette by itself." \
+"kill $rc_pid; sleep 1; setsid '$BORDER_WATCHER' >/dev/null 2>&1 & disown" \
+"The wallpaper watcher running as pid $rc_pid is executing an out-of-date
+copy of $BORDER_WATCHER. Check what
+/proc/$rc_pid/fd/255 points at to confirm, then stop that pid and start
+the installed copy in its place -- kill it by pid, not by name." \
+"remedy_restart_watcher '$rc_pid' '$BORDER_WATCHER' '$BORDER_LOCK'"
         else
             pass "the running wallpaper watcher (pid $rc_pid) is the current $BORDER_WATCHER"
         fi
@@ -2007,7 +2891,46 @@ if have jq && [ -f "$BAR_SETTINGS" ]; then
     rc_live="$(jq -r '.customThemeFile // empty' "$BAR_SETTINGS" 2>/dev/null)"
     case "$rc_live" in "~/"*) rc_live="$HOME/${rc_live#\~/}" ;; esac
     if [ "$rc_cur" != custom ] || [ -z "$rc_live" ]; then
-        note "DMS is on the '${rc_cur:-dynamic}' theme, so the palette is generated but not displayed — a choice, not a fault (Settings -> Theme & Colors -> Custom turns it on)"
+        # DMS is not displaying the palette. Two VERY different situations land
+        # here and they used to be reported as the same one.
+        #
+        # THIS IS THE GAP THAT LET A GENUINELY BROKEN INSTALL REPORT CLEAN. The
+        # note below claims "the palette is generated but not displayed" -- and
+        # until this check existed, nothing had established the "generated" half.
+        # Every test of the palette file (does it exist, does it parse, is it
+        # current) lives further down this if/elif chain, PAST this arm, and is
+        # reached only when DMS is ALREADY pointed at it. So the one state that is
+        # both broken and common right after opting in -- binary built, palette
+        # never written, customThemeFile still "" -- matched this arm, printed
+        # "a choice, not a fault", and the whole section came back green.
+        #
+        # That is exactly what happened on a real laptop: section 12 said
+        # "installed and runnable", 12b said both call sites agree, and this line
+        # called the dead feature a preference. Nothing in the run was wrong except
+        # that the last step (point DMS at the output) is manual and was never done.
+        #
+        # The two cases are trivially distinguishable, so distinguish them:
+        #   palette EXISTS  -> genuinely a choice. Someone generated colours and
+        #                      stayed on matugen's dynamic theme. Stay quiet.
+        #   palette ABSENT  -> the engine has never produced anything. It is
+        #                      installed, it is running on every wallpaper change,
+        #                      and it is doing nothing observable. That is worth
+        #                      one line, because no other symptom exists.
+        #
+        # WARN, not FAIL, for the same reason 12c is a WARN: nothing is damaged,
+        # and one action clears it. Note the wording -- it never accuses the user
+        # of a mistake, because opting in and not finishing the manual step is the
+        # single most likely way to arrive here.
+        if [ -f "$RC_THEME" ]; then
+            note "DMS is on the '${rc_cur:-dynamic}' theme, so the palette is generated but not displayed — a choice, not a fault (Settings -> Theme & Colors -> Custom turns it on)"
+        else
+            warn "Ripe Chroma is installed but has never produced a palette — $RC_THEME does not exist, so the engine is doing nothing" \
+                 "Open the control hub (SUPER+d) -> Ripe Chroma -> Generate. That writes the
+         palette AND points DMS at it in one go. No control hub? Change your
+         wallpaper once (gear icon -> Wallpaper) to write the palette, then turn it
+         on in Settings -> Theme & Colors -> Custom.
+         If you meant to build it and leave it off, nothing here needs doing."
+        fi
     elif [ "$rc_live" != "$RC_THEME" ]; then
         # Somebody else's theme file. The engine deliberately never writes to a
         # file it wasn't told to (the fan-out passes --output explicitly for
@@ -2144,13 +3067,163 @@ fi
 fi   # RC_OK
 
 # =============================================================================
+# 13. THE CONTROL HUB (SUPER+d)
+# =============================================================================
+# WHY THIS SECTION EXISTS: it is the second half of the same incident that added
+# the palette check to 12d. A laptop finished an update with SUPER+d doing
+# nothing, and this script reported no problems -- because until now the control
+# hub was checked NOWHERE. Section 12b names one file inside it, and even that
+# treats the file being absent as a note ("nothing to cross-check there"), which
+# is exactly backwards when the plugin is supposed to be installed.
+#
+# The hub matters more than a normal plugin because it is now the FRONT DOOR to
+# other features: 12d above, and the fix text in several other sections, all tell
+# people "open the control hub and press Generate". Advice that routes through a
+# door nobody has checked is advice that can quietly go nowhere.
+#
+# WHAT CAN AND CANNOT BE ESTABLISHED HERE. The keybind spawns an IPC call, so the
+# chain is: config.conf has the bind -> the plugin's files are on disk -> it is
+# registered and enabled in plugin_settings.json -> the RUNNING shell has loaded
+# it. The first three are files and are settled below. The fourth is deliberately
+# NOT probed: the only way to ask is to call the toggle, and unlike section 3b's
+# canary (which cycles focus and leaves nothing on screen) that would pop a panel
+# open in the user's face during a health check. So a loaded-but-not-restarted
+# shell is reported as the "restart DMS" advice attached to the file findings,
+# which is the same fix either way.
+section "13. Control hub (SUPER+d)"
+
+CH_ID="controlHub"
+CH_DIR="$DMS_DIR/plugins/$CH_ID"
+CH_BIND_CMD="dms ipc call controlhub toggle"
+
+ch_bound=0
+grep -qF "$CH_BIND_CMD" "$MANGO_CFG" 2>/dev/null && ch_bound=1
+
+if [ ! -d "$CH_DIR" ] && [ "$ch_bound" = 0 ]; then
+    # Neither half is present: this install predates the control hub entirely.
+    # Not a fault -- an old install that has never been updated is consistent.
+    note "no control hub on this install (it predates the feature) — 'git pull && ./update.sh' adds it"
+else
+    # ---- 13a. are the plugin's files actually there? ------------------------
+    if [ ! -d "$CH_DIR" ]; then
+        fail "the control hub keybind is wired to a plugin that isn't installed" \
+             "$MANGO_CFG binds SUPER+d to '$CH_BIND_CMD', but $CH_DIR does not exist" \
+             "$CH_DIR, and the SUPER+d line in $MANGO_CFG" \
+             "config.conf is copied by a file sync; the plugin is deployed by install.sh stage 14 and by update.sh's plugin arm. An update that placed the config but not the plugin (interrupted, or a delta that carried one and not the other) leaves exactly this: a key that spawns an IPC call to a plugin the shell has never heard of, which fails silently." \
+"Pressing SUPER+d does nothing, because the panel it opens was never
+installed.
+
+1. Go to the folder you cloned DankMango into (the one with install.sh in
+   it). Open a terminal with Super+Return, then:
+     cd ~/DankMango
+     ./install.sh
+   (Answer the questions as you did before. Nothing is deleted — install.sh
+   re-copies everything, which is what fills the gap.)
+
+2. Restart the shell so it loads the panel:
+     dms restart
+
+3. Press SUPER+d. The control hub should open.
+
+4. Re-run this check:
+     $SCRIPTS/post-update-health.sh"
+    else
+        ch_missing=""
+        for ch_f in plugin.json ControlHubPanel.qml RipeChromaSection.qml; do
+            [ -f "$CH_DIR/$ch_f" ] || ch_missing="$ch_missing $ch_f"
+        done
+        if [ -n "$ch_missing" ]; then
+            fail "the control hub is installed but incomplete" \
+                 "$CH_DIR exists but is missing:$ch_missing" \
+                 "$CH_DIR" \
+                 "A partial plugin directory — an interrupted copy, or a restore that took some files and not others. DMS loads what it finds and the panel either fails to construct or comes up empty; either way the keybind appears to do nothing." \
+"The control hub (SUPER+d) is only half installed, so it can't open.
+
+1. Open a terminal (Super+Return) and re-install from your DankMango
+   folder — it re-copies every file:
+     cd ~/DankMango
+     ./install.sh
+
+2. Restart the shell:
+     dms restart
+
+3. Re-run this check:
+     $SCRIPTS/post-update-health.sh"
+        else
+            pass "control hub plugin files are installed ($CH_DIR)"
+        fi
+
+        # ---- 13b. is it registered AND switched on in DMS? ------------------
+        # Deployed-but-unregistered is the exact hole update.sh's
+        # register-shipped-plugins migration was written to close, so a machine
+        # that ran an older updater (or an interrupted one) can still be in it.
+        # DMS only loads plugins it has an enabled entry for, so this state has
+        # the same single symptom as a missing plugin: the key does nothing.
+        if have jq && [ -f "$PLUGIN_SETTINGS" ]; then
+            ch_reg="$(jq -r --arg id "$CH_ID" 'if (has($id)|not) then "absent" elif (.[$id].enabled // false) then "on" else "off" end' "$PLUGIN_SETTINGS" 2>/dev/null)"
+            case "$ch_reg" in
+                on)  pass "control hub is registered and enabled in plugin_settings.json" ;;
+                off) warn "the control hub is installed but switched OFF in DMS — SUPER+d will do nothing" \
+                          "Turn it back on: gear icon on the bar -> Plugins -> Control Hub -> on.
+         (If you switched it off deliberately, ignore this — nothing else uses it.)" ;;
+                *)   fail "the control hub is installed but not registered with DMS" \
+                          "$PLUGIN_SETTINGS has no '$CH_ID' entry, so the shell never loads the plugin" \
+                          "$PLUGIN_SETTINGS, and $CH_DIR" \
+                          "plugin_settings.json is LIVE DMS STATE and is deliberately never overwritten by a file copy, so a plugin that started shipping after this machine was installed has to be registered by update.sh's register-shipped-plugins migration. An update that did not reach that migration leaves the files on disk and the shell unaware of them." \
+"The control hub is on disk but DankMaterialShell doesn't know about it,
+so SUPER+d does nothing.
+
+1. Open a terminal (Super+Return) and update from your DankMango folder —
+   the update registers plugins that shipped after your install:
+     cd ~/DankMango
+     git pull
+     ./update.sh
+
+2. Restart the shell:
+     dms restart
+
+3. Press SUPER+d. If it still does nothing, turn it on by hand: gear icon
+   on the bar -> Plugins -> Control Hub -> on.
+
+4. Re-run this check:
+     $SCRIPTS/post-update-health.sh" ;;
+            esac
+        fi
+
+        # ---- 13c. is the key actually bound? --------------------------------
+        # The mirror image of 13a: the plugin is present and nothing can open it.
+        # This one is worse than it looks -- the hub is a `daemon` plugin with no
+        # bar widget, so the keybind is its ONLY way in. Without the bind there is
+        # no fallback to click, and every other section's "open the control hub"
+        # advice becomes unfollowable.
+        if [ "$ch_bound" = 0 ]; then
+            warn "the control hub is installed but SUPER+d is not bound to it in config.conf — nothing can open it" \
+                 "The hub has no bar button (it is keybind-only), so this is its only way in.
+         Restore the shipped keybinds: run ./install.sh from your DankMango folder,
+         then press SUPER+SHIFT+r to reload the config."
+        else
+            pass "SUPER+d is bound to the control hub in config.conf"
+        fi
+    fi
+fi
+
+# =============================================================================
 # SUMMARY  --  manual fix steps first, optional Claude Code block second
 # =============================================================================
 n=${#FAILS[@]}
+nfix=${#FIXES[@]}
 echo
 echo "==================================================================="
-if [ "$n" -eq 0 ]; then
+if [ "$n" -eq 0 ] && [ "$nfix" -eq 0 ]; then
     printf ' %sALL CHECKS PASSED.%s Nothing to do.\n' "$c_grn" "$c_off"
+    echo "==================================================================="
+elif [ "$n" -eq 0 ]; then
+    # Everything found is repairable from here, so there is no manual-fix report
+    # to print -- but "ALL CHECKS PASSED" would be a lie, and it is the line people
+    # read instead of the scan. Say what is actually true and point at the section
+    # that handles it.
+    printf ' %sNOTHING IS BROKEN BEYOND REPAIR.%s %d issue(s) can be fixed from here — see below.\n' \
+        "$c_grn" "$c_off" "$nfix"
     echo "==================================================================="
 else
     printf ' %s%d PROBLEM(S) FOUND.%s Step-by-step fixes below.\n' "$c_red" "$n" "$c_off"
@@ -2219,23 +3292,247 @@ EOF
 fi
 
 # =============================================================================
-# OPTIONAL SAFE RE-APPLIES  (ask first; only restarts processes, never edits config)
+# MACHINE-READABLE MODES  --  --json and --apply-fix
 # =============================================================================
-if [ "${#OFFERS[@]}" -gt 0 ] && [ -t 0 ]; then
-    echo
-    echo "— Known safe re-applies available (each restarts a process only; no config changes) —"
-    for entry in "${OFFERS[@]}"; do
-        IFS="$US" read -r label cmd <<< "$entry"
-        read -r -p "  Re-apply: $label ? [y/N] " ans
-        case "$ans" in
-            [yY]*) eval "$cmd" && echo "    done." || echo "    failed — do it by hand." ;;
-            *)     echo "    skipped." ;;
-        esac
-    done
-elif [ "${#OFFERS[@]}" -gt 0 ]; then
-    echo
-    echo "(${#OFFERS[@]} safe re-apply(s) available — re-run in a terminal to be prompted.)"
+#  Reached only when a flag asked for them, and reached AFTER the full scan, so
+#  both work from the registries the scan filled rather than deriving anything of
+#  their own. That is the whole design: the control hub's Health & Repair section
+#  is a wrapper, this file is the single source of truth for what is broken and
+#  how to repair it, and neither statement stays true if the GUI is allowed its
+#  own copy of either.
+#
+#  Real stdout comes back here (it was parked on fd 3 before the scan so the
+#  report went to /dev/null), and both arms exit before the walkthrough below --
+#  which is why nothing about the terminal experience changes.
+
+# json_str TEXT -- TEXT as a JSON string literal.
+#
+# PURE BASH, no jq, and that is not an accident: this is the script you run when
+# the machine is ALREADY broken. Its job is to say so. Acquiring a runtime
+# dependency in order to report a failure is how a health check ends up being the
+# thing that cannot run.
+#
+# Colour codes are stripped before escaping. Every field below is prose a GUI
+# renders in its own type: an escape sequence reaching it is terminal formatting
+# that leaked, never content. (One headline really does carry one -- the
+# config.conf finding highlights its warning in yellow for the terminal.) The tr
+# then drops any other control character, since a raw one is invalid inside a
+# JSON string and no field has a legitimate use for one.
+json_str() {
+    local s
+    s="$(printf '%s' "$1" | sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' | tr -d '\000-\010\013\014\016-\037')"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\t'/\\t}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\n'/\\n}"
+    printf '"%s"' "$s"
+}
+
+if [ "$HEALTH_MODE" = applyfix ]; then
+    exec 1>&3 3>&-
+    if [ "$nfix" -gt 0 ]; then
+        for entry in "${FIXES[@]}"; do
+            IFS="$US" read -r -d '' f_id f_sev f_head f_broke f_does f_manual f_prompt f_remedy f_class f_needspw <<< "$entry"
+            [ "$f_id" = "$HEALTH_FIX_ID" ] || continue
+            # The SAME function the walkthrough's "y" calls, with the same
+            # verify-it-actually-changed guard inside it. There is deliberately no
+            # separate GUI path: a remedy that reports success it did not check is
+            # the exact failure this project has been bitten by before, and a
+            # second code path is how one of the two ends up without the guard.
+            if eval "$f_remedy"; then exit 0; fi
+            exit 1
+        done
+    fi
+    # Not an error in the shouting sense -- the commonest way to get here is that
+    # the finding was already put right (by a terminal run, by install.sh, or by
+    # an earlier click) between the scan the caller is looking at and this one. A
+    # distinct exit code lets a front-end say "already resolved" rather than
+    # "the fix failed", which are not the same news.
+    printf 'no [FIX!] finding with id "%s" in this scan — it may already be fixed.\n' "$HEALTH_FIX_ID" >&2
+    exit 4
 fi
 
-# exit non-zero if anything failed, so it's scriptable in a pipeline
-exit $(( n > 0 ? 1 : 0 ))
+if [ "$HEALTH_MODE" = json ]; then
+    exec 1>&3 3>&-
+    printf '{'
+    printf '"schema":1,'
+
+    # Versions, and whether one moved. Same three facts the report opens with, and
+    # for the same reason: a version that changed is the prime suspect for
+    # everything below it.
+    printf '"versions":{"mango":%s,"dms":%s,"quickshell":%s,"changed":%s},' \
+        "$(json_str "$mango_ver")" "$(json_str "$dms_ver")" "$(json_str "$qs_ver")" \
+        "$([ "$VERSION_CHANGED" = 1 ] && printf true || printf false)"
+
+    # The summary line, computed HERE from the same two numbers the terminal
+    # prints, so the two can't drift: "N checks passed. M issue(s) found — F
+    # fixable now." A warn or a note is not an issue in that line and is not one
+    # here either.
+    printf '"summary":{"passed":%d,"issues":%d,"fixable":%d},' \
+        "$PASS_N" "$(( n + nfix ))" "$nfix"
+
+    # Every row the scan printed, in scan order. FIX rows appear here too (tagged
+    # FIX, carrying their stable id) so a front-end can show the scan as it really
+    # ran; their full walkthrough content is in "fixes" below rather than
+    # duplicated into both.
+    printf '"checks":['
+    j_first=1
+    if [ "${#FINDINGS[@]}" -gt 0 ]; then
+        for entry in "${FINDINGS[@]}"; do
+            IFS="$US" read -r -d '' k_tag k_sec k_id k_msg k_detail k_manual k_where <<< "$entry"
+            [ "$j_first" = 1 ] || printf ','
+            j_first=0
+            printf '{"tag":%s,"section":%s,"id":%s,"message":%s,"detail":%s,"manual":%s,"where":%s}' \
+                "$(json_str "$k_tag")" "$(json_str "$k_sec")" "$(json_str "$k_id")" \
+                "$(json_str "$k_msg")" "$(json_str "$k_detail")" \
+                "$(json_str "$k_manual")" "$(json_str "$k_where")"
+        done
+    fi
+    printf '],'
+
+    # The [FIX!] findings, with the whole walkthrough each one would have printed:
+    # what broke, what the fix does, the by-hand command, the Claude Code prompt.
+    # The REMEDY ITSELF IS NOT IN HERE, on purpose. It is a shell string, and a
+    # front-end that received it could run it -- at which point the guards live on
+    # one side of the wire and the execution on the other. The id is the whole
+    # interface: ask --apply-fix for it and this file does the work.
+    printf '"fixes":['
+    j_first=1
+    if [ "$nfix" -gt 0 ]; then
+        for entry in "${FIXES[@]}"; do
+            IFS="$US" read -r -d '' f_id f_sev f_head f_broke f_does f_manual f_prompt f_remedy f_class f_needspw <<< "$entry"
+            [ "$j_first" = 1 ] || printf ','
+            j_first=0
+            printf '{"id":%s,"severity":%s,"class":%s,"needsPassword":%s,"headline":%s,"broke":%s,"does":%s,"manual":%s,"prompt":%s}' \
+                "$(json_str "$f_id")" "$(json_str "$f_sev")" "$(json_str "$f_class")" \
+                "$([ "${f_needspw:0:1}" = 1 ] && printf true || printf false)" \
+                "$(json_str "$f_head")" "$(json_str "$f_broke")" "$(json_str "$f_does")" \
+                "$(json_str "$f_manual")" "$(json_str "$f_prompt")"
+        done
+    fi
+    printf ']'
+    printf '}\n'
+    exit 0
+fi
+
+# =============================================================================
+# FIXABLE NOW  --  one finding at a time, one y/N each
+# =============================================================================
+#  This replaces the old "safe re-applies" block, which asked the same kind of
+#  y/N question about the same kind of mechanical repair. Two prompt loops after
+#  one report was never going to read as one flow, and the offers carried no
+#  explanation of what they were about to do -- just a label.
+#
+#  THE RULES THIS SECTION KEEPS, in the order they matter:
+#    * The scan above is unchanged and still read-only. Nothing here runs until
+#      the report is finished and the user has said y to this specific finding.
+#    * ONE finding on screen at a time. Printing every breakdown at once and then
+#      asking is how people end up saying y to something they scrolled past.
+#    * ONE yes/no each. There is deliberately no "fix everything" shortcut.
+#    * The default is no. An empty answer, an unreadable terminal, a closed pipe:
+#      all of them mean no.
+#    * A remedy that cannot prove it worked reports failure, not success.
+fix_interactive() {
+    # STRICTER than update.sh's ask_tty(), which tests /dev/tty alone. That is the
+    # right test there, where the script is always run by hand; here the report is
+    # routinely piped into a pager or a log, and a readable /dev/tty survives both
+    # of those. So stdout must be a terminal AS WELL, which is what makes
+    # `post-update-health.sh | tee log` a report and nothing more.
+    [ -t 1 ] && [ -r /dev/tty ]
+}
+# fix_ask PROMPT -> 0 only for an explicit yes. Reads /dev/tty, never stdin, for
+# the reason ask_tty() documents: a loop over a pipe must never eat the answer.
+fix_ask() {
+    local ans
+    fix_interactive || return 1
+    printf '\n  %s%s%s ' "$c_cyn" "$1" "$c_off" > /dev/tty
+    read -r ans < /dev/tty || return 1
+    # Same acceptance as update.sh's ask_tty(): anything starting with y is yes,
+    # everything else -- including an empty line -- is no.
+    case "$ans" in [yY]*) return 0 ;; *) return 1 ;; esac
+}
+
+fix_left_fail=0                 # fail-severity findings still unfixed -> exit code
+if [ "$nfix" -gt 0 ]; then
+    fix_done=0; fix_skipped=0; fix_failed=0
+    echo
+    printf '%s═══════════════════════════════════════════════════════════════%s\n' "$c_cyn" "$c_off"
+    printf ' %sFIXABLE NOW%s\n' "$c_cyn" "$c_off"
+    printf '%s═══════════════════════════════════════════════════════════════%s\n' "$c_cyn" "$c_off"
+    printf ' %d checks passed. %d issue(s) found — %d fixable now.\n' \
+        "$PASS_N" "$(( n + nfix ))" "$nfix"
+    if fix_interactive; then
+        cat <<'EOF'
+ Each one is shown on its own, with what it will do, before you are asked.
+ The default is no: press Enter to skip. Nothing is changed until you
+ type y, and everything overwritten is backed up first.
+EOF
+    else
+        cat <<'EOF'
+ This is not running in a terminal, so nothing below will be applied and
+ nothing will be asked — what follows is a report. Run it in a terminal
+ to be offered the fixes.
+EOF
+    fi
+
+    fix_i=1
+    for entry in "${FIXES[@]}"; do
+        # -d '' so the multi-line prose fields survive the round trip intact.
+        # f_id, f_class and f_needspw exist for --json and --apply-fix and are
+        # deliberately unread here -- but they still have to be NAMED, or the
+        # trailing fields would be swept into f_remedy and eval'd.
+        IFS="$US" read -r -d '' f_id f_sev f_head f_broke f_does f_manual f_prompt f_remedy f_class f_needspw <<< "$entry"
+        printf '\n%s───────────────────────────────────────────────────────────────%s\n' "$c_dim" "$c_off"
+        printf ' %s[%d/%d]%s %s\n' "$c_cyn" "$fix_i" "$nfix" "$c_off" "$f_head"
+        printf '%s───────────────────────────────────────────────────────────────%s\n' "$c_dim" "$c_off"
+        printf '\n  %sWhat broke%s\n' "$c_yel" "$c_off"
+        indent4 "$f_broke"
+        printf '\n  %sWhat this fix will do%s\n' "$c_grn" "$c_off"
+        indent4 "$f_does"
+        printf '\n  %sOr do it yourself, by hand%s\n' "$c_dim" "$c_off"
+        indent4 "$f_manual"
+        printf '\n  %sOr paste this to Claude Code%s\n' "$c_dim" "$c_off"
+        indent4 "$f_prompt"
+
+        if ! fix_interactive; then
+            printf '\n  %s(report only — not applied)%s\n' "$c_dim" "$c_off"
+            fix_skipped=$((fix_skipped+1))
+            [ "$f_sev" = fail ] && fix_left_fail=$((fix_left_fail+1))
+        elif fix_ask "Apply this fix now? [y/N]"; then
+            if eval "$f_remedy"; then
+                printf '  %sfixed.%s\n' "$c_grn" "$c_off"
+                fix_done=$((fix_done+1))
+            else
+                # NOT "nothing was changed": remedy_recopy_dir can legitimately get
+                # part way through a plugin before a later file fails, and it says so
+                # itself. A remedy that really did change nothing has already printed
+                # that line; this one must not claim it on their behalf.
+                printf '  %snot fixed — see above. The manual steps still stand.%s\n' "$c_red" "$c_off"
+                fix_failed=$((fix_failed+1))
+                [ "$f_sev" = fail ] && fix_left_fail=$((fix_left_fail+1))
+            fi
+        else
+            printf '  %sskipped.%s\n' "$c_dim" "$c_off"
+            fix_skipped=$((fix_skipped+1))
+            [ "$f_sev" = fail ] && fix_left_fail=$((fix_left_fail+1))
+        fi
+        fix_i=$((fix_i+1))
+    done
+
+    echo
+    if fix_interactive; then
+        printf ' %d fixed, %d skipped' "$fix_done" "$fix_skipped"
+        [ "$fix_failed" -gt 0 ] && printf ', %d tried and failed' "$fix_failed"
+        printf '.\n'
+    else
+        printf ' %d fixable issue(s) listed; none applied (not a terminal).\n' "$nfix"
+    fi
+    echo "==================================================================="
+fi
+
+# exit non-zero if anything failed, so it's scriptable in a pipeline. A fixable
+# finding counts here exactly as its old severity did: a skipped fixable FAIL is
+# still a failure, a fixable WARN never was one, and a fix that verified its own
+# success drops out of the count.
+exit $(( (n > 0 || fix_left_fail > 0) ? 1 : 0 ))

@@ -46,8 +46,12 @@
 //       from it) and, if it needs to talk to the panel, declare
 //       `property var hub: null` -- the loader fills that in for you.
 //    2. Add one entry to the `sections` array in the box below:
-//           { "id": "health", "label": "Health check",
-//             "icon": "vital_signs", "source": "HealthSection.qml" }
+//           { "id": "backups", "label": "Backups",
+//             "icon": "backup", "source": "BackupsSection.qml" }
+//
+//  The three sections in the registry below were all added exactly that way,
+//  and HealthSection.qml is the shortest one to read as a worked example: it
+//  wraps a shell script, which is what a section here usually turns out to be.
 //
 //  That is it. The nav list is built from that array, the content area loads
 //  `source` by name, and nothing in the shell below knows how many sections
@@ -150,6 +154,12 @@ PluginComponent {
             "label": "Ripe Chroma",
             "icon": "palette",
             "source": "RipeChromaSection.qml"
+        },
+        {
+            "id": "health",
+            "label": "Health & Repair",
+            "icon": "vital_signs",
+            "source": "HealthSection.qml"
         }
     ]
 

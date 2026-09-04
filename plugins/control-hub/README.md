@@ -1,9 +1,9 @@
 # DankMango Hub — plain-English guide
 
 One panel for the things DankMango adds to your desktop. Press the shortcut, it
-opens; it stays open until you close it. Right now it holds two sections,
-**Desktop presets** and **Ripe Chroma**, and it is built so the next one is two
-small edits away.
+opens; it stays open until you close it. Right now it holds three sections,
+**Desktop presets**, **Ripe Chroma** and **Health & Repair**, and it is built so
+the next one is two small edits away.
 
 It is not a menu. Menus vanish the moment you look at something else — this is a
 surface you can sit and read, click around in, and leave open while you go and
@@ -93,6 +93,39 @@ A plugin framework. Sections are files in this folder, loaded by name. That is
 the right amount of machinery for a panel with two sections today, and the day it
 needs sections that ship separately is the day to build more — not before.
 
+## Health & Repair
+
+A front end for `post-update-health.sh`, and *only* a front end. It runs
+`--json`, shows the summary the terminal report ends with, and turns each
+`[FIX!]` finding into a card that starts collapsed to one line. Open a card and
+you get the same four things the terminal walkthrough prints — what broke, what
+the fix will do, the by-hand command, the Claude Code prompt — plus **Fix this**
+and **Skip** where the terminal asks `y/N`.
+
+Pressing **Fix this** runs `post-update-health.sh --apply-fix <id>`. That is the
+same remedy function, with the same did-it-really-change guard, that pressing `y`
+in the terminal calls; the card says *Fixed* only when that returns 0. No check
+and no repair is written in QML.
+
+Three things it deliberately does not do:
+
+* **No "fix everything" button.** One yes/no per finding, same as the terminal.
+* **No scanning unless you go there.** Opening the section runs the scan. Nothing
+  runs it at login, on a timer, or from the bar.
+* **No password prompts.** The package-patch repair needs `sudo`, and there is
+  nowhere on this panel to type a password — so that card offers the command
+  instead of a button, and says why.
+
+The one finding whose repair edits `config.conf` — your own file — gets its own
+colour, its own icon and a **READ THIS ONE FIRST** chip, so it cannot be skimmed
+past as one more routine recopy. That comes from the `"class": "userconfig"` flag
+in the JSON, not from a list of ids kept in the QML.
+
+```sh
+# what the section reads, if you want to see it yourself
+~/.config/mango/scripts/post-update-health.sh --json | jq .
+```
+
 ## The check-native-first finding
 
 DMS has two things that looked like they might already be this, and neither is:
@@ -124,6 +157,12 @@ means editing the shell's core layout and picking an unused integer. This panel
 maps `id → filename` and loads it, which is the same navigation with the coupling
 taken out. That was the one place it was worth departing from the native pattern,
 and it is why.
+
+**Nothing native covers Health & Repair either.** DMS ships 42 settings tabs;
+the closest, `SystemUpdaterTab.qml`, is a pacman front end — it knows about
+package updates, and nothing about whether DankMango's own scripts, plugins and
+patches survived one. That is the entire subject of this section, so there was
+nothing to reuse.
 
 ## Why it's a "daemon" plugin
 
@@ -199,6 +238,18 @@ launcher side. Quick check:
 Five tab-separated fields per line, one line per preset. No output means no
 presets; different fields mean the script and `PresetsSection.qml` have drifted
 apart.
+
+### Health & Repair: it says the health check couldn't run
+
+The section shows whatever went wrong. Run the same thing by hand:
+
+```sh
+~/.config/mango/scripts/post-update-health.sh --json
+```
+
+Nothing on stdout, or something that isn't JSON, means the installed script is
+older than this panel — it predates the `--json` flag. Re-run `./install.sh` from
+your DankMango folder.
 
 ### After editing this plugin
 
